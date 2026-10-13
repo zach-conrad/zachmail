@@ -1,0 +1,9 @@
+{
+  "extends": "@zachmail/config/tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": [],
+    "customConditions": ["react-native"]
+  },
+  "include": ["app", "src", "vitest.config.ts"]
+}
