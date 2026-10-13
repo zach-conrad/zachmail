@@ -1,0 +1,22 @@
+# Deploy from the repo root: fly deploy -c infra/fly.toml
+app = "zachmail-worker"
+primary_region = "iad"
+
+[build]
+  dockerfile = "../apps/worker/Dockerfile"
+
+[env]
+  PORT = "8080"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# No public service: the worker only makes outbound connections. Fly restarts it on failure
+# and uses this check to decide when it is unhealthy.
+[checks.health]
+  type = "http"
+  port = 8080
+  path = "/"
+  interval = "30s"
+  timeout = "5s"

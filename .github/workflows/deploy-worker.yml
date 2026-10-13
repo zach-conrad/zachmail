@@ -1,0 +1,19 @@
+name: Deploy worker
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps/worker/**', 'packages/**', 'infra/fly.toml', 'pnpm-lock.yaml']
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Skips cleanly until the Fly app and token exist.
+    if: ${{ vars.FLY_ENABLED == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy -c infra/fly.toml --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

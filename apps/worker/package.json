@@ -1,0 +1,22 @@
+{
+  "name": "@zachmail/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.mjs",
+    "typecheck": "tsc -p .",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "postgres": "^3.4.9"
+  },
+  "devDependencies": {
+    "@zachmail/config": "workspace:*",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15"
+  }
+}
