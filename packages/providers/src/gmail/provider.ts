@@ -89,7 +89,7 @@ export class GmailProvider implements MailProvider {
 
     const touched = new Set<string>()
     const deleted = new Set<string>()
-    let latest = state.historyId
+    let latest: string | undefined
     let pageToken: string | undefined
     try {
       do {
@@ -137,7 +137,7 @@ export class GmailProvider implements MailProvider {
         messages,
         deletedMessageIds: [...deleted],
       },
-      next: { ...state, historyId: latest },
+      next: { ...state, historyId: latest ?? state.historyId },
     }
   }
 
