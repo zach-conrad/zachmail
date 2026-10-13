@@ -57,6 +57,13 @@ export const keymap = [
   { id: 'compose.reply', label: 'Reply', group: 'compose', keys: ['r'] },
   { id: 'compose.replyAll', label: 'Reply all', group: 'compose', keys: ['a'] },
   { id: 'compose.forward', label: 'Forward', group: 'compose', keys: ['f'] },
+  {
+    id: 'compose.global',
+    label: 'Compose from anywhere',
+    group: 'compose',
+    keys: ['mod+ctrl+m'],
+    platforms: ['macos'],
+  },
   // Selection
   { id: 'select.toggle', label: 'Select', group: 'selection', keys: ['x'] },
   {

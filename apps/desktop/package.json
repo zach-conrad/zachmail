@@ -1,0 +1,25 @@
+{
+  "name": "@zachmail/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build && tauri dev",
+    "app": "tauri build",
+    "menu": "vitest run -u src/menu.test.ts",
+    "tauri": "tauri",
+    "typecheck": "tsc -p .",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.3"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.2",
+    "@zachmail/config": "workspace:*",
+    "@zachmail/core": "workspace:*",
+    "vite": "^8.3.4"
+  }
+}

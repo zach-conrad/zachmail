@@ -2,3 +2,6 @@ pnpm-lock.yaml
 packages/db/migrations/meta
 .vercel
 AGENTS.md
+apps/desktop/src-tauri/menu.json
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/gen

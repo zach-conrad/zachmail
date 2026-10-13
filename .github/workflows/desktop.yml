@@ -1,0 +1,138 @@
+name: Desktop
+
+# macOS app (apps/desktop). Pull requests type-check and test the shell; a `desktop-v*` tag
+# or a manual run builds a universal DMG and publishes it as a GitHub release, which the
+# in-app updater reads (latest.json).
+#
+# Secrets (all optional until Zach has an Apple Developer ID; without them the build is
+# ad-hoc signed, not notarized, ships no updater files and is marked a prerelease):
+#   APPLE_CERTIFICATE           base64 of the "Developer ID Application" .p12
+#   APPLE_CERTIFICATE_PASSWORD  password of that .p12
+#   APPLE_SIGNING_IDENTITY      e.g. "Developer ID Application: Zach Conrad (TEAMID)"
+#   APPLE_ID                    Apple ID email used for notarization
+#   APPLE_PASSWORD              app-specific password for that Apple ID
+#   APPLE_TEAM_ID               10-character team id
+#   TAURI_SIGNING_PRIVATE_KEY   updater key from `pnpm --filter @zachmail/desktop tauri signer generate`
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+# The updater public key goes in apps/desktop/src-tauri/tauri.conf.json (plugins.updater.pubkey).
+
+on:
+  pull_request:
+    paths:
+      - apps/desktop/**
+      - packages/core/**
+      - .github/workflows/desktop.yml
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @zachmail/desktop build
+      - name: Rust format, lint and tests
+        working-directory: apps/desktop/src-tauri
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+
+  release:
+    if: github.event_name != 'pull_request'
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: pnpm install --frozen-lockfile
+
+      # Tauri treats a set-but-empty variable as "sign with this", so only export the ones
+      # that have values.
+      - name: Signing setup
+        id: signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          put() { { echo "$1<<__EOF__"; printf '%s\n' "$2"; echo "__EOF__"; } >> "$GITHUB_ENV"; }
+          args="--target universal-apple-darwin"
+          if [ -n "$APPLE_CERTIFICATE" ] && [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+            put APPLE_CERTIFICATE "$APPLE_CERTIFICATE"
+            put APPLE_CERTIFICATE_PASSWORD "$APPLE_CERTIFICATE_PASSWORD"
+            put APPLE_SIGNING_IDENTITY "$APPLE_SIGNING_IDENTITY"
+            if [ -n "$APPLE_ID" ]; then
+              put APPLE_ID "$APPLE_ID"
+              put APPLE_PASSWORD "$APPLE_PASSWORD"
+              put APPLE_TEAM_ID "$APPLE_TEAM_ID"
+            else
+              echo "::warning::APPLE_ID is not set; the app is signed but not notarized."
+            fi
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No Developer ID secrets; building an ad-hoc signed prerelease."
+            put APPLE_SIGNING_IDENTITY "-"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            if grep -q REPLACE_WITH apps/desktop/src-tauri/tauri.conf.json; then
+              echo "::error::Set plugins.updater.pubkey in tauri.conf.json to the updater public key."
+              exit 1
+            fi
+            put TAURI_SIGNING_PRIVATE_KEY "$TAURI_SIGNING_PRIVATE_KEY"
+            put TAURI_SIGNING_PRIVATE_KEY_PASSWORD "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+          else
+            echo "::warning::No TAURI_SIGNING_PRIVATE_KEY; the release has no updater files."
+            echo '{"bundle":{"createUpdaterArtifacts":false}}' > "$RUNNER_TEMP/no-updater.json"
+            args="$args --config $RUNNER_TEMP/no-updater.json"
+          fi
+          echo "args=$args" >> "$GITHUB_OUTPUT"
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: pnpm tauri
+          args: ${{ steps.signing.outputs.args }}
+          tagName: desktop-v__VERSION__
+          releaseName: ZachMail __VERSION__
+          releaseBody: ZachMail for macOS. Download the DMG below; installed copies update themselves.
+          releaseDraft: false
+          prerelease: ${{ steps.signing.outputs.signed != 'true' }}
+          includeUpdaterJson: true
