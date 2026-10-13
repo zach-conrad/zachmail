@@ -11,3 +11,4 @@ coverage
 dist-perf
 test-results
 playwright-report
+AGENTS.md
