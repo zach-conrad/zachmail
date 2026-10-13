@@ -1,5 +1,11 @@
 import { parseAddress, parseAddressList } from '@zachmail/mime'
-import type { FolderKind, ProviderAttachment, ProviderFolder, ProviderMessage, RawBody } from '../types'
+import type {
+  FolderKind,
+  ProviderAttachment,
+  ProviderFolder,
+  ProviderMessage,
+  RawBody,
+} from '../types'
 import { decodeBase64Url, decodeText } from '../util'
 import type { GmailLabel, GmailMessage, GmailPart } from './types'
 
@@ -57,7 +63,9 @@ const messageIds = (v: string | null) => (v ? (v.match(/<[^>]+>/g) ?? []) : [])
 
 export function normalizeMessage(m: GmailMessage): ProviderMessage {
   const labels = m.labelIds ?? []
-  const date = m.internalDate ? new Date(Number(m.internalDate)) : new Date(header(m, 'Date') ?? Date.now())
+  const date = m.internalDate
+    ? new Date(Number(m.internalDate))
+    : new Date(header(m, 'Date') ?? Date.now())
   const attachments = m.payload ? collectAttachments(m.payload) : []
   return {
     providerMessageId: m.id,
@@ -139,7 +147,8 @@ export async function extractBody(
 
   const read = async (p: GmailPart | null) => {
     if (!p) return null
-    const data = p.body?.data ?? (p.body?.attachmentId ? await loadPart(p.body.attachmentId) : undefined)
+    const data =
+      p.body?.data ?? (p.body?.attachmentId ? await loadPart(p.body.attachmentId) : undefined)
     if (!data) return null
     const charset = partHeader(p, 'Content-Type')?.match(/charset="?([^";\s]+)/i)?.[1]
     return decodeText(decodeBase64Url(data), charset)

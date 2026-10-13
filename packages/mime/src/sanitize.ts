@@ -28,7 +28,17 @@ const ALLOWED_TAGS = [
   'big',
 ]
 
-const PRESENTATIONAL = ['style', 'class', 'align', 'valign', 'width', 'height', 'bgcolor', 'color', 'dir']
+const PRESENTATIONAL = [
+  'style',
+  'class',
+  'align',
+  'valign',
+  'width',
+  'height',
+  'bgcolor',
+  'color',
+  'dir',
+]
 
 // Remote loads hidden in CSS (background images, fonts, @import) would bypass image blocking.
 const stripCssUrls = (css: string) =>
@@ -55,7 +65,10 @@ export function sanitizeEmailHtml(html: string, opts: SanitizeOptions): Sanitize
       font: ['face', 'size', ...PRESENTATIONAL],
     },
     allowedSchemes: ['http', 'https', 'mailto', 'tel', 'cid', 'data'],
-    allowedSchemesByTag: { img: ['http', 'https', 'cid', 'data'], a: ['http', 'https', 'mailto', 'tel'] },
+    allowedSchemesByTag: {
+      img: ['http', 'https', 'cid', 'data'],
+      a: ['http', 'https', 'mailto', 'tel'],
+    },
     allowProtocolRelative: false,
     transformTags: {
       a: (tagName, attribs) => ({
@@ -69,15 +82,20 @@ export function sanitizeEmailHtml(html: string, opts: SanitizeOptions): Sanitize
           hasRemoteImages = true
           return { tagName, attribs: { ...rest, 'data-zm-src': opts.proxyImage(src) } }
         }
-        if (/^cid:/i.test(src)) return { tagName, attribs: { ...rest, 'data-zm-cid': src.slice(4) } }
-        if (/^data:image\/(png|gif|jpe?g|webp);/i.test(src)) return { tagName, attribs: { ...rest, src } }
+        if (/^cid:/i.test(src))
+          return { tagName, attribs: { ...rest, 'data-zm-cid': src.slice(4) } }
+        if (/^data:image\/(png|gif|jpe?g|webp);/i.test(src))
+          return { tagName, attribs: { ...rest, src } }
         return { tagName, attribs: rest }
       },
     },
   })
 
   const defused = clean
-    .replace(/(<style[^>]*>)([\s\S]*?)(<\/style>)/gi, (_m, open: string, css: string, close: string) => open + stripCssUrls(css) + close)
+    .replace(
+      /(<style[^>]*>)([\s\S]*?)(<\/style>)/gi,
+      (_m, open: string, css: string, close: string) => open + stripCssUrls(css) + close,
+    )
     .replace(/style="([^"]*)"/gi, (_m, css: string) => `style="${stripCssUrls(css)}"`)
   return { html: defused, hasRemoteImages }
 }

@@ -1,3 +1,5 @@
 export * from './schema'
 export * from './sql'
 export * from './sync'
+export * from './credentials'
+export * from './jobs'

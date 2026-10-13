@@ -14,7 +14,9 @@ describe('sanitizeEmailHtml', () => {
   })
 
   it('parks remote images behind the proxy and reports them', () => {
-    const r = sanitizeEmailHtml('<img src="https://t.co/pixel.gif" width="1">', { proxyImage: proxy })
+    const r = sanitizeEmailHtml('<img src="https://t.co/pixel.gif" width="1">', {
+      proxyImage: proxy,
+    })
     expect(r.hasRemoteImages).toBe(true)
     expect(r.html).not.toMatch(/\ssrc=/)
     expect(r.html).toContain('data-zm-src="/api/img?u=https%3A%2F%2Ft.co%2Fpixel.gif"')

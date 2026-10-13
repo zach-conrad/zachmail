@@ -9,15 +9,7 @@ export interface Address {
 }
 
 export type FolderKind =
-  | 'inbox'
-  | 'sent'
-  | 'drafts'
-  | 'trash'
-  | 'spam'
-  | 'archive'
-  | 'starred'
-  | 'important'
-  | 'custom'
+  'inbox' | 'sent' | 'drafts' | 'trash' | 'spam' | 'archive' | 'starred' | 'important' | 'custom'
 
 export interface AccountRow {
   id: string

@@ -157,7 +157,10 @@ export const folders = pgTable(
     totalCount: integer('total_count').notNull().default(0),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('folders_account_provider').on(t.accountId, t.providerId), ownRowsReadOnly('folders')],
+  (t) => [
+    uniqueIndex('folders_account_provider').on(t.accountId, t.providerId),
+    ownRowsReadOnly('folders'),
+  ],
 ).enableRLS()
 
 export const threads = pgTable(
@@ -233,7 +236,9 @@ export const messages = pgTable(
     hasAttachments: boolean('has_attachments').notNull().default(false),
     listUnsubscribe: text('list_unsubscribe'),
     size: integer('size').notNull().default(0),
-    bodyStatus: text('body_status', { enum: ['none', 'cached'] }).notNull().default('none'),
+    bodyStatus: text('body_status', { enum: ['none', 'cached'] })
+      .notNull()
+      .default('none'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

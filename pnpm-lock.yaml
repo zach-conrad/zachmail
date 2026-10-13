@@ -112,6 +112,12 @@ importers:
 
   apps/worker:
     dependencies:
+      '@zachmail/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@zachmail/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
       postgres:
         specifier: ^3.4.9
         version: 3.4.9
@@ -168,6 +174,28 @@ importers:
       drizzle-kit:
         specifier: ^0.31.11
         version: 0.31.11
+      postgres:
+        specifier: ^3.4.9
+        version: 3.4.9
+
+  packages/engine:
+    dependencies:
+      '@zachmail/core':
+        specifier: workspace:*
+        version: link:../core
+      '@zachmail/db':
+        specifier: workspace:*
+        version: link:../db
+      '@zachmail/mime':
+        specifier: workspace:*
+        version: link:../mime
+      '@zachmail/providers':
+        specifier: workspace:*
+        version: link:../providers
+    devDependencies:
+      '@zachmail/config':
+        specifier: workspace:*
+        version: link:../config
 
   packages/mime:
     dependencies:

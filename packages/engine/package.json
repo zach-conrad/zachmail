@@ -1,0 +1,23 @@
+{
+  "name": "@zachmail/engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@zachmail/core": "workspace:*",
+    "@zachmail/db": "workspace:*",
+    "@zachmail/mime": "workspace:*",
+    "@zachmail/providers": "workspace:*"
+  },
+  "devDependencies": {
+    "@zachmail/config": "workspace:*"
+  }
+}

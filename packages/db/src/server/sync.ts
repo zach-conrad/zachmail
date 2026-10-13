@@ -5,7 +5,13 @@ import type { Db, Queryable } from './sql'
 
 type Entity = keyof Deletes
 
-async function recordChanges(tx: Queryable, userId: string, entity: Entity, ids: string[], op: 'upsert' | 'delete') {
+async function recordChanges(
+  tx: Queryable,
+  userId: string,
+  entity: Entity,
+  ids: string[],
+  op: 'upsert' | 'delete',
+) {
   if (ids.length === 0) return
   await tx.query(
     `INSERT INTO changes (user_id, entity, entity_id, op) SELECT $1, $2, unnest($3::text[]), $4`,
@@ -47,7 +53,7 @@ export async function applySyncBatch(
          WHERE (folders.name, folders.kind, folders.unread_count, folders.total_count)
            IS DISTINCT FROM (excluded.name, excluded.kind, excluded.unread_count, excluded.total_count)
          RETURNING id`,
-        [userId, accountId, JSON.stringify(input)],
+        [userId, accountId, input],
       )
       await recordChanges(tx, userId, 'folder', ids(up), 'upsert')
 
@@ -117,7 +123,7 @@ export async function applySyncBatch(
          WHERE (messages.provider_labels, messages.unread, messages.starred, messages.snippet)
            IS DISTINCT FROM (excluded.provider_labels, excluded.unread, excluded.starred, excluded.snippet)
          RETURNING id, thread_id, (xmax = 0) AS inserted`,
-        [userId, accountId, JSON.stringify(input)],
+        [userId, accountId, input],
       )
       up.forEach((r) => affectedThreads.add(r.thread_id))
       await recordChanges(tx, userId, 'message', ids(up), 'upsert')
@@ -143,7 +149,7 @@ export async function applySyncBatch(
              provider_attachment_id text, content_id text, inline boolean)
            JOIN messages m ON m.account_id = $2 AND m.provider_message_id = x.provider_message_id
            WHERE m.id = ANY($4::uuid[])`,
-          [userId, accountId, JSON.stringify(atts), insertedIds],
+          [userId, accountId, atts, insertedIds],
         )
       }
     }
@@ -219,7 +225,12 @@ async function recomputeThreads(tx: Queryable, userId: string, threadIds: string
 export async function updateAccount(
   db: Queryable,
   accountId: string,
-  patch: { syncState?: Record<string, unknown>; status?: string; lastSyncedAt?: Date; lastError?: string | null },
+  patch: {
+    syncState?: Record<string, unknown>
+    status?: string
+    lastSyncedAt?: Date
+    lastError?: string | null
+  },
 ) {
   const rows = await db.query<{ user_id: string }>(
     `UPDATE accounts SET
@@ -230,7 +241,7 @@ export async function updateAccount(
      WHERE id = $1 RETURNING user_id`,
     [
       accountId,
-      patch.syncState ? JSON.stringify(patch.syncState) : null,
+      patch.syncState ?? null,
       patch.status ?? null,
       patch.lastSyncedAt?.toISOString() ?? null,
       patch.lastError !== undefined,
@@ -268,7 +279,12 @@ const SELECT_MESSAGE = `SELECT m.id, m.thread_id AS "threadId", m.account_id AS 
   m.rfc822_message_id AS "rfc822MessageId", m.body_status AS "bodyStatus" FROM messages m`
 
 /** Compacted delta after `since`: latest op per entity, current rows for upserts. */
-export async function readDelta(db: Db, userId: string, since: number, limit = 5000): Promise<SyncDelta> {
+export async function readDelta(
+  db: Db,
+  userId: string,
+  since: number,
+  limit = 5000,
+): Promise<SyncDelta> {
   return db.transaction(async (tx) => {
     const window = await tx.query<{ seq: number }>(
       `SELECT seq::float8 AS seq FROM changes WHERE user_id = $1 AND seq > $2 ORDER BY seq LIMIT $3`,
@@ -284,12 +300,21 @@ export async function readDelta(db: Db, userId: string, since: number, limit = 5
 
     const want: Record<Entity, string[]> = { account: [], folder: [], thread: [], message: [] }
     const deletes = emptyDeletes()
-    for (const c of latest) (c.op === 'delete' ? deletes[c.entity] : want[c.entity]).push(c.entity_id)
+    for (const c of latest)
+      (c.op === 'delete' ? deletes[c.entity] : want[c.entity]).push(c.entity_id)
 
     const upserts = emptyRows()
-    const load = async <K extends keyof Rows>(key: K, select: string, alias: string, list: string[]) => {
+    const load = async <K extends keyof Rows>(
+      key: K,
+      select: string,
+      alias: string,
+      list: string[],
+    ) => {
       if (!list.length) return
-      const rows = await tx.query<Rows[K][number]>(`${select} WHERE ${alias}.id = ANY($1::uuid[])`, [list])
+      const rows = await tx.query<Rows[K][number]>(
+        `${select} WHERE ${alias}.id = ANY($1::uuid[])`,
+        [list],
+      )
       upserts[key] = rows as Rows[K]
       // An upsert whose row is gone by now (deleted later in a not-yet-read window) is a delete.
       const found = new Set(rows.map((r) => r.id))

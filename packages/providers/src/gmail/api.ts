@@ -28,7 +28,10 @@ export class GmailApi {
     private maxRetries = 4,
   ) {}
 
-  async get<T>(path: string, query: Record<string, string | number | boolean | string[] | undefined> = {}) {
+  async get<T>(
+    path: string,
+    query: Record<string, string | number | boolean | string[] | undefined> = {},
+  ) {
     return this.request<T>('GET', path, query)
   }
 
@@ -67,13 +70,19 @@ export class GmailApi {
         continue
       }
       if (res.status === 401) throw new ProviderAuthError('Gmail rejected the access token')
-      const retriable = res.status === 429 || res.status >= 500 || (res.status === 403 && (await isRateLimit(res.clone())))
+      const retriable =
+        res.status === 429 ||
+        res.status >= 500 ||
+        (res.status === 403 && (await isRateLimit(res.clone())))
       if (retriable && attempt < this.maxRetries) {
         const retryAfter = Number(res.headers.get('retry-after'))
         await sleep(retryAfter > 0 ? retryAfter * 1000 : 2 ** attempt * 500 + Math.random() * 250)
         continue
       }
-      throw new GmailHttpError(res.status, `Gmail ${method} ${path} → ${res.status}: ${await res.text()}`)
+      throw new GmailHttpError(
+        res.status,
+        `Gmail ${method} ${path} → ${res.status}: ${await res.text()}`,
+      )
     }
   }
 }
@@ -81,7 +90,9 @@ export class GmailApi {
 async function isRateLimit(res: Response): Promise<boolean> {
   try {
     const j = (await res.json()) as { error?: { errors?: { reason?: string }[] } }
-    return !!j.error?.errors?.some((e) => e.reason === 'rateLimitExceeded' || e.reason === 'userRateLimitExceeded')
+    return !!j.error?.errors?.some(
+      (e) => e.reason === 'rateLimitExceeded' || e.reason === 'userRateLimitExceeded',
+    )
   } catch {
     return false
   }

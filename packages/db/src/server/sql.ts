@@ -18,7 +18,9 @@ interface PostgresJsLike {
 /** Adapts a postgres.js `sql` instance. */
 export function fromPostgresJs(sql: PostgresJsLike): Db {
   const wrap = (s: PostgresJsLike): Queryable => ({
-    query: async <T>(text: string, params: unknown[] = []) => [...((await s.unsafe(text, params as never[])) as T[])],
+    query: async <T>(text: string, params: unknown[] = []) => [
+      ...((await s.unsafe(text, params as never[])) as T[]),
+    ],
   })
   return {
     ...wrap(sql),
@@ -28,7 +30,9 @@ export function fromPostgresJs(sql: PostgresJsLike): Db {
 
 interface PGliteLike {
   query<T>(text: string, params?: unknown[]): Promise<{ rows: T[] }>
-  transaction<T>(fn: (tx: { query<R>(text: string, params?: unknown[]): Promise<{ rows: R[] }> }) => Promise<T>): Promise<T>
+  transaction<T>(
+    fn: (tx: { query<R>(text: string, params?: unknown[]): Promise<{ rows: R[] }> }) => Promise<T>,
+  ): Promise<T>
 }
 
 /** Adapts a PGlite instance (tests). */
@@ -36,6 +40,8 @@ export function fromPGlite(db: PGliteLike): Db {
   return {
     query: async (text, params) => (await db.query(text, params)).rows as never,
     transaction: (fn) =>
-      db.transaction((tx) => fn({ query: async (text, params) => (await tx.query(text, params)).rows as never })),
+      db.transaction((tx) =>
+        fn({ query: async (text, params) => (await tx.query(text, params)).rows as never }),
+      ),
   }
 }

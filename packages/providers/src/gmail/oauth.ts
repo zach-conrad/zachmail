@@ -15,7 +15,10 @@ export interface GoogleOAuthConfig {
   redirectUri: string
 }
 
-export function buildAuthUrl(cfg: GoogleOAuthConfig, opts: { state: string; codeChallenge: string; loginHint?: string }) {
+export function buildAuthUrl(
+  cfg: GoogleOAuthConfig,
+  opts: { state: string; codeChallenge: string; loginHint?: string },
+) {
   const u = new URL('https://accounts.google.com/o/oauth2/v2/auth')
   u.searchParams.set('client_id', cfg.clientId)
   u.searchParams.set('redirect_uri', cfg.redirectUri)
@@ -40,7 +43,10 @@ export interface GoogleTokens {
   idToken?: string
 }
 
-async function tokenRequest(params: Record<string, string>, fetchImpl: FetchLike): Promise<GoogleTokens> {
+async function tokenRequest(
+  params: Record<string, string>,
+  fetchImpl: FetchLike,
+): Promise<GoogleTokens> {
   const res = await fetchImpl('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -56,7 +62,9 @@ async function tokenRequest(params: Record<string, string>, fetchImpl: FetchLike
     error_description?: string
   }
   if (!res.ok || !j.access_token) {
-    const err = new Error(`Google token error: ${j.error ?? res.status} ${j.error_description ?? ''}`.trim())
+    const err = new Error(
+      `Google token error: ${j.error ?? res.status} ${j.error_description ?? ''}`.trim(),
+    )
     ;(err as Error & { code?: string }).code = j.error
     throw err
   }
@@ -69,7 +77,12 @@ async function tokenRequest(params: Record<string, string>, fetchImpl: FetchLike
   }
 }
 
-export function exchangeCode(cfg: GoogleOAuthConfig, code: string, codeVerifier: string, fetchImpl: FetchLike = fetch) {
+export function exchangeCode(
+  cfg: GoogleOAuthConfig,
+  code: string,
+  codeVerifier: string,
+  fetchImpl: FetchLike = fetch,
+) {
   return tokenRequest(
     {
       code,
@@ -89,7 +102,12 @@ export function refreshAccessToken(
   fetchImpl: FetchLike = fetch,
 ) {
   return tokenRequest(
-    { refresh_token: refreshToken, client_id: cfg.clientId, client_secret: cfg.clientSecret, grant_type: 'refresh_token' },
+    {
+      refresh_token: refreshToken,
+      client_id: cfg.clientId,
+      client_secret: cfg.clientSecret,
+      grant_type: 'refresh_token',
+    },
     fetchImpl,
   )
 }

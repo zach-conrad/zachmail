@@ -60,14 +60,20 @@ export class GmailProvider implements MailProvider {
     ]
       .filter(Boolean)
       .join(' ')
-    const list = await this.api.get<{ threads?: { id: string }[]; nextPageToken?: string }>('/threads', {
-      q,
-      maxResults: 50,
-      pageToken: cursor ?? undefined,
-    })
+    const list = await this.api.get<{ threads?: { id: string }[]; nextPageToken?: string }>(
+      '/threads',
+      {
+        q,
+        maxResults: 50,
+        pageToken: cursor ?? undefined,
+      },
+    )
     const threads = await mapLimit(list.threads ?? [], this.concurrency, (t) =>
       this.api
-        .get<GmailThread>(`/threads/${t.id}`, { format: 'metadata', metadataHeaders: METADATA_HEADERS })
+        .get<GmailThread>(`/threads/${t.id}`, {
+          format: 'metadata',
+          metadataHeaders: METADATA_HEADERS,
+        })
         .catch(notFoundAs(null)),
     )
     const batch: SyncBatch = {
@@ -87,10 +93,11 @@ export class GmailProvider implements MailProvider {
     let pageToken: string | undefined
     try {
       do {
-        const page = await this.api.get<{ history?: GmailHistoryRecord[]; historyId: string; nextPageToken?: string }>(
-          '/history',
-          { startHistoryId: state.historyId, pageToken, maxResults: 500 },
-        )
+        const page = await this.api.get<{
+          history?: GmailHistoryRecord[]
+          historyId: string
+          nextPageToken?: string
+        }>('/history', { startHistoryId: state.historyId, pageToken, maxResults: 500 })
         for (const h of page.history ?? []) {
           for (const x of h.messagesAdded ?? []) touched.add(x.message.id)
           for (const x of h.labelsAdded ?? []) touched.add(x.message.id)
@@ -112,7 +119,10 @@ export class GmailProvider implements MailProvider {
     const ids = [...touched]
     const fetched = await mapLimit(ids, this.concurrency, (id) =>
       this.api
-        .get<GmailMessage>(`/messages/${id}`, { format: 'metadata', metadataHeaders: METADATA_HEADERS })
+        .get<GmailMessage>(`/messages/${id}`, {
+          format: 'metadata',
+          metadataHeaders: METADATA_HEADERS,
+        })
         .catch(notFoundAs(null)),
     )
     const messages: ProviderMessage[] = []
@@ -137,19 +147,27 @@ export class GmailProvider implements MailProvider {
       topicName: this.opts.pubsubTopic,
     })
     // Keep our own (older) cursor if we have one so no history between the two is skipped.
-    return { state: { ...state, historyId: state.historyId ?? r.historyId }, expiresAt: new Date(Number(r.expiration)) }
+    return {
+      state: { ...state, historyId: state.historyId ?? r.historyId },
+      expiresAt: new Date(Number(r.expiration)),
+    }
   }
 
   async fetchBody(providerMessageId: string): Promise<RawBody> {
     const m = await this.api.get<GmailMessage>(`/messages/${providerMessageId}`, { format: 'full' })
     if (!m.payload) return { html: null, text: null, attachments: [] }
     return extractBody(m.payload, async (attachmentId) => {
-      const a = await this.api.get<{ data: string }>(`/messages/${providerMessageId}/attachments/${attachmentId}`)
+      const a = await this.api.get<{ data: string }>(
+        `/messages/${providerMessageId}/attachments/${attachmentId}`,
+      )
       return a.data
     })
   }
 
-  async fetchAttachment(providerMessageId: string, providerAttachmentId: string): Promise<Uint8Array> {
+  async fetchAttachment(
+    providerMessageId: string,
+    providerAttachmentId: string,
+  ): Promise<Uint8Array> {
     const a = await this.api.get<{ data: string }>(
       `/messages/${providerMessageId}/attachments/${providerAttachmentId}`,
     )

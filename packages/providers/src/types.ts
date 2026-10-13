@@ -1,15 +1,7 @@
 import type { Address } from '@zachmail/mime'
 
 export type FolderKind =
-  | 'inbox'
-  | 'sent'
-  | 'drafts'
-  | 'trash'
-  | 'spam'
-  | 'archive'
-  | 'starred'
-  | 'important'
-  | 'custom'
+  'inbox' | 'sent' | 'drafts' | 'trash' | 'spam' | 'archive' | 'starred' | 'important' | 'custom'
 
 export interface ProviderFolder {
   providerId: string
@@ -90,7 +82,10 @@ export interface MailProvider {
   /** Initial state to record before a backfill starts (e.g. the current Gmail historyId). */
   initialState(): Promise<SyncState>
   /** One page of history, newest first. */
-  backfillPage(cursor: string | null, opts?: { sinceDays?: number }): Promise<BackfillPage>
+  backfillPage(
+    cursor: string | null,
+    opts?: { sinceDays?: number; beforeDays?: number },
+  ): Promise<BackfillPage>
   incremental(state: SyncState): Promise<IncrementalResult>
   watch(state: SyncState): Promise<WatchResult>
   fetchBody(providerMessageId: string): Promise<RawBody>

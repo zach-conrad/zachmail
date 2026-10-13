@@ -47,7 +47,9 @@ describe('GmailProvider.backfillPage', () => {
     const g = fakeGmail({
       '/threads': () => ({ body: { threads: [{ id: 't1' }, { id: 't2' }], nextPageToken: 'p2' } }),
       '/threads/t1': () => ({ body: { id: 't1', messages: [msg('m1', 't1'), msg('m2', 't1')] } }),
-      '/threads/t2': () => ({ body: { id: 't2', messages: [msg('m3', 't2', { labelIds: ['SENT'] })] } }),
+      '/threads/t2': () => ({
+        body: { id: 't2', messages: [msg('m3', 't2', { labelIds: ['SENT'] })] },
+      }),
       '/labels': () => ({
         body: {
           labels: [
@@ -86,7 +88,9 @@ describe('GmailProvider.backfillPage', () => {
 
   it('does not refetch folders on later pages', async () => {
     const g = fakeGmail({ '/threads': () => ({ body: {} }) })
-    const page = await new GmailProvider({ tokens: g.tokens, fetch: g.fetchImpl }).backfillPage('p2')
+    const page = await new GmailProvider({ tokens: g.tokens, fetch: g.fetchImpl }).backfillPage(
+      'p2',
+    )
     expect(page.batch.folders).toBeUndefined()
     expect(page.cursor).toBeNull()
   })
@@ -97,13 +101,21 @@ describe('GmailProvider.incremental', () => {
     const g = fakeGmail({
       '/history': (u) =>
         u.searchParams.get('pageToken')
-          ? { body: { historyId: '200', history: [{ id: '150', messagesDeleted: [{ message: { id: 'm2' } }] }] } }
+          ? {
+              body: {
+                historyId: '200',
+                history: [{ id: '150', messagesDeleted: [{ message: { id: 'm2' } }] }],
+              },
+            }
           : {
               body: {
                 historyId: '180',
                 nextPageToken: 'n',
                 history: [
-                  { id: '101', messagesAdded: [{ message: { id: 'm1' } }, { message: { id: 'm2' } }] },
+                  {
+                    id: '101',
+                    messagesAdded: [{ message: { id: 'm1' } }, { message: { id: 'm2' } }],
+                  },
                   { id: '102', labelsRemoved: [{ message: { id: 'm3' }, labelIds: ['INBOX'] }] },
                 ],
               },
@@ -112,7 +124,9 @@ describe('GmailProvider.incremental', () => {
       '/messages/m3': () => ({ status: 404, body: {} }),
       '/labels': () => ({ body: { labels: [] } }),
     })
-    const r = await new GmailProvider({ tokens: g.tokens, fetch: g.fetchImpl }).incremental({ historyId: '100' })
+    const r = await new GmailProvider({ tokens: g.tokens, fetch: g.fetchImpl }).incremental({
+      historyId: '100',
+    })
     expect(r.next).toEqual({ historyId: '200' })
     expect(r.batch.messages.map((m) => m.providerMessageId)).toEqual(['m1'])
     expect(r.batch.deletedMessageIds.sort()).toEqual(['m2', 'm3'])
@@ -120,7 +134,9 @@ describe('GmailProvider.incremental', () => {
 
   it('asks for a resync when the history id has expired', async () => {
     const g = fakeGmail({ '/history': () => ({ status: 404, body: {} }) })
-    const r = await new GmailProvider({ tokens: g.tokens, fetch: g.fetchImpl }).incremental({ historyId: '1' })
+    const r = await new GmailProvider({ tokens: g.tokens, fetch: g.fetchImpl }).incremental({
+      historyId: '1',
+    })
     expect(r.resyncRequired).toBe(true)
   })
 })
@@ -129,7 +145,8 @@ describe('GmailApi auth and retries', () => {
   it('refreshes the token once on 401', async () => {
     let n = 0
     const g = fakeGmail({
-      '/profile': () => (n++ === 0 ? { status: 401, body: {} } : { body: { emailAddress: 'z@x', historyId: '9' } }),
+      '/profile': () =>
+        n++ === 0 ? { status: 401, body: {} } : { body: { emailAddress: 'z@x', historyId: '9' } },
     })
     const p = new GmailProvider({ tokens: g.tokens, fetch: g.fetchImpl })
     expect(await p.initialState()).toEqual({ historyId: '9' })
@@ -162,7 +179,9 @@ describe('GmailProvider.fetchBody', () => {
                 mimeType: 'application/pdf',
                 filename: 'plan.pdf',
                 body: { attachmentId: 'att1', size: 2048 },
-                headers: [{ name: 'Content-Disposition', value: 'attachment; filename="plan.pdf"' }],
+                headers: [
+                  { name: 'Content-Disposition', value: 'attachment; filename="plan.pdf"' },
+                ],
               },
             ],
           },
@@ -174,7 +193,14 @@ describe('GmailProvider.fetchBody', () => {
     expect(body.html).toBe('<p>Olá</p>')
     expect(body.text).toBe('plain')
     expect(body.attachments).toEqual([
-      { filename: 'plan.pdf', mime: 'application/pdf', size: 2048, providerAttachmentId: 'att1', contentId: null, inline: false },
+      {
+        filename: 'plan.pdf',
+        mime: 'application/pdf',
+        size: 2048,
+        providerAttachmentId: 'att1',
+        contentId: null,
+        inline: false,
+      },
     ])
   })
 })

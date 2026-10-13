@@ -1,5 +1,9 @@
 /** Runs fn over items with at most `limit` in flight, preserving input order in the result. */
-export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
+export async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (t: T) => Promise<R>,
+): Promise<R[]> {
   const out = new Array<R>(items.length)
   let next = 0
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
