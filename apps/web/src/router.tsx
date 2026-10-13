@@ -9,12 +9,17 @@ import { Shell } from './app/Shell'
 import { isSplit } from './app/splits'
 import { LoginScreen } from './auth/LoginScreen'
 import { useAuth } from './auth/session'
+import { DataProvider } from './data/DataProvider'
 
 function Root() {
   const auth = useAuth()
   if (auth.status === 'loading') return null
   if (auth.status === 'signedOut') return <LoginScreen />
-  return <Outlet />
+  return (
+    <DataProvider>
+      <Outlet />
+    </DataProvider>
+  )
 }
 
 const rootRoute = createRootRoute({ component: Root })
