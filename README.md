@@ -33,10 +33,32 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm size
 1. **Supabase**: create the project, then apply `packages/db/migrations/*.sql` in order
    (`DATABASE_URL=... pnpm --filter @zachmail/db migrate`). Insert your email into
    `allowed_users`. Enable Auth → Hooks → _Before User Created_ →
-   `public.hook_before_user_created`. Enable the Google provider and passkeys.
-2. **Vercel**: import this repo (root directory = repo root; `vercel.json` handles the build).
-   Env: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_URL`, `ALLOWED_EMAILS`.
-   Add the domain `mail.zachconrad.dev` and a CNAME to `cname.vercel-dns.com`.
-3. **Fly.io**: `fly apps create zachmail-worker`, `fly secrets set DATABASE_URL=...`
-   (session-mode connection string, port 5432), then set the repo variable `FLY_ENABLED=true`
+   `public.hook_before_user_created`. Enable the Google provider and passkeys. Create the
+   Vault secret `zachmail_token_key` (32 random bytes, base64: `openssl rand -base64 32`);
+   it encrypts provider refresh tokens.
+2. **Google Cloud** (Gmail): create an OAuth client (Web) with redirect URI
+   `https://mail.zachconrad.dev/api/accounts/callback/gmail`, enable the Gmail API, and set
+   the consent screen to **In production** (in "Testing", refresh tokens expire after 7 days).
+   For push: create a Pub/Sub topic, grant `gmail-api-push@system.gserviceaccount.com` the
+   Publisher role on it, and add a push subscription to
+   `https://mail.zachconrad.dev/webhooks/gmail` with authentication enabled (a service
+   account of yours; the audience is the webhook URL).
+3. **Vercel**: import this repo (root directory = repo root; `vercel.json` handles the build).
+   Add the domain `mail.zachconrad.dev` and a CNAME to `cname.vercel-dns.com`. Env:
+
+   | Variable                                             | Value                                             |
+   | ---------------------------------------------------- | ------------------------------------------------- |
+   | `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` | Supabase project URL and publishable key          |
+   | `SUPABASE_URL`                                       | same URL (server side)                            |
+   | `ALLOWED_EMAILS`                                     | your login email                                  |
+   | `DATABASE_URL`                                       | Supabase pooler URL, transaction mode (port 6543) |
+   | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`           | the OAuth client                                  |
+   | `GMAIL_PUBSUB_TOPIC`                                 | `projects/<project>/topics/<topic>`               |
+   | `GMAIL_PUSH_AUDIENCE`                                | `https://mail.zachconrad.dev/webhooks/gmail`      |
+   | `GMAIL_PUSH_SERVICE_ACCOUNT`                         | the push subscription's service account email     |
+   | `OAUTH_STATE_SECRET`, `IMAGE_PROXY_SECRET`           | random strings (`openssl rand -hex 32`)           |
+
+4. **Fly.io**: `fly apps create zachmail-worker`, then `fly secrets set` `DATABASE_URL`
+   (session mode, port 5432), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GMAIL_PUBSUB_TOPIC`
+   and `IMAGE_PROXY_SECRET` (same value as Vercel). Set the repo variable `FLY_ENABLED=true`
    and secret `FLY_API_TOKEN` so pushes to `main` deploy it.
