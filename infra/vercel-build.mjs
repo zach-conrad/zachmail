@@ -67,7 +67,8 @@ writeFileSync(
           continue: true,
         },
         { src: '^/(.*)$', headers: security, continue: true },
-        { src: '^/api(?:/.*)?$', dest: '/api' },
+        // The original path rides along in __zm_path; apps/api/src/vercel.ts restores it.
+        { src: '^/(api|webhooks)(/.*)?$', dest: '/api?__zm_path=/$1$2' },
         { handle: 'filesystem' },
         { src: '^/(.*)$', dest: '/index.html', headers: { 'Cache-Control': 'no-cache' } },
       ],
