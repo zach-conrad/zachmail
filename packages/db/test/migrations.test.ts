@@ -1,34 +1,13 @@
 // Migration dry run: applies every migration to an in-memory Postgres with a minimal stand-in
-// for the Supabase auth schema and roles, then exercises the allowlist hook and job queue.
-import { PGlite } from '@electric-sql/pglite'
-import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+// for the Supabase auth and realtime schemas, then exercises the hook, job queue and nudge.
+import type { PGlite } from '@electric-sql/pglite'
 import { beforeAll, describe, expect, it } from 'vitest'
-
-const dir = join(import.meta.dirname, '..', 'migrations')
-const USER = '00000000-0000-0000-0000-000000000001'
-
-const SUPABASE_STUB = `
-  CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role; CREATE ROLE supabase_auth_admin;
-  CREATE SCHEMA auth;
-  CREATE TABLE auth.users (id uuid PRIMARY KEY, email text);
-  CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS
-    $$ SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
-`
+import { USER, migratedDb } from './helpers'
 
 let db: PGlite
 
 beforeAll(async () => {
-  db = new PGlite()
-  await db.exec(SUPABASE_STUB)
-  for (const f of readdirSync(dir)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()) {
-    for (const stmt of readFileSync(join(dir, f), 'utf8').split('--> statement-breakpoint')) {
-      if (stmt.trim()) await db.exec(stmt)
-    }
-  }
-  await db.exec(`INSERT INTO auth.users VALUES ('${USER}', 'owner@example.com')`)
+  db = await migratedDb()
 })
 
 describe('migrations', () => {
@@ -68,5 +47,15 @@ describe('migrations', () => {
         `INSERT INTO jobs (user_id, kind, dedupe_key) VALUES ('${USER}', 'sync', 'sync:acct1')`,
       ),
     ).rejects.toThrow()
+  })
+
+  it('nudge_user broadcasts the latest seq on the user channel', async () => {
+    await db.exec(`INSERT INTO changes (user_id, entity, entity_id, op) VALUES ('${USER}', 'thread', 't1', 'upsert')`)
+    await db.exec(`SELECT public.nudge_user('${USER}')`)
+    const { rows } = await db.query<{ topic: string; payload: { seq: number } }>(
+      `SELECT topic, payload FROM realtime.messages ORDER BY payload->>'seq' DESC LIMIT 1`,
+    )
+    expect(rows[0]!.topic).toBe(`user:${USER}`)
+    expect(rows[0]!.payload.seq).toBeGreaterThan(0)
   })
 })
