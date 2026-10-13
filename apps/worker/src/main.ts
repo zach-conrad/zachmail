@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { hostname } from 'node:os'
 import postgres from 'postgres'
-import { handlers } from './handlers'
+import { buildHandlers } from './handlers'
 import { pgQueue } from './queue'
 import { Runner } from './runner'
 
@@ -15,7 +15,7 @@ const log = (msg: string, extra: Record<string, unknown> = {}) =>
 
 // Session-mode connection: LISTEN needs a persistent connection (not the transaction pooler).
 const sql = postgres(DATABASE_URL, { max: 5, idle_timeout: 0 })
-const runner = new Runner({ workerId, queue: pgQueue(sql), handlers, log })
+const runner = new Runner({ workerId, queue: pgQueue(sql), handlers: buildHandlers(sql), log })
 
 let lastTickOk = Date.now()
 const tick = () =>

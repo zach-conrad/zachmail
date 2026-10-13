@@ -15,10 +15,16 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
+    "@zachmail/core": "workspace:*",
+    "@zachmail/db": "workspace:*",
+    "@zachmail/engine": "workspace:*",
+    "@zachmail/providers": "workspace:*",
     "hono": "^4.13.13",
-    "jose": "^6.2.12"
+    "jose": "^6.2.12",
+    "postgres": "^3.4.9"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.9",
     "@zachmail/config": "workspace:*",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.15"

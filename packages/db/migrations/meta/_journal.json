@@ -15,6 +15,20 @@
       "when": 1791905717823,
       "tag": "0001_auth_hook_and_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791906679582,
+      "tag": "0002_mail_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791906700023,
+      "tag": "0003_realtime_nudge",
+      "breakpoints": true
     }
   ]
 }

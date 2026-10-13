@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./server": "./src/server/index.ts"
+    "./server": "./src/server/index.ts",
+    "./testing": "./test/helpers.ts"
   },
   "scripts": {
     "typecheck": "tsc -p .",
@@ -15,11 +16,14 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@zachmail/core": "workspace:*",
+    "@zachmail/providers": "workspace:*",
     "drizzle-orm": "^0.45.4"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.9",
     "@zachmail/config": "workspace:*",
-    "drizzle-kit": "^0.31.11"
+    "drizzle-kit": "^0.31.11",
+    "postgres": "^3.4.9"
   }
 }

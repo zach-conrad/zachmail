@@ -6,12 +6,14 @@
 import { sql } from 'drizzle-orm'
 import {
   bigserial,
+  boolean,
   index,
   integer,
   jsonb,
   pgEnum,
   pgPolicy,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -122,6 +124,166 @@ export const jobs = pgTable(
   ],
 ).enableRLS()
 
+export const folderKindEnum = pgEnum('folder_kind', [
+  'inbox',
+  'sent',
+  'drafts',
+  'trash',
+  'spam',
+  'archive',
+  'starred',
+  'important',
+  'custom',
+])
+
+export interface Address {
+  name?: string
+  email: string
+}
+
+/** Provider-neutral "labels": Gmail labels, Graph folders/categories, IMAP mailboxes. */
+export const folders = pgTable(
+  'folders',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: ownerId(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    providerId: text('provider_id').notNull(),
+    name: text('name').notNull(),
+    kind: folderKindEnum('kind').notNull().default('custom'),
+    unreadCount: integer('unread_count').notNull().default(0),
+    totalCount: integer('total_count').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('folders_account_provider').on(t.accountId, t.providerId),
+    ownRowsReadOnly('folders'),
+  ],
+).enableRLS()
+
+export const threads = pgTable(
+  'threads',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: ownerId(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    providerThreadId: text('provider_thread_id').notNull(),
+    subject: text('subject').notNull().default(''),
+    snippet: text('snippet').notNull().default(''),
+    participants: jsonb('participants').$type<Address[]>().notNull().default([]),
+    lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull(),
+    messageCount: integer('message_count').notNull().default(0),
+    unread: boolean('unread').notNull().default(false),
+    starred: boolean('starred').notNull().default(false),
+    hasAttachments: boolean('has_attachments').notNull().default(false),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('threads_account_provider').on(t.accountId, t.providerThreadId),
+    index('threads_user_recent').on(t.userId, t.lastMessageAt.desc()),
+    ownRowsReadOnly('threads'),
+  ],
+).enableRLS()
+
+export const threadFolders = pgTable(
+  'thread_folders',
+  {
+    threadId: uuid('thread_id')
+      .notNull()
+      .references(() => threads.id, { onDelete: 'cascade' }),
+    folderId: uuid('folder_id')
+      .notNull()
+      .references(() => folders.id, { onDelete: 'cascade' }),
+    userId: ownerId(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.threadId, t.folderId] }),
+    index('thread_folders_folder').on(t.folderId),
+    ownRowsReadOnly('thread_folders'),
+  ],
+).enableRLS()
+
+export const messages = pgTable(
+  'messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: ownerId(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    threadId: uuid('thread_id')
+      .notNull()
+      .references(() => threads.id, { onDelete: 'cascade' }),
+    providerMessageId: text('provider_message_id').notNull(),
+    rfc822MessageId: text('rfc822_message_id'),
+    inReplyTo: text('in_reply_to'),
+    references: text('references').array().notNull().default([]),
+    from: jsonb('from').$type<Address | null>(),
+    to: jsonb('to').$type<Address[]>().notNull().default([]),
+    cc: jsonb('cc').$type<Address[]>().notNull().default([]),
+    bcc: jsonb('bcc').$type<Address[]>().notNull().default([]),
+    replyTo: jsonb('reply_to').$type<Address[]>().notNull().default([]),
+    subject: text('subject').notNull().default(''),
+    snippet: text('snippet').notNull().default(''),
+    date: timestamp('date', { withTimezone: true }).notNull(),
+    providerLabels: text('provider_labels').array().notNull().default([]),
+    unread: boolean('unread').notNull().default(false),
+    starred: boolean('starred').notNull().default(false),
+    hasAttachments: boolean('has_attachments').notNull().default(false),
+    listUnsubscribe: text('list_unsubscribe'),
+    size: integer('size').notNull().default(0),
+    bodyStatus: text('body_status', { enum: ['none', 'cached'] })
+      .notNull()
+      .default('none'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('messages_account_provider').on(t.accountId, t.providerMessageId),
+    index('messages_thread_date').on(t.threadId, t.date),
+    ownRowsReadOnly('messages'),
+  ],
+).enableRLS()
+
+/** Sanitized bodies. Large ones (> ~256 KB) go to Storage and keep only the key here. */
+export const messageBodies = pgTable(
+  'message_bodies',
+  {
+    messageId: uuid('message_id')
+      .primaryKey()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    userId: ownerId(),
+    html: text('html'),
+    text: text('text'),
+    storageKey: text('storage_key'),
+    hasRemoteImages: boolean('has_remote_images').notNull().default(false),
+    fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [ownRowsReadOnly('message_bodies')],
+).enableRLS()
+
+export const attachments = pgTable(
+  'attachments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: ownerId(),
+    messageId: uuid('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    filename: text('filename').notNull().default(''),
+    mime: text('mime').notNull().default('application/octet-stream'),
+    size: integer('size').notNull().default(0),
+    providerAttachmentId: text('provider_attachment_id'),
+    contentId: text('content_id'),
+    inline: boolean('inline').notNull().default(false),
+    storageKey: text('storage_key'),
+  },
+  (t) => [index('attachments_message').on(t.messageId), ownRowsReadOnly('attachments')],
+).enableRLS()
+
 /** Single-row allowlist checked by the auth hook: only these emails can ever get a session. */
 export const allowedUsers = pgTable('allowed_users', {
   email: text('email').primaryKey(),
@@ -132,3 +294,6 @@ export type Account = typeof accounts.$inferSelect
 export type Change = typeof changes.$inferSelect
 export type Job = typeof jobs.$inferSelect
 export type NewJob = typeof jobs.$inferInsert
+export type Folder = typeof folders.$inferSelect
+export type Thread = typeof threads.$inferSelect
+export type Message = typeof messages.$inferSelect

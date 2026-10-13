@@ -12,6 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@zachmail/db": "workspace:*",
+    "@zachmail/engine": "workspace:*",
     "postgres": "^3.4.9"
   },
   "devDependencies": {
