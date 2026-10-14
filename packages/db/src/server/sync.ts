@@ -3,6 +3,7 @@ import { emptyDeletes, emptyRows } from '@zachmail/core'
 import type { SyncBatch } from '@zachmail/providers'
 import { attachSentReminders, unsnoozeOnReply } from './snooze'
 import { SELECT_SPLIT_RULE, recomputeSplits } from './splits'
+import { SELECT_NUDGE_DISMISSAL, SELECT_SNIPPET } from './composer'
 import type { Db, Queryable } from './sql'
 
 type Entity = keyof Deletes
@@ -318,6 +319,8 @@ export async function readDelta(
       thread: [],
       message: [],
       splitRule: [],
+      snippet: [],
+      nudgeDismissal: [],
     }
     const deletes = emptyDeletes()
     const opIds: string[] = []
@@ -348,6 +351,8 @@ export async function readDelta(
     await load('threads', SELECT_THREAD, 't', want.thread)
     await load('messages', SELECT_MESSAGE, 'm', want.message)
     await load('splitRules', SELECT_SPLIT_RULE, 'r', want.splitRule)
+    await load('snippets', SELECT_SNIPPET, 's', want.snippet)
+    await load('nudgeDismissals', SELECT_NUDGE_DISMISSAL, 'n', want.nudgeDismissal)
 
     const ops = opIds.length ? await readOpStatuses(tx, userId, opIds) : []
 
@@ -379,6 +384,8 @@ const entityOf = (k: keyof Rows): Entity =>
       threads: 'thread',
       messages: 'message',
       splitRules: 'splitRule',
+      snippets: 'snippet',
+      nudgeDismissals: 'nudgeDismissal',
     }) as const
   )[k]
 
@@ -403,6 +410,8 @@ export async function readBootstrap(
       accounts: await tx.query(`${SELECT_ACCOUNT} WHERE a.user_id = $1`, [userId]),
       folders: await tx.query(`${SELECT_FOLDER} WHERE f.user_id = $1`, [userId]),
       splitRules: await tx.query(`${SELECT_SPLIT_RULE} WHERE r.user_id = $1`, [userId]),
+      snippets: await tx.query(`${SELECT_SNIPPET} WHERE s.user_id = $1`, [userId]),
+      nudgeDismissals: await tx.query(`${SELECT_NUDGE_DISMISSAL} WHERE n.user_id = $1`, [userId]),
     })
     const cutoff = `now() - make_interval(days => $2)`
     let cursor: { at: number; id: string } | null = null
