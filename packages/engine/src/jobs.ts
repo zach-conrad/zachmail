@@ -32,7 +32,7 @@ export const JOB = {
   outbox: OUTBOX_JOB,
   draft: DRAFT_JOB,
   wake: WAKE_JOB,
-  recomputeSplits,
+  splits: 'splits.recompute',
 } as const
 
 const RECENT_DAYS = 90
