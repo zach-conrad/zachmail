@@ -285,6 +285,12 @@ describe('sync endpoints', () => {
     expect((await authed('/api/send/nope', { method: 'DELETE' })).status).toBe(400)
   })
 
+  it('lists contacts from the mirror', async () => {
+    const res = await authed('/api/contacts')
+    const { contacts } = (await res.json()) as { contacts: { email: string }[] }
+    expect(contacts.map((c) => c.email)).toContain('ana@x.com')
+  })
+
   it('returns compacted deltas', async () => {
     const delta = (await (await authed('/api/sync?since=0')).json()) as {
       seq: number
