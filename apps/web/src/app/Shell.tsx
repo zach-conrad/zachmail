@@ -5,6 +5,7 @@ import { newDraft } from '../compose/draft'
 import { Inbox } from '../inbox/Inbox'
 import { endInteraction } from '../lib/perf'
 import { keymap, splitTabs, type CommandId, type FolderRow, type SplitKey } from '@zachmail/core'
+import { REMINDERS } from '@zachmail/local-store'
 import { useData } from '../data/DataProvider'
 import { SplitRulesEditor } from '../splits/SplitRulesEditor'
 import { canRun, useCommands } from '../lib/useCommands'
@@ -37,12 +38,14 @@ export function Shell({ split }: { split: SplitKey }) {
 
   const goSplit = (id: SplitKey) => void navigate({ to: '/inbox/$split', params: { split: id } })
   const cycle = (dir: 1 | -1) => {
+    // From Reminders, tab goes to the first split and shift+tab to the last.
     const i = tabs.findIndex((s) => s.key === split)
-    goSplit(tabs[(i + dir + tabs.length) % tabs.length]!.key)
+    const next = i < 0 ? (dir === 1 ? 0 : tabs.length - 1) : i + dir
+    goSplit(tabs[(next + tabs.length) % tabs.length]!.key)
   }
 
   // A custom split whose rule was deleted (here or on another device) falls back to Important.
-  const known = splitRules === null || tabs.some((t) => t.key === split)
+  const known = split === REMINDERS || splitRules === null || tabs.some((t) => t.key === split)
   useEffect(() => {
     if (!known) goSplit('important')
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -58,6 +61,7 @@ export function Shell({ split }: { split: SplitKey }) {
       ? {}
       : { 'nav.nextSplit': () => cycle(1), 'nav.prevSplit': () => cycle(-1) }),
     'go.inbox': () => goSplit('important'),
+    'go.reminders': () => goSplit(REMINDERS),
     'app.palette': () => open('palette'),
     'app.shortcuts': () => open('shortcuts'),
     'compose.new': () => {

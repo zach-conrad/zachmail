@@ -6,7 +6,7 @@ import {
   redirect,
 } from '@tanstack/react-router'
 import { Shell } from './app/Shell'
-import { isSplitKey } from './app/splits'
+import { isView } from './app/splits'
 import { LoginScreen } from './auth/LoginScreen'
 import { useAuth } from './auth/session'
 import { DataProvider } from './data/DataProvider'
@@ -36,12 +36,12 @@ const inboxRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/inbox/$split',
   beforeLoad: ({ params }) => {
-    if (!isSplitKey(params.split))
+    if (!isView(params.split))
       throw redirect({ to: '/inbox/$split', params: { split: 'important' } })
   },
   component: function InboxRoute() {
     const { split } = inboxRoute.useParams()
-    return <Shell split={isSplitKey(split) ? split : 'important'} />
+    return <Shell split={isView(split) ? split : 'important'} />
   },
 })
 

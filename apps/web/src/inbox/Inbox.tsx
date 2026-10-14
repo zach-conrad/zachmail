@@ -14,9 +14,11 @@ import {
 import { useData } from '../data/DataProvider'
 import { ListModel } from '../data/listModel'
 import { beginInteraction, endInteraction, markOnce } from '../lib/perf'
+import { dueTime } from '../lib/format'
 import { useCommands } from '../lib/useCommands'
 import { InboxZero } from './InboxZero'
 import { LabelPicker, type LabelChoice } from './LabelPicker'
+import { SnoozePicker } from './SnoozePicker'
 import { ThreadList } from './ThreadList'
 import { ThreadView } from './ThreadView'
 
@@ -28,6 +30,7 @@ const TIMED: CommandId[] = [
   'thread.trash',
   'thread.spam',
   'thread.mute',
+  'thread.snooze',
   'thread.star',
   'thread.toggleRead',
   'undo',
@@ -38,7 +41,7 @@ const describe = (verb: string, rows: ThreadListItem[]) =>
     ? `${verb} · “${rows[0]!.subject || '(no subject)'}”`
     : `${verb} · ${rows.length} conversations`
 
-/** One split: the virtualized list, the reading pane and their keyboard model. */
+/** One split (or Reminders): the virtualized list, the reading pane and their keyboard model. */
 export function Inbox({ split, active }: { split: SplitKey; active: boolean }) {
   const { client, threads, triage, compose, ownEmails } = useData()
   const model = useMemo(() => new ListModel(client, { split }), [client, split])
@@ -51,7 +54,7 @@ export function Inbox({ split, active }: { split: SplitKey; active: boolean }) {
   // The thread the user meant, so focus follows it when new mail shifts the list.
   const wanted = useRef<string | null>(null)
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
-  const [picker, setPicker] = useState<'label' | 'move' | null>(null)
+  const [picker, setPicker] = useState<'label' | 'move' | 'snooze' | null>(null)
 
   // Threads worth keeping warm: the open one, the focused one and its neighbours.
   const keepKey = [openId, focusId, model.get(focus - 1)?.id, model.get(focus + 1)?.id]
@@ -212,6 +215,16 @@ export function Inbox({ split, active }: { split: SplitKey; active: boolean }) {
     }
   }
 
+  /** h: archive now, back in the inbox (unread) at `until`. */
+  const snooze = (until: number) => {
+    const rows = targets()
+    if (rows.length)
+      act(
+        { kind: 'snooze', threadIds: rows.map((r) => r.id), until },
+        describe(`Snoozed until ${dueTime(until)}`, rows),
+      )
+  }
+
   /** r / a / f: open the thread (if needed) with a reply or forward under it. */
   const reply = (kind: 'reply' | 'replyAll' | 'forward') => {
     const id = openId ?? focusId
@@ -261,6 +274,7 @@ export function Inbox({ split, active }: { split: SplitKey; active: boolean }) {
           'thread.toggleRead': () => toggle('unread'),
           'thread.label': () => targets().length && setPicker('label'),
           'thread.move': () => targets().length && setPicker('move'),
+          'thread.snooze': () => targets().length && setPicker('snooze'),
           'compose.reply': () => reply('reply'),
           'compose.replyAll': () => reply('replyAll'),
           'compose.forward': () => reply('forward'),
@@ -290,16 +304,28 @@ export function Inbox({ split, active }: { split: SplitKey; active: boolean }) {
     [model],
   )
 
-  const pickerEl = picker && (
-    <LabelPicker
-      mode={picker}
-      choices={choices(targets())}
-      onPick={(name) => applyLabel(picker, name)}
-      onClose={() => setPicker(null)}
-    />
-  )
+  const pickerEl =
+    picker === 'snooze' ? (
+      <SnoozePicker title="Remind me" onPick={snooze} onClose={() => setPicker(null)} />
+    ) : (
+      picker && (
+        <LabelPicker
+          mode={picker}
+          choices={choices(targets())}
+          onPick={(name) => applyLabel(picker, name)}
+          onClose={() => setPicker(null)}
+        />
+      )
+    )
 
-  if (count === 0) return <InboxZero hero={split === 'important'} />
+  if (count === 0)
+    return split === 'reminders' ? (
+      <section className="zero" aria-live="polite">
+        <p className="muted">Nothing snoozed. Press H on a thread to bring it back later.</p>
+      </section>
+    ) : (
+      <InboxZero hero={split === 'important'} />
+    )
 
   return (
     <div className="panes" data-open={openId ? '' : undefined}>
