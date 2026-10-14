@@ -86,6 +86,11 @@ export interface ProviderChange {
   starred?: boolean
 }
 
+export interface SentRef {
+  providerMessageId: string
+  providerThreadId: string
+}
+
 export interface MailProvider {
   /** Initial state to record before a backfill starts (e.g. the current Gmail historyId). */
   initialState(): Promise<SyncState>
@@ -100,6 +105,8 @@ export interface MailProvider {
   fetchAttachment(providerMessageId: string, providerAttachmentId: string): Promise<Uint8Array>
   /** Applies a change to every message of each thread. Threads that no longer exist are skipped. */
   apply(providerThreadIds: string[], change: ProviderChange): Promise<void>
+  /** Sends a complete RFC 5322 message (Bcc header included), threaded when given a thread. */
+  send(raw: Uint8Array, opts?: { providerThreadId?: string }): Promise<SentRef>
   /** Current metadata of whole threads, used to restore the mirror after a failed write. */
   fetchThreads(providerThreadIds: string[]): Promise<SyncBatch>
 }

@@ -12,8 +12,9 @@ export class GmailHttpError extends ProviderError {
   constructor(
     readonly status: number,
     message: string,
+    retriable = status === 429 || status >= 500,
   ) {
-    super(message, status === 429 || status >= 500)
+    super(message, retriable)
   }
 }
 
@@ -35,8 +36,12 @@ export class GmailApi {
     return this.request<T>('GET', path, query)
   }
 
-  async post<T>(path: string, body: unknown) {
-    return this.request<T>('POST', path, {}, body)
+  /**
+   * `idempotent: false` (sends) never retries a 5xx: Gmail may have acted before failing, and
+   * a retry could deliver the message twice.
+   */
+  async post<T>(path: string, body: unknown, opts: { idempotent?: boolean } = {}) {
+    return this.request<T>('POST', path, {}, body, opts.idempotent ?? true)
   }
 
   private async request<T>(
@@ -44,6 +49,7 @@ export class GmailApi {
     path: string,
     query: Record<string, string | number | boolean | string[] | undefined>,
     body?: unknown,
+    idempotent = true,
   ): Promise<T> {
     const url = new URL(BASE + path)
     for (const [k, v] of Object.entries(query)) {
@@ -70,10 +76,9 @@ export class GmailApi {
         continue
       }
       if (res.status === 401) throw new ProviderAuthError('Gmail rejected the access token')
-      const retriable =
-        res.status === 429 ||
-        res.status >= 500 ||
-        (res.status === 403 && (await isRateLimit(res.clone())))
+      const rateLimited =
+        res.status === 429 || (res.status === 403 && (await isRateLimit(res.clone())))
+      const retriable = rateLimited || (idempotent && res.status >= 500)
       if (retriable && attempt < this.maxRetries) {
         const retryAfter = Number(res.headers.get('retry-after'))
         await sleep(retryAfter > 0 ? retryAfter * 1000 : 2 ** attempt * 500 + Math.random() * 250)
@@ -82,6 +87,7 @@ export class GmailApi {
       throw new GmailHttpError(
         res.status,
         `Gmail ${method} ${path} → ${res.status}: ${await res.text()}`,
+        retriable,
       )
     }
   }

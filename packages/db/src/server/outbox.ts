@@ -1,4 +1,12 @@
-import { opEffect, type FolderKind, type OpEffect, type OpEnvelope } from '@zachmail/core'
+import {
+  DEFAULT_UNDO_MS,
+  opEffect,
+  type Address,
+  type FolderKind,
+  type OpEffect,
+  type OpEnvelope,
+  type SendRequest,
+} from '@zachmail/core'
 import type { Db, Queryable } from './sql'
 import { recomputeThreads, recordChanges } from './sync'
 
@@ -89,17 +97,21 @@ export async function acceptOps(db: Db, userId: string, ops: OpEnvelope[]): Prom
             effect.starred ?? null,
           ],
         )
+        const muted =
+          effect.muted === undefined
+            ? []
+            : await tx.query(
+                `UPDATE threads SET muted = $2, updated_at = now()
+                 WHERE id = ANY($1::uuid[]) AND muted <> $2 RETURNING id`,
+                [threadIds, effect.muted],
+              )
         if (changed.length) {
-          await recordChanges(
-            tx,
-            userId,
-            'message',
-            changed.map((m) => m.id),
-            'upsert',
-          )
+          const messageIds = changed.map((m) => m.id)
+          await recordChanges(tx, userId, 'message', messageIds, 'upsert')
           await recomputeThreads(tx, userId, threadIds)
-          await recordChanges(tx, userId, 'thread', threadIds, 'upsert')
         }
+        if (changed.length || muted.length)
+          await recordChanges(tx, userId, 'thread', threadIds, 'upsert')
       }
       await recordChanges(tx, userId, 'op', [id], 'upsert')
       result.accepted.push(id)
@@ -197,6 +209,18 @@ export async function releaseOutbox(db: Queryable, item: OutboxItem) {
   )
 }
 
+/** Muted threads that new mail put back in the inbox; the caller archives them again. */
+export async function mutedThreadsInInbox(db: Queryable, accountId: string): Promise<string[]> {
+  const rows = await db.query<{ id: string }>(
+    `SELECT t.id FROM threads t
+     JOIN thread_folders tf ON tf.thread_id = t.id
+     JOIN folders f ON f.id = tf.folder_id AND f.kind = 'inbox'
+     WHERE t.account_id = $1 AND t.muted`,
+    [accountId],
+  )
+  return rows.map((r) => r.id)
+}
+
 /** Accounts whose outbox has work nobody picked up (a lost job, a crashed worker). */
 export async function stalledOutboxAccounts(db: Queryable) {
   return db.query<{ userId: string; accountId: string }>(
@@ -205,4 +229,76 @@ export async function stalledOutboxAccounts(db: Queryable) {
      WHERE (o.state = 'pending' AND o.not_before < now() - interval '30 seconds')
         OR (o.state = 'in_flight' AND o.locked_at < now() - ${STALE})`,
   )
+}
+
+/** Payload of a send outbox row. */
+export interface SendPayload {
+  to: Address[]
+  cc: Address[]
+  bcc: Address[]
+  subject: string
+  html: string
+  replyToMessageId: string | null
+}
+
+export class SendRejectedError extends Error {
+  override name = 'SendRejectedError'
+}
+
+/**
+ * Queues a message to send after the undo window (or at `sendAt`). Replays return the
+ * original schedule.
+ */
+export async function acceptSend(db: Db, userId: string, req: SendRequest): Promise<number> {
+  return db.transaction(async (tx) => {
+    const [account] = await tx.query(`SELECT id FROM accounts WHERE id = $1 AND user_id = $2`, [
+      req.accountId,
+      userId,
+    ])
+    if (!account) throw new SendRejectedError('No such account')
+    if (req.replyToMessageId) {
+      const [parent] = await tx.query(`SELECT id FROM messages WHERE id = $1 AND account_id = $2`, [
+        req.replyToMessageId,
+        req.accountId,
+      ])
+      if (!parent) throw new SendRejectedError('The message being answered is gone')
+    }
+    const payload: SendPayload = {
+      to: req.to,
+      cc: req.cc ?? [],
+      bcc: req.bcc ?? [],
+      subject: req.subject,
+      html: req.html,
+      replyToMessageId: req.replyToMessageId ?? null,
+    }
+    const notBefore = Math.max(Date.now() + (req.undoMs ?? DEFAULT_UNDO_MS), req.sendAt ?? 0)
+    const inserted = await tx.query<{ at: number }>(
+      `INSERT INTO outbox (user_id, op_id, account_id, kind, payload, not_before)
+       VALUES ($1, $2, $3, 'send', $4::jsonb, to_timestamp($5::float8 / 1000))
+       ON CONFLICT (op_id, account_id) DO NOTHING
+       RETURNING (extract(epoch FROM not_before) * 1000)::float8 AS at`,
+      [userId, req.id, req.accountId, payload, notBefore],
+    )
+    if (inserted.length) {
+      await recordChanges(tx, userId, 'op', [req.id], 'upsert')
+      return inserted[0]!.at
+    }
+    const [existing] = await tx.query<{ at: number }>(
+      `SELECT (extract(epoch FROM not_before) * 1000)::float8 AS at FROM outbox
+       WHERE op_id = $1 AND user_id = $2 AND kind = 'send'`,
+      [req.id, userId],
+    )
+    if (!existing) throw new SendRejectedError('That id is already used by another op')
+    return existing.at
+  })
+}
+
+/** Undo send: succeeds only while the worker hasn't started sending. */
+export async function cancelSend(db: Queryable, userId: string, opId: string): Promise<boolean> {
+  const gone = await db.query(
+    `DELETE FROM outbox WHERE op_id = $1 AND user_id = $2 AND kind = 'send' AND state = 'pending'
+     RETURNING id`,
+    [opId, userId],
+  )
+  return gone.length > 0
 }
