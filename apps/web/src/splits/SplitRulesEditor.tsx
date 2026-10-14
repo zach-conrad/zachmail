@@ -71,7 +71,7 @@ export function SplitRulesEditor({
   onClose: () => void
 }) {
   const sorted = sortSplitRules(rules)
-  const [draft, setDraft] = useState<SplitRuleRow | null>(initial ?? sorted[0] ?? null)
+  const [draft, setDraft] = useState<SplitRuleRow | null>(() => initial ?? sorted[0] ?? newRule(1))
   const isNew = !!draft && !rules.some((r) => r.id === draft.id)
   const saved = draft && rules.find((r) => r.id === draft.id)
   const dirty = !!draft && (isNew || JSON.stringify(saved) !== JSON.stringify(draft))
@@ -82,9 +82,7 @@ export function SplitRulesEditor({
   const edit = (patch: Partial<SplitRuleRow>) => setDraft((d) => (d ? { ...d, ...patch } : d))
   const editCondition = (i: number, patch: Partial<SplitCondition>) =>
     setDraft((d) =>
-      d
-        ? { ...d, conditions: d.conditions.map((c, j) => (j === i ? { ...c, ...patch } : c)) }
-        : d,
+      d ? { ...d, conditions: d.conditions.map((c, j) => (j === i ? { ...c, ...patch } : c)) } : d,
     )
 
   const select = (r: SplitRuleRow) => setDraft(r)
@@ -250,9 +248,7 @@ export function SplitRulesEditor({
                     className="icon-btn"
                     aria-label="Remove condition"
                     disabled={draft.conditions.length === 1}
-                    onClick={() =>
-                      edit({ conditions: draft.conditions.filter((_, j) => j !== i) })
-                    }
+                    onClick={() => edit({ conditions: draft.conditions.filter((_, j) => j !== i) })}
                   >
                     ×
                   </button>

@@ -1,9 +1,16 @@
-import type { OpEnvelope } from '@zachmail/core'
+import type { OpEnvelope, SplitRuleRow } from '@zachmail/core'
 import type { StoreApi } from '@zachmail/local-store'
 
 /** Store reads the UI may call over the worker boundary (writes stay inside the worker). */
 export type ReadMethod =
-  'accounts' | 'folders' | 'countThreads' | 'listThreads' | 'indexOfThread' | 'getThread' | 'unread'
+  | 'accounts'
+  | 'folders'
+  | 'countThreads'
+  | 'listThreads'
+  | 'indexOfThread'
+  | 'getThread'
+  | 'unread'
+  | 'splitRules'
 
 export interface DataApi extends Pick<StoreApi, ReadMethod> {
   /** Fetch and cache the bodies a thread view needs; resolves once they are stored. */
@@ -21,6 +28,8 @@ export type ToWorker =
   | { type: 'nudge' }
   /** A triage op the UI already applied on screen: persist, overlay and send it. */
   | { type: 'op'; env: OpEnvelope }
+  /** Save (rule) or delete (null) a split rule: re-split locally now, send when online. */
+  | { type: 'splitRule'; id: string; rule: SplitRuleRow | null }
   | { type: 'call'; id: number; method: Method; args: unknown[] }
 
 export interface WorkerStatus {

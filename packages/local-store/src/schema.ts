@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS threads (
   has_attachments INTEGER NOT NULL,
   folder_ids TEXT NOT NULL,
   split TEXT,
+  -- Split inputs cached by the last full classify, so a rule edit re-splits without joins.
+  split_from TEXT,
+  list_unsub INTEGER NOT NULL DEFAULT 0,
   -- The server's {folderIds, unread, starred} while pending ops overlay this row, else NULL.
   srv TEXT
 );

@@ -1,4 +1,4 @@
-import type { CommandId, MailOp, SimpleOpKind, SplitId } from '@zachmail/core'
+import type { CommandId, MailOp, SimpleOpKind, SplitKey } from '@zachmail/core'
 import type { ThreadListItem } from '@zachmail/local-store'
 import {
   useCallback,
@@ -38,7 +38,7 @@ const describe = (verb: string, rows: ThreadListItem[]) =>
     : `${verb} · ${rows.length} conversations`
 
 /** One split: the virtualized list, the reading pane and their keyboard model. */
-export function Inbox({ split, active }: { split: SplitId; active: boolean }) {
+export function Inbox({ split, active }: { split: SplitKey; active: boolean }) {
   const { client, threads, triage } = useData()
   const model = useMemo(() => new ListModel(client, { split }), [client, split])
   const version = useSyncExternalStore(model.subscribe, model.getVersion)

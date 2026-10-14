@@ -1,4 +1,4 @@
-import type { FolderRow, MessageRow, SplitRuleRow, ThreadRow } from '@zachmail/core'
+import type { FolderRow, MessageRow, OpEnvelope, SplitRuleRow, ThreadRow } from '@zachmail/core'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { openSqliteWasm } from '../src/sqlite-wasm'
 import { SqlStore } from '../src/store'
@@ -251,6 +251,11 @@ describe('split rules', () => {
     position: 1,
   }
   const inSplit = (split: string) => store.listThreads({ split }, 0, 10).map((t) => t.id)
+  const settle = () => {
+    while (store.resplitStep()) {
+      // steps until nothing is left to move
+    }
+  }
 
   beforeEach(() => {
     store.apply(
@@ -269,6 +274,7 @@ describe('split rules', () => {
   it('re-splits at once on a local edit and keeps it over stale synced rows', () => {
     expect(inSplit('important')).toEqual(['t2', 't1'])
     store.editSplitRule(RULE.id, RULE)
+    settle()
     expect(inSplit('r1')).toEqual(['t1'])
     expect(store.splitRules()).toEqual([RULE])
     // A delta from before the edit reached the server does not undo it on screen.
@@ -282,14 +288,17 @@ describe('split rules', () => {
     expect(inSplit('r1')).toEqual(['t1'])
 
     store.apply({}, { splitRule: ['r1'] }, 3)
+    settle()
     expect(inSplit('important')).toEqual(['t2', 't1'])
   })
 
   it('drops a rejected edit and keeps unsent edits across a re-bootstrap', () => {
     store.editSplitRule(RULE.id, RULE)
+    settle()
     store.reset()
     expect(store.pendingSplitRules()).toHaveLength(1)
     store.rejectSplitRule('r1')
+    settle()
     expect(store.splitRules()).toEqual([])
   })
 
@@ -300,6 +309,7 @@ describe('split rules', () => {
       target: 'other',
       conditions: [{ field: 'to', value: 'team@work' }],
     })
+    settle()
     expect(inSplit('other')).toEqual(['t2'])
   })
 
@@ -319,6 +329,7 @@ describe('split rules', () => {
     )
     const t0 = performance.now()
     store.editSplitRule(RULE.id, RULE)
+    settle()
     const ms = performance.now() - t0
     expect(store.countThreads({ split: 'r1' })).toBe(Math.ceil(n / 3) + 1)
     // Runs in the data worker, off the UI thread; keep it well under a second on CI.

@@ -2,11 +2,15 @@
 import {
   OpDrain,
   SyncClient,
+  flushSplitRules,
   httpTransport,
+  splitRuleHttp,
   startSyncLoop,
   type MessageBody,
   type OpEnvelope,
   type OpsResponse,
+  type SplitRuleRemote,
+  type SplitRuleRow,
   type SyncSink,
   type SyncTransport,
 } from '@zachmail/core'
@@ -24,6 +28,7 @@ let token: string | null = null
 let sync: { pull(): Promise<void> } | null = null
 let api: DataApi | null = null
 let enqueue: ((env: OpEnvelope) => void) | null = null
+let editRule: ((id: string, rule: SplitRuleRow | null) => void) | null = null
 let drain = () => {}
 const queue: ToWorker[] = []
 const status: WorkerStatus = { storage: 'memory', syncing: false, error: null }
@@ -45,6 +50,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     drain()
   } else if (!api || !enqueue) queue.push(m)
   else if (m.type === 'op') enqueue(m.env)
+  else if (m.type === 'splitRule') editRule!(m.id, m.rule)
   else void call(m)
 }
 
@@ -70,6 +76,7 @@ async function init(config: InitConfig) {
   let transport: SyncTransport
   // Demo mode has no server: ops are accepted on the spot and settle as if done.
   let sendOps: ((ops: OpEnvelope[]) => Promise<OpsResponse>) | null = null
+  let rulesRemote: SplitRuleRemote | null = null
   if (config.mode === 'demo') {
     const fx = await import('./fixture')
     transport = fx.fixtureTransport(config.threads)
@@ -81,6 +88,7 @@ async function init(config: InitConfig) {
     transport = http
     fetchBody = (id) => http.body(id)
     sendOps = (ops) => http.ops({ ops })
+    rulesRemote = splitRuleHttp({ baseUrl: config.apiBase, token: () => token })
   }
 
   const inflight = new Set<string>()
@@ -91,6 +99,7 @@ async function init(config: InitConfig) {
     listThreads: (q, offset, limit) => store.listThreads(q, offset, limit),
     indexOfThread: (q, id) => store.indexOfThread(q, id),
     folders: () => store.folders(),
+    splitRules: () => store.splitRules(),
     getThread: (id) => store.getThread(id),
     async ensureBodies(threadIds) {
       const missing = store.bodiesMissing(threadIds).filter((m) => !inflight.has(m.messageId))
@@ -132,11 +141,58 @@ async function init(config: InitConfig) {
       post({ type: 'changed' })
     },
   })
-  drain = () => void ops.run()
+  // Rule edits are few and tiny: send them in order, retry on the next drain trigger.
+  let flushing = false
+  const ruleOutbox = {
+    pending: () => store.pendingSplitRules(),
+    ack: (p: Parameters<typeof store.ackSplitRule>[0]) => store.ackSplitRule(p),
+    reject: (id: string) => store.rejectSplitRule(id),
+  }
+  const flushRules = async () => {
+    if (flushing || (config.mode === 'live' && !token)) return
+    flushing = true
+    try {
+      if (!rulesRemote) for (const p of store.pendingSplitRules()) store.ackSplitRule(p)
+      else if (await flushSplitRules(ruleOutbox, rulesRemote)) {
+        post({ type: 'changed' })
+        void resplit()
+      }
+    } catch (err) {
+      console.warn('split rule sync failed; will retry', err)
+    } finally {
+      flushing = false
+    }
+  }
+  // A rules change moves threads a chunk per task, so list reads (J/K, scrolling) queued
+  // behind it run in between instead of waiting for the whole inbox.
+  let resplitting = false
+  const resplit = async () => {
+    if (resplitting) return
+    resplitting = true
+    try {
+      while (store.resplitPending()) {
+        store.resplitStep()
+        post({ type: 'changed' })
+        await new Promise((r) => setTimeout(r, 0))
+      }
+    } finally {
+      resplitting = false
+    }
+  }
+  editRule = (id, rule) => {
+    store.editSplitRule(id, rule)
+    void resplit()
+    void flushRules()
+  }
+  drain = () => {
+    void ops.run()
+    void flushRules()
+  }
 
   for (const m of queue.splice(0)) {
     if (m.type === 'call') void call(m)
     else if (m.type === 'op') enqueue(m.env)
+    else if (m.type === 'splitRule') editRule(m.id, m.rule)
   }
 
   const sink: SyncSink = {
@@ -144,6 +200,7 @@ async function init(config: InitConfig) {
     reset: () => store.reset(),
     apply(upserts, deletes, seq, ops = []) {
       store.apply(upserts, deletes, seq, ops)
+      if (store.resplitPending()) void resplit()
       for (const o of ops)
         if (o.state === 'failed')
           post({ type: 'opFailed', id: o.id, error: o.error ?? 'The change could not be applied' })

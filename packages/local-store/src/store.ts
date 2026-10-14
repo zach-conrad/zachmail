@@ -102,6 +102,12 @@ export interface StoreApi extends SyncSink {
   pendingSplitRules(): PendingSplitRule[]
   ackSplitRule(sent: PendingSplitRule): void
   rejectSplitRule(id: string): void
+  /**
+   * A rules change re-splits in steps: threads still to move, and one step that moves up to
+   * `max` of them. Run steps until 0, yielding between them.
+   */
+  resplitPending(): number
+  resplitStep(max?: number): number
 }
 
 /** The fields of a thread that ops change; `srv` holds the server's copy while overlaid. */
@@ -141,6 +147,8 @@ export class SqlStore implements StoreApi {
   private ops: QueuedOp[] = []
   private rules: SplitRuleTable
   private compiled: CompiledSplitRules = compileSplitRules([])
+  /** Threads a rules change moves, written a chunk at a time by `resplitStep`. */
+  private resplitIds: string[] = []
 
   constructor(private db: SqlDriver) {
     db.exec('PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY; PRAGMA cache_size = -32000;')
@@ -260,8 +268,14 @@ export class SqlStore implements StoreApi {
         }
         lookupsChanged ||= !!deletes.account?.length || !!deletes.folder?.length
       }
-      lookupsChanged =
-        this.rules.applySynced(upserts.splitRules, deletes?.splitRule ?? []) || lookupsChanged
+      // A synced rule change re-splits only when what the user sees changed: the server
+      // echoing a local edit back is a no-op.
+      let rulesChanged = false
+      if (this.rules.applySynced(upserts.splitRules, deletes?.splitRule ?? [])) {
+        const before = JSON.stringify(this.compiled.rules)
+        this.compiled = compileSplitRules(this.rules.effective())
+        rulesChanged = JSON.stringify(this.compiled.rules) !== before
+      }
       if (lookupsChanged) this.loadLookups()
       // Fresh server rows replaced any overlay; put pending ops back on top of them.
       if (this.ops.length && upserts.threads?.length) {
@@ -272,8 +286,9 @@ export class SqlStore implements StoreApi {
       if (settled.length) for (const id of this.settle(settled, false)) touched.add(id)
       if (lookupsChanged) {
         this.classify(null)
-      } else if (touched.size) {
-        this.classify([...touched])
+      } else {
+        if (rulesChanged) this.queueResplit()
+        if (touched.size) this.classify([...touched])
       }
       if (seq !== null)
         this.db.run(`INSERT OR REPLACE INTO meta (key, value) VALUES ('seq', ?)`, [String(seq)])
@@ -543,8 +558,19 @@ export class SqlStore implements StoreApi {
     this.tx(() => {
       this.rules.edit(id, rule)
       this.compiled = compileSplitRules(this.rules.effective())
-      this.classify(null)
     })
+    this.queueResplit()
+  }
+
+  resplitPending(): number {
+    return this.resplitIds.length
+  }
+
+  resplitStep(max = RESPLIT_CHUNK): number {
+    const ids = this.resplitIds.splice(0, max)
+    // Re-evaluates rather than replaying a stale verdict: a delta may have moved the thread.
+    if (ids.length) this.tx(() => this.classify(ids))
+    return this.resplitIds.length
   }
 
   pendingSplitRules(): PendingSplitRule[] {
@@ -560,8 +586,8 @@ export class SqlStore implements StoreApi {
     this.tx(() => {
       this.rules.reject(id)
       this.compiled = compileSplitRules(this.rules.effective())
-      this.classify(null)
     })
+    this.queueResplit()
   }
 
   /** Runs a query whose single row/column is JSON text, so results cross wasm in one string. */
@@ -571,10 +597,27 @@ export class SqlStore implements StoreApi {
   }
 
   /**
-   * Recomputes the split column for the given threads, or for every thread when null, with
-   * the same core evaluation the server runs on ingest.
+   * Recomputes the split column for the given threads, for every thread when null, or for
+   * the threads already in a split for 'inbox' (all a rules-only change can move), with the
+   * same core evaluation the server runs on ingest.
    */
-  private classify(threadIds: string[] | null) {
+  private classify(threadIds: string[] | null): void {
+    this.writeSplits(this.evaluate(threadIds))
+  }
+
+  /**
+   * After a rules change: finds the inbox threads whose split moves, reading the inputs cached
+   * on each thread (no message subqueries), and queues them. Writing them is the slow part
+   * (one scattered page per thread), so the caller writes in chunks and the worker stays free
+   * for list reads in between.
+   */
+  private queueResplit(): void {
+    const ids = new Set(this.resplitIds)
+    for (const [id] of this.evaluate('inbox')) ids.add(id)
+    this.resplitIds = [...ids]
+  }
+
+  private evaluate(threadIds: string[] | null | 'inbox'): SplitChange[] {
     type Row = [
       id: string,
       accountId: string,
@@ -582,29 +625,43 @@ export class SqlStore implements StoreApi {
       folderIds: string[],
       split: string | null,
       listUnsub: number,
-      senders: (string | null)[],
-      firstParticipant: string | null,
+      /** Latest 5 senders, newest first; null on the 'inbox' path, which reads `from`. */
+      senders: (string | null)[] | null,
+      first: string | null,
       recipients: string[] | null,
+      from: string | null,
+      storedListUnsub: number,
     ]
     const rules = this.compiled
     // Recipients cost a JSON walk per message, so they are gathered only when a rule asks.
     const recipients = rules.needsRecipients ? RECIPIENTS_SQL : 'NULL'
+    // A rules-only change reads the sender and List-Unsubscribe flag cached on the thread by
+    // the last full pass: no per-thread message subqueries, so 20k threads stay cheap.
+    const cached = threadIds === 'inbox'
     const sql = (where: string) => `
       SELECT json_group_array(json_array(t.id, t.account_id, t.subject, json(t.folder_ids), t.split,
-        EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND m.list_unsubscribe = 1),
+        ${
+          cached
+            ? 't.list_unsub, NULL, NULL'
+            : `EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND m.list_unsubscribe = 1),
         json((SELECT json_group_array(from_email) FROM (
            SELECT from_email FROM messages m WHERE m.thread_id = t.id
            ORDER BY m.date DESC LIMIT 5))),
-        lower(t.participants ->> '$[0].email'),
-        ${recipients})) AS j
+        lower(t.participants ->> '$[0].email')`
+        },
+        ${recipients}, t.split_from, t.list_unsub)) AS j
       FROM threads t ${where}`
-    const rows: Row[] = threadIds
-      ? chunks(threadIds).flatMap((ids) =>
-          this.json<Row[]>(sql(`WHERE t.id IN (${marks(ids.length)})`), ids),
-        )
-      : this.json<Row[]>(sql(''))
-    const changed: [string, SplitKey | null][] = []
-    for (const [id, accountId, subject, folderIds, prev, lu, senders, first, rcpt] of rows) {
+    const rows: Row[] = cached
+      ? this.json<Row[]>(sql('WHERE t.split IS NOT NULL'))
+      : threadIds
+        ? chunks(threadIds).flatMap((ids) =>
+            this.json<Row[]>(sql(`WHERE t.id IN (${marks(ids.length)})`), ids),
+          )
+        : this.json<Row[]>(sql(''))
+    const changed: SplitChange[] = []
+    for (const row of rows) {
+      const [id, accountId, subject, folderIds, prev, lu, senders, first, rcpt, from0, lu0] = row
+      const from = senders ? inboundSender(senders, this.ownEmails, first) : from0
       const split = rules.test({
         accountId,
         subject,
@@ -612,19 +669,28 @@ export class SqlStore implements StoreApi {
         folderKinds: folderIds.map((f) => this.folderKind.get(f)).filter((k) => k !== undefined),
         accountHasImportant: this.accountsWithImportant.has(accountId),
         hasListUnsubscribe: !!lu,
-        fromEmail: inboundSender(senders, this.ownEmails, first),
+        fromEmail: from,
         recipients: rcpt ?? undefined,
       })
-      if (split !== prev) changed.push([id, split])
+      if (split !== prev || from !== from0 || +!!lu !== lu0) changed.push([id, split, from, +!!lu])
     }
-    if (changed.length)
-      this.db.run(
-        `UPDATE threads SET split = c.value ->> 1
-         FROM jsonb_each(?) AS c WHERE threads.id = c.value ->> 0`,
-        [JSON.stringify(changed)],
-      )
+    return changed
+  }
+
+  private writeSplits(changed: SplitChange[]): void {
+    if (!changed.length) return
+    this.db.run(
+      `UPDATE threads SET split = c.value ->> 1, split_from = c.value ->> 2,
+         list_unsub = c.value ->> 3
+       FROM jsonb_each(?) AS c WHERE threads.id = c.value ->> 0`,
+      [JSON.stringify(changed)],
+    )
   }
 }
+
+type SplitChange = [id: string, split: SplitKey | null, from: string | null, listUnsub: number]
+
+const RESPLIT_CHUNK = 200
 
 // Every to/cc address in a thread, lowercased, as a JSON array.
 const RECIPIENTS_SQL = `json((SELECT json_group_array(DISTINCT e) FROM (
