@@ -4,20 +4,24 @@ import {
   parseDraftRequest,
   parseOpsRequest,
   parseSendRequest,
+  parseUploadRequest,
   type OpsResponse,
   type SendResponse,
+  type UploadResponse,
 } from '@zachmail/core'
 import {
   SendRejectedError,
   acceptOps,
   acceptSend,
   cancelSend,
+  createUpload,
   deleteDraft,
   nudge,
   saveDraft,
 } from '@zachmail/db/server'
 import { enqueueDraftSync, enqueueOutboxFlush } from '@zachmail/engine'
 import { Hono } from 'hono'
+import { randomUUID } from 'node:crypto'
 import { HTTPException } from 'hono/http-exception'
 import type { AuthVariables } from '../auth'
 import type { Deps } from '../deps'
@@ -75,6 +79,26 @@ export function opsRoutes(deps: Deps) {
     const undone = await cancelSend(deps.db(), c.get('user').id, id)
     if (!undone) throw new HTTPException(409, { message: 'Already sent' })
     return c.json({ undone: true })
+  })
+
+  /** Reserves an attachment and returns a signed URL the client PUTs the bytes to directly. */
+  app.post('/uploads', async (c) => {
+    const storage = deps.storage()
+    if (!storage) throw new HTTPException(503, { message: 'Attachments are not set up yet' })
+    let req
+    try {
+      req = parseUploadRequest(await c.req.json())
+    } catch (err) {
+      if (err instanceof InvalidSendError || err instanceof SyntaxError)
+        throw new HTTPException(400, { message: err.message })
+      throw err
+    }
+    const userId = c.get('user').id
+    const id = randomUUID()
+    const key = `${userId}/${id}/${req.filename.replace(/[^\w.-]+/g, '_')}`
+    const uploadUrl = await storage.signUpload(key)
+    await createUpload(deps.db(), userId, id, key, req)
+    return c.json({ id, uploadUrl } satisfies UploadResponse, 201)
   })
 
   /** Draft autosave. Clients PUT the whole draft; the provider copy follows after a pause. */

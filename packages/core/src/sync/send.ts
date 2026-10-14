@@ -5,16 +5,8 @@
 import type { Address } from './protocol'
 
 /** POST /api/send. `id` is a client UUID: the idempotency key, the undo handle and the op id. */
-export interface SendRequest {
+export interface SendRequest extends OutgoingFields {
   id: string
-  accountId: string
-  to: Address[]
-  cc?: Address[]
-  bcc?: Address[]
-  subject: string
-  html: string
-  /** MessageRow id being answered; threads the reply and sets In-Reply-To/References. */
-  replyToMessageId?: string
   /** Send later, epoch ms. */
   sendAt?: number
   /** Undo window, default 10 s. */
@@ -32,6 +24,9 @@ export interface SendResponse {
 export const DEFAULT_UNDO_MS = 10_000
 export const MAX_UNDO_MS = 30_000
 export const MAX_RECIPIENTS = 100
+export const MAX_ATTACHMENTS = 20
+/** Gmail's limit for a whole message is 25 MB; base64 makes files ~4/3 bigger on the wire. */
+export const MAX_ATTACHMENT_BYTES = 18 * 1024 * 1024
 
 export class InvalidSendError extends Error {
   override name = 'InvalidSendError'
@@ -63,7 +58,10 @@ export interface OutgoingFields {
   bcc?: Address[]
   subject: string
   html: string
+  /** MessageRow id being answered; threads the reply and sets In-Reply-To/References. */
   replyToMessageId?: string
+  /** Upload ids from POST /api/uploads. */
+  attachments?: string[]
 }
 
 /** PUT /api/drafts/:id (id = client UUID). Saved to the provider a moment after typing stops. */
@@ -84,6 +82,13 @@ function parseOutgoing(b: Record<string, unknown>, requireRecipient: boolean): O
     (typeof replyToMessageId !== 'string' || !UUID.test(replyToMessageId))
   )
     fail('replyToMessageId must be a UUID')
+  const attachments = b.attachments ?? []
+  if (
+    !Array.isArray(attachments) ||
+    attachments.length > MAX_ATTACHMENTS ||
+    !attachments.every((a) => typeof a === 'string' && UUID.test(a))
+  )
+    fail(`attachments must be at most ${MAX_ATTACHMENTS} upload ids`)
   return {
     accountId: b.accountId,
     to,
@@ -92,6 +97,7 @@ function parseOutgoing(b: Record<string, unknown>, requireRecipient: boolean): O
     subject: b.subject,
     html: b.html,
     ...(replyToMessageId ? { replyToMessageId } : {}),
+    ...(attachments.length ? { attachments: attachments as string[] } : {}),
   }
 }
 
@@ -114,6 +120,28 @@ export function parseSendRequest(body: unknown): SendRequest {
     undoMs,
     ...(b.draftId ? { draftId: b.draftId as string } : {}),
   }
+}
+
+/** POST /api/uploads; then PUT the file's bytes to `uploadUrl` with its content type. */
+export interface UploadRequest {
+  filename: string
+  mime: string
+  size: number
+}
+
+export interface UploadResponse {
+  id: string
+  uploadUrl: string
+}
+
+export function parseUploadRequest(body: unknown): UploadRequest {
+  const b = (body ?? {}) as Record<string, unknown>
+  if (typeof b.filename !== 'string' || !b.filename || b.filename.length > 255)
+    fail('filename is invalid')
+  if (typeof b.mime !== 'string' || !/^[\w.+-]+\/[\w.+-]+$/.test(b.mime)) fail('mime is invalid')
+  if (typeof b.size !== 'number' || !Number.isInteger(b.size) || b.size < 0) fail('size is invalid')
+  if (b.size > MAX_ATTACHMENT_BYTES) fail('That file is too big to email')
+  return { filename: b.filename, mime: b.mime, size: b.size }
 }
 
 /** Validates an untrusted draft body; drafts may have no recipients yet. */

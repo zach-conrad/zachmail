@@ -8,6 +8,7 @@ import {
 } from '@zachmail/db/server'
 import type { MailProvider } from '@zachmail/providers'
 import { buildOutgoing } from './outbox'
+import type { Storage } from './storage'
 
 export const DRAFT_JOB = 'draft.sync'
 
@@ -24,7 +25,12 @@ export const enqueueDraftSync = (db: Db, userId: string, draftId: string, deboun
   })
 
 /** Brings the provider's copy of a draft up to date, or removes it when the draft is deleted. */
-export async function syncDraft(db: Db, draftId: string, provider: MailProvider) {
+export async function syncDraft(
+  db: Db,
+  draftId: string,
+  provider: MailProvider,
+  storage?: Storage,
+) {
   const draft = await loadDraft(db, draftId)
   if (!draft) return
   if (draft.deleted) {
@@ -33,11 +39,9 @@ export async function syncDraft(db: Db, draftId: string, provider: MailProvider)
     return
   }
   if (draft.syncedVersion >= draft.version) return
-  const { raw, providerThreadId } = await buildOutgoing(
-    db,
-    draft.accountId,
-    draft.payload as SendPayload,
-  )
+  const { raw, providerThreadId } = await buildOutgoing(db, draft, draft.payload as SendPayload, {
+    storage,
+  })
   const providerDraftId = await provider.saveDraft(raw, {
     providerDraftId: draft.providerDraftId,
     providerThreadId,
