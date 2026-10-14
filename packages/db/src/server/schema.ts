@@ -434,6 +434,49 @@ export const reminders = pgTable(
   ],
 ).enableRLS()
 
+/**
+ * Composer snippets (core `SnippetRow`). ZachMail-only data: written by the API, synced to
+ * clients as the `snippet` entity. Ids are client-generated so an offline edit keeps its id;
+ * a non-empty shortcut is unique per user.
+ */
+export const snippets = pgTable(
+  'snippets',
+  {
+    id: uuid('id').primaryKey(),
+    userId: ownerId(),
+    name: text('name').notNull(),
+    shortcut: text('shortcut').notNull().default(''),
+    subject: text('subject').notNull().default(''),
+    html: text('html').notNull().default(''),
+    cc: jsonb('cc').$type<Address[]>().notNull().default([]),
+    bcc: jsonb('bcc').$type<Address[]>().notNull().default([]),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('snippets_user_shortcut')
+      .on(t.userId, t.shortcut)
+      .where(sql`shortcut <> ''`),
+    ownRowsReadOnly('snippets'),
+  ],
+).enableRLS()
+
+/**
+ * Dismissed follow-up nudges (core `NudgeDismissalRow`), one per thread. The nudge stays hidden
+ * until the thread gets a message newer than `last_message_at`.
+ */
+export const nudgeDismissals = pgTable(
+  'nudge_dismissals',
+  {
+    threadId: uuid('thread_id')
+      .primaryKey()
+      .references(() => threads.id, { onDelete: 'cascade' }),
+    userId: ownerId(),
+    lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [ownRowsReadOnly('nudge_dismissals')],
+).enableRLS()
+
 /** Single-row allowlist checked by the auth hook: only these emails can ever get a session. */
 export const allowedUsers = pgTable('allowed_users', {
   email: text('email').primaryKey(),
@@ -450,3 +493,4 @@ export type Thread = typeof threads.$inferSelect
 export type Message = typeof messages.$inferSelect
 export type ReminderRecord = typeof reminders.$inferSelect
 export type SplitRule = typeof splitRules.$inferSelect
+export type Snippet = typeof snippets.$inferSelect

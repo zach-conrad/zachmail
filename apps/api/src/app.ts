@@ -5,6 +5,7 @@ import { buildDeps, type Deps } from './deps'
 import type { Env } from './env'
 import { aiRoutes } from './routes/ai'
 import { accountRoutes, oauthCallbackRoute } from './routes/accounts'
+import { composerRoutes } from './routes/composer'
 import { imageRoutes } from './routes/images'
 import { opsRoutes } from './routes/ops'
 import { splitRuleRoutes } from './routes/splitRules'
@@ -37,6 +38,7 @@ export function createApp(env: Env, overrides: Partial<Deps> = {}) {
   authed.route('/', opsRoutes(deps))
   authed.route('/', splitRuleRoutes(deps))
   authed.route('/', aiRoutes(deps))
+  authed.route('/', composerRoutes(deps))
   api.route('/', authed)
 
   app.route('/api', api)
