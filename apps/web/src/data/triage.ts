@@ -109,6 +109,7 @@ export class Triage {
       case 'archive':
       case 'trash':
       case 'spam':
+      case 'mute':
         return model.remove(ids)
       case 'label':
         if (op.remove.some((id) => this.inboxIds.has(id))) return model.remove(ids)
@@ -128,6 +129,7 @@ export class Triage {
         model.patch(ids, (t) => ({ ...t, starred: op.kind === 'star' }))
         return []
       case 'inbox':
+      case 'unmute':
         // Where a returning thread sorts is the worker's call; its refresh follows at once.
         return []
     }
