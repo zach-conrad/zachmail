@@ -1,12 +1,14 @@
 import {
   DEFAULT_UNDO_MS,
   opEffect,
+  sentMessageId,
   type Address,
   type FolderKind,
   type OpEffect,
   type OpEnvelope,
   type SendRequest,
 } from '@zachmail/core'
+import { enqueueWake } from './snooze'
 import type { Db, Queryable } from './sql'
 import { recomputeThreads, recordChanges } from './sync'
 
@@ -35,86 +37,153 @@ interface FolderRef {
  * provider has been told. Replays of an op id are accepted without applying twice.
  */
 export async function acceptOps(db: Db, userId: string, ops: OpEnvelope[]): Promise<AcceptResult> {
-  return db.transaction(async (tx) => {
-    const result: AcceptResult = { accepted: [], rejected: [], accounts: [] }
-    const accounts = new Set<string>()
-    const folders = new Map<string, FolderRef[]>()
+  return db.transaction((tx) => acceptOpsIn(tx, userId, ops))
+}
 
-    for (const { id, op } of ops) {
-      const threads = await tx.query<{ id: string; account_id: string }>(
-        `SELECT id, account_id FROM threads WHERE user_id = $1 AND id = ANY($2::uuid[])`,
-        [userId, op.threadIds],
+/** Ops with no provider side: their outbox row is written already done. */
+const LOCAL_ONLY = new Set(['remind', 'unremind'])
+
+/** acceptOps inside a transaction the caller owns. */
+export async function acceptOpsIn(
+  tx: Queryable,
+  userId: string,
+  ops: OpEnvelope[],
+): Promise<AcceptResult> {
+  const result: AcceptResult = { accepted: [], rejected: [], accounts: [] }
+  const accounts = new Set<string>()
+  const folders = new Map<string, FolderRef[]>()
+
+  for (const { id, op } of ops) {
+    const threads = await tx.query<{ id: string; account_id: string }>(
+      `SELECT id, account_id FROM threads WHERE user_id = $1 AND id = ANY($2::uuid[])`,
+      [userId, op.threadIds],
+    )
+    if (!threads.length) {
+      result.rejected.push({ id, error: 'Those conversations no longer exist' })
+      continue
+    }
+    const byAccount = new Map<string, string[]>()
+    for (const t of threads)
+      byAccount.set(t.account_id, [...(byAccount.get(t.account_id) ?? []), t.id])
+    await loadFolders(tx, [...byAccount.keys()], folders)
+
+    for (const [accountId, threadIds] of byAccount) {
+      const own = folders.get(accountId) ?? []
+      const ownIds = new Set(own.map((f) => f.id))
+      const effect = opEffect(op, (kind) => own.find((f) => f.kind === kind)?.id)
+      effect.add = effect.add.filter((f) => ownIds.has(f))
+      effect.remove = effect.remove.filter((f) => ownIds.has(f))
+      const payload: TriagePayload = { threadIds, ...effect }
+
+      const local = LOCAL_ONLY.has(op.kind)
+      const inserted = await tx.query(
+        `INSERT INTO outbox (user_id, op_id, account_id, kind, payload, state)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+         ON CONFLICT (op_id, account_id) DO NOTHING RETURNING id`,
+        [userId, id, accountId, op.kind, payload, local ? 'done' : 'pending'],
       )
-      if (!threads.length) {
-        result.rejected.push({ id, error: 'Those conversations no longer exist' })
+      if (!inserted.length) continue
+      if (!local) accounts.add(accountId)
+      const touched = new Set<string>()
+      ;(await applyZachmailState(tx, userId, accountId, id, threadIds, effect)).forEach((t) =>
+        touched.add(t),
+      )
+      if (effect.snoozedUntil) await enqueueWake(tx, userId, effect.snoozedUntil)
+      if (effect.reminder) await enqueueWake(tx, userId, effect.reminder.at)
+      const hasProviderPart =
+        effect.add.length ||
+        effect.remove.length ||
+        effect.unread !== undefined ||
+        effect.starred !== undefined
+      if (!hasProviderPart) {
+        await recordChanges(tx, userId, 'thread', [...touched], 'upsert')
         continue
       }
-      const byAccount = new Map<string, string[]>()
-      for (const t of threads)
-        byAccount.set(t.account_id, [...(byAccount.get(t.account_id) ?? []), t.id])
-      await loadFolders(tx, [...byAccount.keys()], folders)
 
-      for (const [accountId, threadIds] of byAccount) {
-        const own = folders.get(accountId) ?? []
-        const ownIds = new Set(own.map((f) => f.id))
-        const effect = opEffect(op, (kind) => own.find((f) => f.kind === kind)?.id)
-        effect.add = effect.add.filter((f) => ownIds.has(f))
-        effect.remove = effect.remove.filter((f) => ownIds.has(f))
-        const payload: TriagePayload = { threadIds, ...effect }
-
-        const inserted = await tx.query(
-          `INSERT INTO outbox (user_id, op_id, account_id, kind, payload)
-           VALUES ($1, $2, $3, $4, $5::jsonb)
-           ON CONFLICT (op_id, account_id) DO NOTHING RETURNING id`,
-          [userId, id, accountId, op.kind, payload],
+      const provider = (ids: string[]) =>
+        own.filter((f) => ids.includes(f.id)).map((f) => f.providerId)
+      const changed = await tx.query<{ id: string }>(
+        `WITH n AS (
+           SELECT m.id, ARRAY(
+             SELECT DISTINCT x FROM unnest(m.provider_labels || $2::text[]) AS x
+             WHERE NOT (x = ANY($3::text[]))
+           ) AS labels
+           FROM messages m WHERE m.thread_id = ANY($1::uuid[])
+         )
+         UPDATE messages m SET provider_labels = n.labels,
+           unread = COALESCE($4::boolean, m.unread), starred = COALESCE($5::boolean, m.starred),
+           updated_at = now()
+         FROM n WHERE m.id = n.id AND NOT (
+           m.provider_labels @> n.labels AND n.labels @> m.provider_labels
+           AND m.unread = COALESCE($4::boolean, m.unread)
+           AND m.starred = COALESCE($5::boolean, m.starred))
+         RETURNING m.id`,
+        [
+          threadIds,
+          provider(effect.add),
+          provider(effect.remove),
+          effect.unread ?? null,
+          effect.starred ?? null,
+        ],
+      )
+      if (changed.length) {
+        await recordChanges(
+          tx,
+          userId,
+          'message',
+          changed.map((m) => m.id),
+          'upsert',
         )
-        if (!inserted.length) continue
-        accounts.add(accountId)
-
-        const provider = (ids: string[]) =>
-          own.filter((f) => ids.includes(f.id)).map((f) => f.providerId)
-        const changed = await tx.query<{ id: string }>(
-          `WITH n AS (
-             SELECT m.id, ARRAY(
-               SELECT DISTINCT x FROM unnest(m.provider_labels || $2::text[]) AS x
-               WHERE NOT (x = ANY($3::text[]))
-             ) AS labels
-             FROM messages m WHERE m.thread_id = ANY($1::uuid[])
-           )
-           UPDATE messages m SET provider_labels = n.labels,
-             unread = COALESCE($4::boolean, m.unread), starred = COALESCE($5::boolean, m.starred),
-             updated_at = now()
-           FROM n WHERE m.id = n.id AND NOT (
-             m.provider_labels @> n.labels AND n.labels @> m.provider_labels
-             AND m.unread = COALESCE($4::boolean, m.unread)
-             AND m.starred = COALESCE($5::boolean, m.starred))
-           RETURNING m.id`,
-          [
-            threadIds,
-            provider(effect.add),
-            provider(effect.remove),
-            effect.unread ?? null,
-            effect.starred ?? null,
-          ],
-        )
-        if (changed.length) {
-          await recordChanges(
-            tx,
-            userId,
-            'message',
-            changed.map((m) => m.id),
-            'upsert',
-          )
-          await recomputeThreads(tx, userId, threadIds)
-          await recordChanges(tx, userId, 'thread', threadIds, 'upsert')
-        }
+        await recomputeThreads(tx, userId, threadIds)
+        threadIds.forEach((t) => touched.add(t))
       }
-      await recordChanges(tx, userId, 'op', [id], 'upsert')
-      result.accepted.push(id)
+      await recordChanges(tx, userId, 'thread', [...touched], 'upsert')
     }
-    result.accounts = [...accounts]
-    return result
-  })
+    await recordChanges(tx, userId, 'op', [id], 'upsert')
+    result.accepted.push(id)
+  }
+  result.accounts = [...accounts]
+  return result
+}
+
+/** Writes an effect's snooze and reminder parts; returns the threads that changed. */
+async function applyZachmailState(
+  tx: Queryable,
+  userId: string,
+  accountId: string,
+  opId: string,
+  threadIds: string[],
+  effect: OpEffect,
+): Promise<string[]> {
+  const changed: string[] = []
+  if (effect.snoozedUntil !== undefined) {
+    const rows = await tx.query<{ id: string }>(
+      `UPDATE threads SET snoozed_until = to_timestamp($2::float8 / 1000), updated_at = now()
+       WHERE id = ANY($1::uuid[]) AND snoozed_until IS DISTINCT FROM to_timestamp($2::float8 / 1000)
+       RETURNING id`,
+      [threadIds, effect.snoozedUntil],
+    )
+    changed.push(...rows.map((r) => r.id))
+  }
+  if (effect.reminder === null) {
+    const rows = await tx.query<{ id: string }>(
+      `DELETE FROM reminders WHERE thread_id = ANY($1::uuid[]) RETURNING thread_id AS id`,
+      [threadIds],
+    )
+    changed.push(...rows.map((r) => r.id))
+  } else if (effect.reminder) {
+    const rows = await tx.query<{ id: string }>(
+      `INSERT INTO reminders (user_id, account_id, thread_id, op_id, remind_at, condition)
+       SELECT $1, $2, t, $4, to_timestamp($5::float8 / 1000), $6::reminder_condition
+       FROM unnest($3::uuid[]) AS t
+       ON CONFLICT (thread_id) DO UPDATE SET op_id = excluded.op_id,
+         remind_at = excluded.remind_at, condition = excluded.condition, created_at = now()
+       RETURNING thread_id AS id`,
+      [userId, accountId, threadIds, opId, effect.reminder.at, effect.reminder.condition],
+    )
+    changed.push(...rows.map((r) => r.id))
+  }
+  return changed
 }
 
 async function loadFolders(tx: Queryable, accountIds: string[], cache: Map<string, FolderRef[]>) {
@@ -235,17 +304,19 @@ export class SendRejectedError extends Error {
  */
 export async function acceptSend(db: Db, userId: string, req: SendRequest): Promise<number> {
   return db.transaction(async (tx) => {
-    const [account] = await tx.query(`SELECT id FROM accounts WHERE id = $1 AND user_id = $2`, [
-      req.accountId,
-      userId,
-    ])
+    const [account] = await tx.query<{ email: string }>(
+      `SELECT email FROM accounts WHERE id = $1 AND user_id = $2`,
+      [req.accountId, userId],
+    )
     if (!account) throw new SendRejectedError('No such account')
+    let threadId: string | null = null
     if (req.replyToMessageId) {
-      const [parent] = await tx.query(`SELECT id FROM messages WHERE id = $1 AND account_id = $2`, [
-        req.replyToMessageId,
-        req.accountId,
-      ])
+      const [parent] = await tx.query<{ thread_id: string }>(
+        `SELECT thread_id FROM messages WHERE id = $1 AND account_id = $2`,
+        [req.replyToMessageId, req.accountId],
+      )
       if (!parent) throw new SendRejectedError('The message being answered is gone')
+      threadId = parent.thread_id
     }
     const payload: SendPayload = {
       to: req.to,
@@ -265,6 +336,26 @@ export async function acceptSend(db: Db, userId: string, req: SendRequest): Prom
     )
     if (inserted.length) {
       await recordChanges(tx, userId, 'op', [req.id], 'upsert')
+      if (req.remindAt !== undefined) {
+        // A new conversation has no thread yet; the sync that brings the sent copy in links it.
+        await tx.query(
+          `INSERT INTO reminders (user_id, account_id, thread_id, sent_message_id, op_id, remind_at)
+           VALUES ($1, $2, $3, $4, $5, to_timestamp($6::float8 / 1000))
+           ON CONFLICT (thread_id) DO UPDATE SET op_id = excluded.op_id,
+             sent_message_id = excluded.sent_message_id, remind_at = excluded.remind_at,
+             condition = excluded.condition, created_at = now()`,
+          [
+            userId,
+            req.accountId,
+            threadId,
+            sentMessageId(req.id, account.email),
+            req.id,
+            req.remindAt,
+          ],
+        )
+        if (threadId) await recordChanges(tx, userId, 'thread', [threadId], 'upsert')
+        await enqueueWake(tx, userId, req.remindAt)
+      }
       return inserted[0]!.at
     }
     const [existing] = await tx.query<{ at: number }>(
@@ -277,12 +368,21 @@ export async function acceptSend(db: Db, userId: string, req: SendRequest): Prom
   })
 }
 
-/** Undo send: succeeds only while the worker hasn't started sending. */
-export async function cancelSend(db: Queryable, userId: string, opId: string): Promise<boolean> {
-  const gone = await db.query(
-    `DELETE FROM outbox WHERE op_id = $1 AND user_id = $2 AND kind = 'send' AND state = 'pending'
-     RETURNING id`,
-    [opId, userId],
-  )
-  return gone.length > 0
+/** Undo send: succeeds only while the worker hasn't started sending. Drops its reminder too. */
+export async function cancelSend(db: Db, userId: string, opId: string): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const gone = await tx.query(
+      `DELETE FROM outbox WHERE op_id = $1 AND user_id = $2 AND kind = 'send' AND state = 'pending'
+       RETURNING id`,
+      [opId, userId],
+    )
+    if (!gone.length) return false
+    const reminders = await tx.query<{ thread_id: string | null }>(
+      `DELETE FROM reminders WHERE op_id = $1 AND user_id = $2 RETURNING thread_id`,
+      [opId, userId],
+    )
+    const threads = reminders.flatMap((r) => (r.thread_id ? [r.thread_id] : []))
+    await recordChanges(tx, userId, 'thread', threads, 'upsert')
+    return true
+  })
 }

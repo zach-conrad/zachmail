@@ -1,9 +1,17 @@
-import { applySyncBatch, enqueueJob, nudge, updateAccount, type Db } from '@zachmail/db/server'
+import {
+  WAKE_JOB,
+  applySyncBatch,
+  enqueueJob,
+  nudge,
+  updateAccount,
+  type Db,
+} from '@zachmail/db/server'
 import { ProviderAuthError, mapLimit } from '@zachmail/providers'
 import { getAccount, type AccountRecord, type ProviderFactory } from './accounts'
 import { getMessageBody } from './bodies'
 import type { EngineConfig } from './config'
 import { OUTBOX_JOB, enqueueOutboxFlush, flushOutbox } from './outbox'
+import { runWakeups } from './snooze'
 
 export interface JobLike {
   kind: string
@@ -19,6 +27,7 @@ export const JOB = {
   watch: 'gmail.watch',
   prefetch: 'bodies.prefetch',
   outbox: OUTBOX_JOB,
+  wake: WAKE_JOB,
 } as const
 
 const RECENT_DAYS = 90
@@ -191,6 +200,10 @@ export function createHandlers(deps: {
           enqueueSync(db, account.userId, account.id),
         )
       })
+    },
+
+    async [JOB.wake]() {
+      await runWakeups(db)
     },
 
     async [JOB.prefetch](job) {

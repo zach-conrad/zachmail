@@ -13,6 +13,7 @@ import {
 } from '@zachmail/db/server'
 import { ProviderAuthError, ProviderError, type MailProvider } from '@zachmail/providers'
 import { buildMime, replyReferences } from '@zachmail/mime'
+import { sentMessageId } from '@zachmail/core'
 import type { AccountRecord } from './accounts'
 
 export const OUTBOX_JOB = 'outbox.flush'
@@ -136,7 +137,7 @@ async function send(db: Db, item: OutboxItem, provider: MailProvider) {
       subject: p.subject,
       html: p.html,
       // Stable per op, so a message that did go out can be recognised when it syncs back.
-      messageId: `<${item.opId}@${account.email.split('@')[1] ?? 'zachmail.local'}>`,
+      messageId: sentMessageId(item.opId, account.email),
       ...threading,
     },
     { includeBcc: true },

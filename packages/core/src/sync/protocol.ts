@@ -46,6 +46,18 @@ export interface ThreadRow {
   starred: boolean
   hasAttachments: boolean
   folderIds: string[]
+  /** Epoch ms the thread comes back to the inbox; null/absent when not snoozed. */
+  snoozedUntil?: number | null
+  /** Pending reminder (see ops.ts `remind`); null/absent when none. */
+  reminder?: Reminder | null
+}
+
+/** `if_no_reply` fires only if nobody else has written in the thread since it was set. */
+export type ReminderCondition = 'always' | 'if_no_reply'
+
+export interface Reminder {
+  at: number
+  condition: ReminderCondition
 }
 
 export interface MessageRow {

@@ -2,6 +2,7 @@
  * Sending goes through the server outbox like triage, delayed by the undo window (or until
  * `sendAt`), so undo-send and send-later work with every device closed.
  */
+import { MAX_SNOOZE_MS } from './ops'
 import type { Address } from './protocol'
 
 /** POST /api/send. `id` is a client UUID: the idempotency key, the undo handle and the op id. */
@@ -19,6 +20,8 @@ export interface SendRequest {
   sendAt?: number
   /** Undo window, default 10 s. */
   undoMs?: number
+  /** "Remind me if no reply": epoch ms to bring the thread back if nobody has answered. */
+  remindAt?: number
 }
 
 export interface SendResponse {
@@ -30,6 +33,13 @@ export interface SendResponse {
 export const DEFAULT_UNDO_MS = 10_000
 export const MAX_UNDO_MS = 30_000
 export const MAX_RECIPIENTS = 100
+
+/**
+ * The Message-ID header of a send. Stable per op, so the copy that syncs back from the
+ * provider can be recognised (and a "remind if no reply" attached to its thread).
+ */
+export const sentMessageId = (opId: string, fromEmail: string) =>
+  `<${opId}@${fromEmail.split('@')[1] || 'zachmail.local'}>`
 
 export class InvalidSendError extends Error {
   override name = 'InvalidSendError'
@@ -72,6 +82,13 @@ export function parseSendRequest(body: unknown): SendRequest {
     fail('replyToMessageId must be a UUID')
   if (b.sendAt !== undefined && (typeof b.sendAt !== 'number' || !Number.isFinite(b.sendAt)))
     fail('sendAt must be epoch ms')
+  if (
+    b.remindAt !== undefined &&
+    (typeof b.remindAt !== 'number' ||
+      !Number.isFinite(b.remindAt) ||
+      b.remindAt > Date.now() + MAX_SNOOZE_MS)
+  )
+    fail('remindAt must be epoch ms within 5 years')
   const undoMs = b.undoMs ?? DEFAULT_UNDO_MS
   if (typeof undoMs !== 'number' || undoMs < 0 || undoMs > MAX_UNDO_MS)
     fail(`undoMs must be 0-${MAX_UNDO_MS}`)
@@ -86,5 +103,6 @@ export function parseSendRequest(body: unknown): SendRequest {
     ...(replyToMessageId ? { replyToMessageId } : {}),
     ...(b.sendAt !== undefined ? { sendAt: b.sendAt as number } : {}),
     undoMs,
+    ...(b.remindAt !== undefined ? { remindAt: b.remindAt as number } : {}),
   }
 }

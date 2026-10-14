@@ -36,6 +36,13 @@
       "when": 1791942578105,
       "tag": "0004_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791943777657,
+      "tag": "0005_snooze_reminders",
+      "breakpoints": true
     }
   ]
 }
