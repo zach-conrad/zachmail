@@ -1,4 +1,10 @@
-import type { OpEnvelope } from '@zachmail/core'
+import type {
+  ContactRow,
+  DraftRequest,
+  OpEnvelope,
+  SendRequest,
+  SendResponse,
+} from '@zachmail/core'
 import type { StoreApi } from '@zachmail/local-store'
 
 /** Store reads the UI may call over the worker boundary (writes stay inside the worker). */
@@ -8,6 +14,14 @@ export type ReadMethod =
 export interface DataApi extends Pick<StoreApi, ReadMethod> {
   /** Fetch and cache the bodies a thread view needs; resolves once they are stored. */
   ensureBodies(threadIds: string[]): Promise<number>
+  /** Queue a message on the server; it goes out after the undo window. */
+  send(req: SendRequest): Promise<SendResponse>
+  /** Undo send: true when cancelled in time, false when it already went. */
+  unsend(id: string): Promise<boolean>
+  saveDraft(id: string, draft: DraftRequest): Promise<void>
+  deleteDraft(id: string): Promise<void>
+  /** Everyone Zach writes to or hears from, best first (cached after the first call). */
+  contacts(): Promise<ContactRow[]>
 }
 
 export type Method = keyof DataApi

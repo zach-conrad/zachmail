@@ -5,12 +5,14 @@ import { demoMode, supabase } from '../lib/supabase'
 import { DataClient } from './client'
 import { ThreadCache } from './threadCache'
 import { Triage } from './triage'
+import { ComposeStore } from '../compose/store'
 import { useDesktopUnread } from './useDesktopUnread'
 
 interface Data {
   client: DataClient
   threads: ThreadCache
   triage: Triage
+  compose: ComposeStore
   accounts: Map<string, AccountRow>
   ownEmails: Set<string>
 }
@@ -35,7 +37,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const client = new DataClient(
       demoMode ? { mode: 'demo', threads: demoThreads() } : { mode: 'live', apiBase: '', token },
     )
-    return { client, threads: new ThreadCache(client), triage: new Triage(client) }
+    return {
+      client,
+      threads: new ThreadCache(client),
+      triage: new Triage(client),
+      compose: new ComposeStore(client),
+    }
   })
   const { client } = base
   const [accounts, setAccounts] = useState<Map<string, AccountRow>>(new Map())

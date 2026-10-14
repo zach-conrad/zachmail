@@ -1,5 +1,8 @@
 import { useNavigate } from '@tanstack/react-router'
-import { useLayoutEffect, useMemo, useState } from 'react'
+import { useLayoutEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { Composer } from '../compose/Composer'
+import { newDraft } from '../compose/draft'
+import { useData } from '../data/DataProvider'
 import { Inbox } from '../inbox/Inbox'
 import { endInteraction } from '../lib/perf'
 import { keymap, type CommandId } from '@zachmail/core'
@@ -14,6 +17,9 @@ type Overlay = 'palette' | 'shortcuts' | null
 
 export function Shell({ split }: { split: SplitId }) {
   const navigate = useNavigate()
+  const { compose, accounts } = useData()
+  useSyncExternalStore(compose.subscribe, compose.getVersion)
+  const sheet = compose.sheet
   const [overlay, setOverlay] = useState<Overlay>(null)
   // What the views underneath can run, captured before the overlay deactivates them.
   const [available, setAvailable] = useState<CommandId[]>([])
@@ -39,6 +45,10 @@ export function Shell({ split }: { split: SplitId }) {
     'go.inbox': () => goSplit('important'),
     'app.palette': () => open('palette'),
     'app.shortcuts': () => open('shortcuts'),
+    'compose.new': () => {
+      const first = accounts.keys().next().value
+      if (first) compose.open(compose.resume(null) ?? newDraft(first))
+    },
     ...(overlay ? { 'nav.back': () => setOverlay(null) } : {}),
   })
 
@@ -58,8 +68,9 @@ export function Shell({ split }: { split: SplitId }) {
     <div className="shell">
       <AppHeader split={split} onPalette={() => open('palette')} />
       <main className="main">
-        <Inbox key={split} split={split} active={!overlay} />
+        <Inbox key={split} split={split} active={!overlay && !sheet} />
       </main>
+      {sheet && <Composer key={sheet.id} initial={sheet} />}
       <UndoToast />
       {overlay === 'palette' && (
         <CommandPalette available={available} extra={extra} onClose={() => setOverlay(null)} />

@@ -1,4 +1,10 @@
-import { invertOp, type FolderRow, type MailOp, type OpEnvelope } from '@zachmail/core'
+import {
+  invertOp,
+  type FolderRow,
+  type MailOp,
+  type OpEnvelope,
+  type SendRequest,
+} from '@zachmail/core'
 import type { DataClient } from './client'
 import type { ListModel, Removed } from './listModel'
 
@@ -11,10 +17,11 @@ export interface Toast {
 }
 
 interface Done {
-  op: MailOp
   label: string
   model: ListModel | null
   removed: Removed[]
+  /** Sends whatever undoes it (the inverse op, or DELETE /api/send/:id). */
+  revert: () => void
 }
 
 const TOAST_MS = 6000
@@ -63,25 +70,61 @@ export class Triage {
     const removed = model ? this.applyToModel(op, model) : []
     this.send(op, label)
     if (!quiet) {
-      this.done.push({ op, label, model, removed })
-      if (this.done.length > UNDO_DEPTH) this.done.shift()
+      this.push({ label, model, removed, revert: () => this.revertOp(op, model, removed, label) })
       this.show(label, true)
     }
     return removed
   }
 
-  /** Reverts the latest op; rows it removed go back where they were, in the same frame. */
+  /** Reverts the latest action; rows it removed go back where they were, in the same frame. */
   undo(): Done | null {
     const d = this.done.pop()
-    if (!d) return null
-    const inverse = invertOp(d.op)
-    if (d.model) {
-      if (d.removed.length) d.model.restore(d.removed)
-      else this.applyToModel(inverse, d.model)
+    d?.revert()
+    return d ?? null
+  }
+
+  /**
+   * Queues a message; the server sends it once the undo window has passed. Undo (Z or the
+   * toast) cancels it and hands the draft back through `reopen`, as does a failed request.
+   */
+  sendMail(req: SendRequest, label: string, reopen: () => void) {
+    this.labels.set(req.id, label)
+    let cancelled = false
+    this.client.api.send(req).catch((err: unknown) => {
+      if (cancelled) return
+      this.done = this.done.filter((d) => d.label !== label)
+      this.show(`Couldn't send: ${err instanceof Error ? err.message : String(err)}`, false, true)
+      reopen()
+    })
+    const revert = () => {
+      cancelled = true
+      void this.client.api.unsend(req.id).then(
+        (ok) => {
+          if (ok) {
+            this.show('Sending undone', false)
+            reopen()
+          } else this.show('Too late to undo: it has been sent', false, true)
+        },
+        () => this.show("Couldn't undo the send", false, true),
+      )
     }
-    this.send(inverse, `Undo ${d.label}`)
-    this.show(`Undid: ${d.label}`, false)
-    return d
+    this.push({ label, model: null, removed: [], revert })
+    this.show(label, true, false, req.undoMs ?? TOAST_MS)
+  }
+
+  private push(d: Done) {
+    this.done.push(d)
+    if (this.done.length > UNDO_DEPTH) this.done.shift()
+  }
+
+  private revertOp(op: MailOp, model: ListModel | null, removed: Removed[], label: string) {
+    const inverse = invertOp(op)
+    if (model) {
+      if (removed.length) model.restore(removed)
+      else this.applyToModel(inverse, model)
+    }
+    this.send(inverse, `Undo ${label}`)
+    this.show(`Undid: ${label}`, false)
   }
 
   dismiss = () => {
@@ -135,10 +178,10 @@ export class Triage {
     }
   }
 
-  private show(text: string, undo: boolean, error = false) {
+  private show(text: string, undo: boolean, error = false, ms = TOAST_MS) {
     clearTimeout(this.timer)
     this.toast = { key: ++this.key, text, undo, error }
-    this.timer = setTimeout(this.dismiss, TOAST_MS)
+    this.timer = setTimeout(this.dismiss, ms)
     this.emit()
   }
 

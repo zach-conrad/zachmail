@@ -1,9 +1,11 @@
 /// <reference lib="webworker" />
 import {
+  DEFAULT_UNDO_MS,
   OpDrain,
   SyncClient,
   httpTransport,
   startSyncLoop,
+  type ContactRow,
   type MessageBody,
   type OpEnvelope,
   type OpsResponse,
@@ -70,10 +72,23 @@ async function init(config: InitConfig) {
   let transport: SyncTransport
   // Demo mode has no server: ops are accepted on the spot and settle as if done.
   let sendOps: ((ops: OpEnvelope[]) => Promise<OpsResponse>) | null = null
+  let outgoing: Pick<DataApi, 'send' | 'unsend' | 'saveDraft' | 'deleteDraft' | 'contacts'>
   if (config.mode === 'demo') {
     const fx = await import('./fixture')
     transport = fx.fixtureTransport(config.threads)
     fetchBody = async (id) => fx.fixtureBody(id)
+    const sendAt = new Map<string, number>()
+    outgoing = {
+      async send(req) {
+        const at = Math.max(Date.now() + (req.undoMs ?? DEFAULT_UNDO_MS), req.sendAt ?? 0)
+        sendAt.set(req.id, at)
+        return { id: req.id, sendAt: at }
+      },
+      unsend: async (id) => (sendAt.get(id) ?? 0) > Date.now(),
+      saveDraft: async () => {},
+      deleteDraft: async () => {},
+      contacts: async () => fx.fixtureContacts(),
+    }
   } else {
     // A 'token' message may have landed while SQLite was opening; it is the newer one.
     token ??= config.token
@@ -81,6 +96,18 @@ async function init(config: InitConfig) {
     transport = http
     fetchBody = (id) => http.body(id)
     sendOps = (ops) => http.ops({ ops })
+    let contacts: Promise<ContactRow[]> | null = null
+    outgoing = {
+      send: (req) => http.send(req),
+      unsend: (id) => http.unsend(id),
+      saveDraft: (id, d) => http.saveDraft(id, d),
+      deleteDraft: (id) => http.deleteDraft(id),
+      contacts: () =>
+        (contacts ??= http.contacts().catch((err: unknown) => {
+          contacts = null
+          throw err
+        })),
+    }
   }
 
   const inflight = new Set<string>()
@@ -91,6 +118,7 @@ async function init(config: InitConfig) {
     listThreads: (q, offset, limit) => store.listThreads(q, offset, limit),
     indexOfThread: (q, id) => store.indexOfThread(q, id),
     folders: () => store.folders(),
+    ...outgoing,
     getThread: (id) => store.getThread(id),
     async ensureBodies(threadIds) {
       const missing = store.bodiesMissing(threadIds).filter((m) => !inflight.has(m.messageId))

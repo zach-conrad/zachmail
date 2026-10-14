@@ -495,6 +495,157 @@ html[data-shell='macos'] body {
   opacity: 0.45;
 }
 
+/* Compose (design §3.4): a centered sheet for new mail, an inline panel for replies.
+   Solid surfaces only; glass stays on navigation. */
+.compose-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 10vh;
+  background: rgb(0 0 0 / 0.25);
+}
+.compose {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.compose-sheet {
+  width: min(720px, calc(100% - 32px));
+  max-height: 80vh;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+  animation: palette-in var(--dur-slow) var(--ease);
+}
+.compose-inline {
+  margin-top: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.compose-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.compose-label {
+  width: 56px;
+  flex: none;
+  color: var(--text-faint);
+}
+.compose-field input,
+.compose-field select,
+.compose-body {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: 400 15px/22px var(--font-ui);
+  outline: none;
+}
+.rcpt-box {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 6px 0;
+}
+.rcpt-box input {
+  min-width: 120px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding: 0 4px 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--row-focus);
+  white-space: nowrap;
+}
+.chip button {
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  cursor: pointer;
+}
+.rcpt-suggest {
+  position: absolute;
+  z-index: 2;
+  top: 100%;
+  left: 72px;
+  right: var(--space-4);
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-float);
+}
+.rcpt-suggest li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-sm);
+}
+.rcpt-suggest li[aria-selected='true'] {
+  background: var(--row-focus);
+}
+.compose-body {
+  min-height: 180px;
+  padding: var(--space-3) var(--space-4);
+  resize: vertical;
+}
+.compose-quoted {
+  padding: 0 var(--space-4) var(--space-3);
+  color: var(--text-muted);
+}
+.compose-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-3) var(--space-4);
+}
+.compose-footer .spacer {
+  flex: 1;
+}
+.compose-footer .send {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 32px;
+  padding: 0 var(--space-4);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font: 500 14px var(--font-ui);
+}
+.compose-link {
+  align-self: flex-start;
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  padding: var(--space-2) var(--space-4);
+}
+.compose-footer .compose-link {
+  align-self: center;
+  padding: var(--space-1) var(--space-2);
+}
+.compose-error {
+  color: var(--danger);
+}
+
 /* Undo toast: a glass capsule, bottom-left (design §5.6, §6.1). */
 .toast {
   position: fixed;

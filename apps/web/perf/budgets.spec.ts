@@ -96,6 +96,30 @@ test('command palette opens < 16 ms', async () => {
   expect(pct(xs, 95)).toBeLessThan(BUDGET.palette)
 })
 
+test('compose and reply open < 16 ms', async () => {
+  const xs: number[] = []
+  for (let i = 0; i < 5; i++) {
+    await clearSamples()
+    await page.keyboard.press('c')
+    await expect(page.getByRole('dialog', { name: 'New message' })).toBeVisible()
+    xs.push(...(await samples('compose.new')))
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(150)
+    await clearSamples()
+    await page.keyboard.press('r')
+    await expect(page.getByRole('dialog', { name: 'Reply' })).toBeVisible()
+    xs.push(...(await samples('compose.reply')))
+    // Leave the reply empty so Esc doesn't keep it, then close the thread.
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('j')
+  }
+  report.compose = summary(xs)
+  expect(xs.length).toBe(10)
+  expect(pct(xs, 95)).toBeLessThan(BUDGET.keyAction)
+})
+
 test('archive 50 threads, then undo: each key < 16 ms', async () => {
   const count = () =>
     page.evaluate(() => document.querySelectorAll('.thread-list .row[id]').length > 0)
