@@ -3,6 +3,8 @@ import { ProviderAuthError, mapLimit } from '@zachmail/providers'
 import { getAccount, type AccountRecord, type ProviderFactory } from './accounts'
 import { getMessageBody } from './bodies'
 import type { EngineConfig } from './config'
+import { DRAFT_JOB, syncDraft } from './drafts'
+import { Storage } from './storage'
 import { OUTBOX_JOB, enqueueOutboxFlush, flushOutbox, rearchiveMuted } from './outbox'
 
 export interface JobLike {
@@ -19,6 +21,7 @@ export const JOB = {
   watch: 'gmail.watch',
   prefetch: 'bodies.prefetch',
   outbox: OUTBOX_JOB,
+  draft: DRAFT_JOB,
 } as const
 
 const RECENT_DAYS = 90
@@ -42,8 +45,11 @@ export function createHandlers(deps: {
   db: Db
   providers: ProviderFactory
   config: EngineConfig
+  /** Defaults to Supabase Storage from config, when configured. */
+  storage?: Storage
 }): Record<string, Handler> {
   const { db, providers, config } = deps
+  const storage = deps.storage ?? (config.storage ? new Storage(config.storage) : undefined)
 
   /** Runs fn with the account loaded; auth failures park the account for reconnecting. */
   const withAccount = async (job: JobLike, fn: (a: AccountRecord) => Promise<void>) => {
@@ -188,10 +194,25 @@ export function createHandlers(deps: {
     async [JOB.outbox](job) {
       await withAccount(job, async (account) => {
         if (account.status === 'needs_reauth') return
-        await flushOutbox(db, account, providers.forAccount(account), () =>
-          enqueueSync(db, account.userId, account.id),
+        await flushOutbox(
+          db,
+          account,
+          providers.forAccount(account),
+          () => enqueueSync(db, account.userId, account.id),
+          storage,
         )
       })
+    },
+
+    async [JOB.draft](job) {
+      const [row] = await db.query<{ account_id: string }>(
+        `SELECT account_id FROM drafts WHERE id = $1`,
+        [job.payload.draftId],
+      )
+      if (!row) return
+      await withAccount({ ...job, payload: { accountId: row.account_id } }, (account) =>
+        syncDraft(db, String(job.payload.draftId), providers.forAccount(account), storage),
+      )
     },
 
     async [JOB.prefetch](job) {

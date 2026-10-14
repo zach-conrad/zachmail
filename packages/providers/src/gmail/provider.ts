@@ -204,12 +204,49 @@ export class GmailProvider implements MailProvider {
   }
 
   async send(raw: Uint8Array, opts: { providerThreadId?: string } = {}): Promise<SentRef> {
-    const r = await this.api.post<{ id: string; threadId: string }>(
-      '/messages/send',
-      { raw: Buffer.from(raw).toString('base64url'), threadId: opts.providerThreadId },
-      { idempotent: false },
-    )
+    // Big messages go through the media endpoint; it can't carry threadId, but Gmail threads
+    // by In-Reply-To/References and subject, which replies always set.
+    const r =
+      raw.byteLength > JSON_RAW_LIMIT
+        ? await this.api.uploadMessage<{ id: string; threadId: string }>(
+            'POST',
+            '/messages/send',
+            raw,
+            { idempotent: false },
+          )
+        : await this.api.post<{ id: string; threadId: string }>(
+            '/messages/send',
+            { raw: Buffer.from(raw).toString('base64url'), threadId: opts.providerThreadId },
+            { idempotent: false },
+          )
     return { providerMessageId: r.id, providerThreadId: r.threadId }
+  }
+
+  async saveDraft(
+    raw: Uint8Array,
+    opts: { providerDraftId?: string | null; providerThreadId?: string },
+  ): Promise<string> {
+    const large = raw.byteLength > JSON_RAW_LIMIT
+    const body = {
+      message: { raw: Buffer.from(raw).toString('base64url'), threadId: opts.providerThreadId },
+    }
+    if (opts.providerDraftId) {
+      const path = `/drafts/${opts.providerDraftId}`
+      const updated = await (
+        large
+          ? this.api.uploadMessage<{ id: string }>('PUT', path, raw)
+          : this.api.put<{ id: string }>(path, { id: opts.providerDraftId, ...body })
+      ).catch(notFoundAs(null))
+      if (updated) return updated.id
+    }
+    const created = large
+      ? await this.api.uploadMessage<{ id: string }>('POST', '/drafts', raw)
+      : await this.api.post<{ id: string }>('/drafts', body)
+    return created.id
+  }
+
+  async deleteDraft(providerDraftId: string): Promise<void> {
+    await this.api.delete(`/drafts/${providerDraftId}`).catch(notFoundAs(undefined))
   }
 
   async fetchThreads(providerThreadIds: string[]): Promise<SyncBatch> {
@@ -227,6 +264,9 @@ export class GmailProvider implements MailProvider {
     }
   }
 }
+
+/** Above this, messages are sent as a media upload instead of base64 JSON. */
+const JSON_RAW_LIMIT = 4 * 1024 * 1024
 
 const emptyBatch = (): SyncBatch => ({ messages: [], deletedMessageIds: [] })
 
