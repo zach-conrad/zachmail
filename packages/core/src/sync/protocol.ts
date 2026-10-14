@@ -2,7 +2,11 @@
  * Wire format between the API and every client replica (web, macOS, iOS). Times are epoch
  * milliseconds so clients can sort and compare without parsing.
  */
+import type { ThreadAi } from './ai'
+import type { NudgeDismissalRow } from '../compose/nudges'
+import type { SnippetRow } from '../compose/snippets'
 import type { OpStatusRow } from './ops'
+import type { SplitRuleRow } from './split'
 
 export interface Address {
   name?: string
@@ -48,6 +52,20 @@ export interface ThreadRow {
   folderIds: string[]
   /** New replies are archived automatically. Optional so older replicas stay valid. */
   muted?: boolean
+  /** Epoch ms the thread comes back to the inbox; null/absent when not snoozed. */
+  snoozedUntil?: number | null
+  /** Pending reminder (see ops.ts `remind`); null/absent when none. */
+  reminder?: Reminder | null
+  /** Triage result (see ai.ts); null/absent until triaged or while AI is off. */
+  ai?: ThreadAi | null
+}
+
+/** `if_no_reply` fires only if nobody else has written in the thread since it was set. */
+export type ReminderCondition = 'always' | 'if_no_reply'
+
+export interface Reminder {
+  at: number
+  condition: ReminderCondition
 }
 
 export interface MessageRow {
@@ -74,6 +92,9 @@ export interface Rows {
   folders: FolderRow[]
   threads: ThreadRow[]
   messages: MessageRow[]
+  splitRules: SplitRuleRow[]
+  snippets: SnippetRow[]
+  nudgeDismissals: NudgeDismissalRow[]
 }
 
 export interface Deletes {
@@ -81,6 +102,9 @@ export interface Deletes {
   folder: string[]
   thread: string[]
   message: string[]
+  splitRule: string[]
+  snippet: string[]
+  nudgeDismissal: string[]
 }
 
 /** GET /api/sync?since=<seq>. Apply upserts then deletes; repeat while `more`. */
@@ -106,5 +130,21 @@ export interface MessageBody {
   hasRemoteImages: boolean
 }
 
-export const emptyRows = (): Rows => ({ accounts: [], folders: [], threads: [], messages: [] })
-export const emptyDeletes = (): Deletes => ({ account: [], folder: [], thread: [], message: [] })
+export const emptyRows = (): Rows => ({
+  accounts: [],
+  folders: [],
+  threads: [],
+  messages: [],
+  splitRules: [],
+  snippets: [],
+  nudgeDismissals: [],
+})
+export const emptyDeletes = (): Deletes => ({
+  account: [],
+  folder: [],
+  thread: [],
+  message: [],
+  splitRule: [],
+  snippet: [],
+  nudgeDismissal: [],
+})

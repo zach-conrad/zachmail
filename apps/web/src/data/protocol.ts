@@ -4,11 +4,12 @@ import type {
   OpEnvelope,
   SendRequest,
   SendResponse,
+  SplitRuleRow,
 } from '@zachmail/core'
 import type { ListQuery, SearchListQuery, StoreApi, ThreadListItem } from '@zachmail/local-store'
 
 /** Store reads the UI may call over the worker boundary (writes stay inside the worker). */
-export type ReadMethod = 'accounts' | 'folders' | 'getThread' | 'unread'
+export type ReadMethod = 'accounts' | 'folders' | 'getThread' | 'unread' | 'splitRules'
 
 /** What a thread list shows: a split, or search results. */
 export type ViewQuery = ListQuery | SearchListQuery
@@ -57,6 +58,8 @@ export type ToWorker =
   | { type: 'nudge' }
   /** A triage op the UI already applied on screen: persist, overlay and send it. */
   | { type: 'op'; env: OpEnvelope }
+  /** Save (rule) or delete (null) a split rule: re-split locally now, send when online. */
+  | { type: 'splitRule'; id: string; rule: SplitRuleRow | null }
   | { type: 'call'; id: number; method: Method; args: unknown[] }
 
 export interface WorkerStatus {

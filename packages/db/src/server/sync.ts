@@ -1,6 +1,9 @@
 import type { Deletes, OpStatusRow, Rows, SyncDelta } from '@zachmail/core'
 import { emptyDeletes, emptyRows } from '@zachmail/core'
 import type { SyncBatch } from '@zachmail/providers'
+import { attachSentReminders, unsnoozeOnReply } from './snooze'
+import { SELECT_SPLIT_RULE, recomputeSplits } from './splits'
+import { SELECT_NUDGE_DISMISSAL, SELECT_SNIPPET } from './composer'
 import type { Db, Queryable } from './sql'
 
 type Entity = keyof Deletes
@@ -25,14 +28,16 @@ const ids = (rows: { id: string }[]) => rows.map((r) => r.id)
  * Writes one provider batch into the mirror and the change log in a single transaction:
  * folders, threads, messages, attachments, then recomputed thread aggregates and folder
  * membership. Unchanged rows produce no change entries, so re-syncing is cheap and quiet.
+ * `inserted` lists messages new to the mirror (what notifications look at).
  */
 export async function applySyncBatch(
   db: Db,
   args: { userId: string; accountId: string; batch: SyncBatch },
-): Promise<{ changed: number }> {
+): Promise<{ changed: number; inserted: string[] }> {
   const { userId, accountId, batch } = args
   return db.transaction(async (tx) => {
     let changed = 0
+    let inserted: string[] = []
     const affectedThreads = new Set<string>()
 
     if (batch.folders) {
@@ -130,6 +135,10 @@ export async function applySyncBatch(
       changed += up.length
 
       const insertedIds = up.filter((r) => r.inserted).map((r) => r.id)
+      // Their threads are already in affectedThreads, so the changes get logged below.
+      await unsnoozeOnReply(tx, insertedIds)
+      await attachSentReminders(tx, accountId, insertedIds)
+      inserted = insertedIds
       const atts = batch.messages.flatMap((m) =>
         m.attachments.map((a) => ({
           provider_message_id: m.providerMessageId,
@@ -180,7 +189,7 @@ export async function applySyncBatch(
       changed += threadIds.length
     }
 
-    return { changed }
+    return { changed, inserted }
   })
 }
 
@@ -220,6 +229,7 @@ export async function recomputeThreads(tx: Queryable, userId: string, threadIds:
      ON CONFLICT DO NOTHING`,
     [threadIds, userId],
   )
+  await recomputeSplits(tx, userId, threadIds)
 }
 
 /** Records that the backfill has mirrored an account's whole history (search stops asking it). */
@@ -279,7 +289,11 @@ const SELECT_FOLDER = `SELECT f.id, f.account_id AS "accountId", f.provider_id A
 
 export const SELECT_THREAD = `SELECT t.id, t.account_id AS "accountId", t.subject, t.snippet, t.participants,
   ${ms('t.last_message_at')} AS "lastMessageAt", t.message_count AS "messageCount", t.unread, t.starred,
-  t.has_attachments AS "hasAttachments", t.muted,
+  t.has_attachments AS "hasAttachments", t.muted, ${ms('t.snoozed_until')} AS "snoozedUntil",
+  (SELECT jsonb_build_object('at', ${ms('r.remind_at')}, 'condition', r.condition)
+   FROM reminders r WHERE r.thread_id = t.id) AS reminder,
+  CASE WHEN t.ai_category IS NULL THEN NULL ELSE jsonb_build_object('category', t.ai_category,
+    'summary', t.ai_summary, 'needsReply', t.ai_needs_reply) END AS ai,
   COALESCE((SELECT array_agg(tf.folder_id::text) FROM thread_folders tf WHERE tf.thread_id = t.id), '{}') AS "folderIds"
   FROM threads t`
 
@@ -312,7 +326,15 @@ export async function readDelta(
       [userId, since, upTo],
     )
 
-    const want: Record<Entity, string[]> = { account: [], folder: [], thread: [], message: [] }
+    const want: Record<Entity, string[]> = {
+      account: [],
+      folder: [],
+      thread: [],
+      message: [],
+      splitRule: [],
+      snippet: [],
+      nudgeDismissal: [],
+    }
     const deletes = emptyDeletes()
     const opIds: string[] = []
     for (const c of latest) {
@@ -341,6 +363,9 @@ export async function readDelta(
     await load('folders', SELECT_FOLDER, 'f', want.folder)
     await load('threads', SELECT_THREAD, 't', want.thread)
     await load('messages', SELECT_MESSAGE, 'm', want.message)
+    await load('splitRules', SELECT_SPLIT_RULE, 'r', want.splitRule)
+    await load('snippets', SELECT_SNIPPET, 's', want.snippet)
+    await load('nudgeDismissals', SELECT_NUDGE_DISMISSAL, 'n', want.nudgeDismissal)
 
     const ops = opIds.length ? await readOpStatuses(tx, userId, opIds) : []
 
@@ -365,7 +390,17 @@ export async function readOpStatuses(
 }
 
 const entityOf = (k: keyof Rows): Entity =>
-  (({ accounts: 'account', folders: 'folder', threads: 'thread', messages: 'message' }) as const)[k]
+  (
+    ({
+      accounts: 'account',
+      folders: 'folder',
+      threads: 'thread',
+      messages: 'message',
+      splitRules: 'splitRule',
+      snippets: 'snippet',
+      nudgeDismissals: 'nudgeDismissal',
+    }) as const
+  )[k]
 
 /**
  * Initial replica: everything for threads active in the last `days`, in chunks the API
@@ -387,6 +422,9 @@ export async function readBootstrap(
     onRows({
       accounts: await tx.query(`${SELECT_ACCOUNT} WHERE a.user_id = $1`, [userId]),
       folders: await tx.query(`${SELECT_FOLDER} WHERE f.user_id = $1`, [userId]),
+      splitRules: await tx.query(`${SELECT_SPLIT_RULE} WHERE r.user_id = $1`, [userId]),
+      snippets: await tx.query(`${SELECT_SNIPPET} WHERE s.user_id = $1`, [userId]),
+      nudgeDismissals: await tx.query(`${SELECT_NUDGE_DISMISSAL} WHERE n.user_id = $1`, [userId]),
     })
     const cutoff = `now() - make_interval(days => $2)`
     let cursor: { at: number; id: string } | null = null

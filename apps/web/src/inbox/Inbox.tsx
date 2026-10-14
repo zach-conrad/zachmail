@@ -1,4 +1,4 @@
-import type { CommandId, MailOp, SimpleOpKind } from '@zachmail/core'
+import type { CommandId, MailOp, SimpleOpKind, SplitKey } from '@zachmail/core'
 import type { ThreadDetail, ThreadListItem } from '@zachmail/local-store'
 import { replyDraft } from '../compose/draft'
 import {
@@ -12,11 +12,13 @@ import {
   type MouseEvent,
   type ReactNode,
 } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import { useData } from '../data/DataProvider'
 import { ListModel } from '../data/listModel'
 import type { ViewQuery } from '../data/protocol'
 import { beginInteraction, endInteraction, markOnce } from '../lib/perf'
 import { useCommands } from '../lib/useCommands'
+import { clearThreadNotifications } from '../notifications/push'
 import { InboxZero } from './InboxZero'
 import { LabelPicker, type LabelChoice } from './LabelPicker'
 import { ThreadList } from './ThreadList'
@@ -45,6 +47,8 @@ interface Props {
   /** A split, or search results. */
   view: ViewQuery
   active: boolean
+  /** A thread to open on arrival (from a notification click). */
+  openThread?: string | null
   /** Shown when the view is empty; the Inbox Zero screen by default. */
   empty?: ReactNode
   /** Esc with nothing open or selected (leaves search). */
@@ -54,8 +58,10 @@ interface Props {
 }
 
 /** One view: the virtualized list, the reading pane and their keyboard model. */
-export function Inbox({ view, active, empty, onExit, highlight }: Props) {
+export function Inbox({ view, active, openThread = null, empty, onExit, highlight }: Props) {
   const { client, threads, triage, compose, ownEmails } = useData()
+  const navigate = useNavigate()
+  const split: SplitKey | null = 'split' in view ? view.split : null
   // One model per mount; a new search query swaps its rows in place (no flash while typing).
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const model = useMemo(() => new ListModel(client, view), [client])
@@ -63,7 +69,13 @@ export function Inbox({ view, active, empty, onExit, highlight }: Props) {
   const count = model.count
 
   const [focus, setFocus] = useState(0)
-  const [openId, setOpenId] = useState<string | null>(null)
+  const [openId, setOpenId] = useState<string | null>(openThread)
+  // A notification click while mounted: adopt it during render (no effect round-trip).
+  const [arrival, setArrival] = useState(openThread)
+  if (openThread !== arrival) {
+    setArrival(openThread)
+    if (openThread) setOpenId(openThread)
+  }
   const focusId = model.get(focus)?.id ?? null
   // The thread the user meant, so focus follows it when new mail shifts the list.
   const wanted = useRef<string | null>(null)
@@ -160,9 +172,19 @@ export function Inbox({ view, active, empty, onExit, highlight }: Props) {
     if (!openId) endInteraction('nav.back')
   }, [openId])
 
+  // A notification click: open the thread, mark it read, then drop it from the URL so a
+  // reload doesn't reopen it. Focus follows once the list finds the row.
+  useEffect(() => {
+    if (!openThread || !split) return
+    wanted.current = openThread
+    triage.run({ kind: 'read', threadIds: [openThread] }, 'Mark read', model, true)
+    void navigate({ to: '/inbox/$split', params: { split }, search: {}, replace: true })
+  }, [openThread, triage, model, navigate, split])
+
   // Opening an unread thread marks it read (no toast, not on the undo stack).
   useEffect(() => {
     const row = model.get(focus)
+    if (openId) void clearThreadNotifications(openId).catch(() => {})
     if (openId && row?.id === openId && row.unread)
       triage.run({ kind: 'read', threadIds: [openId] }, 'Mark read', model, true)
     // Only on open: focus and model are read as of then.
@@ -349,8 +371,7 @@ export function Inbox({ view, active, empty, onExit, highlight }: Props) {
     />
   )
 
-  if (count === 0)
-    return empty ?? <InboxZero hero={'split' in view && view.split === 'important'} />
+  if (count === 0) return empty ?? <InboxZero hero={split === 'important'} />
 
   return (
     <div className="panes" data-open={openId ? '' : undefined}>

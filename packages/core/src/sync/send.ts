@@ -2,6 +2,7 @@
  * Sending goes through the server outbox like triage, delayed by the undo window (or until
  * `sendAt`), so undo-send and send-later work with every device closed.
  */
+import { MAX_SNOOZE_MS } from './ops'
 import type { Address } from './protocol'
 
 /** POST /api/send. `id` is a client UUID: the idempotency key, the undo handle and the op id. */
@@ -11,6 +12,8 @@ export interface SendRequest extends OutgoingFields {
   sendAt?: number
   /** Undo window, default 10 s. */
   undoMs?: number
+  /** "Remind me if no reply": epoch ms to bring the thread back if nobody has answered. */
+  remindAt?: number
   /** The draft this message was composed in; deleted once the message has gone out. */
   draftId?: string
 }
@@ -27,6 +30,13 @@ export const MAX_RECIPIENTS = 100
 export const MAX_ATTACHMENTS = 20
 /** Gmail's limit for a whole message is 25 MB; base64 makes files ~4/3 bigger on the wire. */
 export const MAX_ATTACHMENT_BYTES = 18 * 1024 * 1024
+
+/**
+ * The Message-ID header of a send. Stable per op, so the copy that syncs back from the
+ * provider can be recognised (and a "remind if no reply" attached to its thread).
+ */
+export const sentMessageId = (opId: string, fromEmail: string) =>
+  `<${opId}@${fromEmail.split('@')[1] || 'zachmail.local'}>`
 
 export class InvalidSendError extends Error {
   override name = 'InvalidSendError'
@@ -111,6 +121,13 @@ export function parseSendRequest(body: unknown): SendRequest {
   const undoMs = b.undoMs ?? DEFAULT_UNDO_MS
   if (typeof undoMs !== 'number' || undoMs < 0 || undoMs > MAX_UNDO_MS)
     fail(`undoMs must be 0-${MAX_UNDO_MS}`)
+  if (
+    b.remindAt !== undefined &&
+    (typeof b.remindAt !== 'number' ||
+      !Number.isFinite(b.remindAt) ||
+      b.remindAt > Date.now() + MAX_SNOOZE_MS)
+  )
+    fail('remindAt must be epoch ms within 5 years')
   if (b.draftId !== undefined && (typeof b.draftId !== 'string' || !UUID.test(b.draftId)))
     fail('draftId must be a UUID')
   return {
@@ -118,6 +135,7 @@ export function parseSendRequest(body: unknown): SendRequest {
     ...fields,
     ...(b.sendAt !== undefined ? { sendAt: b.sendAt as number } : {}),
     undoMs,
+    ...(b.remindAt !== undefined ? { remindAt: b.remindAt as number } : {}),
     ...(b.draftId ? { draftId: b.draftId as string } : {}),
   }
 }

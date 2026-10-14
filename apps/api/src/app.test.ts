@@ -1,3 +1,6 @@
+import { createAi } from '@zachmail/ai'
+import { FAKE_ANTHROPIC_URL, fakeAnthropic, type FakeReply } from '@zachmail/ai/testing'
+import { readAssistStream } from '@zachmail/core'
 import { applySyncBatch, saveCredentials, type Db } from '@zachmail/db/server'
 import { USER, createTestDb, type TestDb } from '@zachmail/db/testing'
 import { proxiedImageUrl } from '@zachmail/engine'
@@ -22,6 +25,7 @@ const env: Env = {
   IMAGE_PROXY_SECRET: 'img-secret',
   TOKEN_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
   SUPABASE_SERVICE_ROLE_KEY: 'service-key',
+  VAPID_PUBLIC_KEY: 'BPublicKey',
 }
 
 const b64 = (s: string) => Buffer.from(s).toString('base64url')
@@ -58,6 +62,7 @@ let t: TestDb
 let db: Db
 let app: ReturnType<typeof createApp>
 let userToken: string
+let overrides: Parameters<typeof createApp>[1]
 let signGoogle: (claims: Record<string, unknown>, aud?: string) => Promise<string>
 
 beforeAll(async () => {
@@ -70,12 +75,13 @@ beforeAll(async () => {
     kid,
     alg,
   })
-  app = createApp(env, {
+  overrides = {
     db: () => db,
     fetch: fakeFetch as never,
     supabaseKeys: createLocalJWKSet({ keys: [await jwks(supa.publicKey, 's1', 'ES256')] }),
     googleKeys: createLocalJWKSet({ keys: [await jwks(goog.publicKey, 'g1', 'RS256')] }),
-  })
+  }
+  app = createApp(env, overrides)
   userToken = await new SignJWT({ email: 'zach@example.com' })
     .setProtectedHeader({ alg: 'ES256', kid: 's1' })
     .setIssuer(`${SUPABASE_URL}/auth/v1`)
@@ -262,6 +268,82 @@ describe('sync endpoints', () => {
     expect(anon.status).toBe(401)
   })
 
+  it('saves and deletes split rules, queueing one re-split', async () => {
+    const id = '00000000-0000-4000-8000-0000000000f3'
+    const put = (body: unknown, ruleId = id) =>
+      authed(`/api/split-rules/${ruleId}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    const rule = {
+      name: 'Receipts',
+      target: 'custom',
+      match: 'any',
+      conditions: [{ field: 'domain', value: 'stripe.com' }],
+      position: 1,
+    }
+    const res = await put(rule)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ id, ...rule })
+    expect((await put({ ...rule, name: 'Stripe' })).status).toBe(200)
+    expect(await jobCount('splits.recompute')).toBe(1)
+    expect(await (await authed('/api/split-rules')).json()).toEqual([
+      { id, ...rule, name: 'Stripe' },
+    ])
+
+    expect((await put({ ...rule, target: 'nope' })).status).toBe(400)
+    expect((await put(rule, 'not-a-uuid')).status).toBe(400)
+    expect((await put({ ...rule, conditions: [{ field: 'from', value: '' }] })).status).toBe(400)
+
+    const del = await authed(`/api/split-rules/${id}`, { method: 'DELETE' })
+    expect(del.status).toBe(200)
+    expect(await (await authed('/api/split-rules')).json()).toEqual([])
+  })
+
+  it('registers push subscriptions and saves notification rules', async () => {
+    const json = (method: string, body: unknown) => ({
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    expect(await (await authed('/api/push/key')).json()).toEqual({ key: 'BPublicKey' })
+
+    const subscription = { endpoint: 'https://push.example/s1', keys: { p256dh: 'p', auth: 'a' } }
+    const put = await authed('/api/devices', json('PUT', { kind: 'webpush', subscription }))
+    expect(put.status).toBe(200)
+    expect(
+      (await authed('/api/devices', json('PUT', { kind: 'webpush', subscription: {} }))).status,
+    ).toBe(400)
+    const devices = () => db.query(`SELECT token FROM devices`)
+    expect(await devices()).toEqual([{ token: 'https://push.example/s1' }])
+    await authed('/api/devices', json('DELETE', { token: subscription.endpoint }))
+    expect(await devices()).toEqual([])
+
+    expect(await (await authed('/api/notification-settings')).json()).toEqual({
+      enabled: true,
+      splits: ['important'],
+      vips: [],
+      mutedAccounts: [],
+    })
+    const saved = await authed(
+      '/api/notification-settings',
+      json('PUT', { enabled: true, splits: ['important'], vips: ['Mom@x.com'], mutedAccounts: [] }),
+    )
+    expect(await saved.json()).toMatchObject({ vips: ['mom@x.com'] })
+    expect(
+      (
+        await authed(
+          '/api/notification-settings',
+          json('PUT', { enabled: true, splits: [], vips: ['nope'], mutedAccounts: [] }),
+        )
+      ).status,
+    ).toBe(400)
+
+    expect((await authed('/api/notifications/test', { method: 'POST' })).status).toBe(202)
+    expect(await jobCount('notify.test')).toBe(1)
+  })
+
   it('queues a send behind the undo window and undoes it', async () => {
     const accountId = (await db.query<{ id: string }>(`SELECT id FROM accounts LIMIT 1`))[0]!.id
     const id = '00000000-0000-4000-8000-0000000000f2'
@@ -339,6 +421,32 @@ describe('sync endpoints', () => {
     expect(contacts.map((c) => c.email)).toContain('ana@x.com')
   })
 
+  it('saves snippets and dismisses follow-up nudges', async () => {
+    const id = '00000000-0000-4000-8000-0000000000e1'
+    const json = (method: string, body: unknown) => ({
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const snippet = { name: 'Call', shortcut: 'Call', html: '<p>Hi {first_name}</p>' }
+    expect(await (await authed(`/api/snippets/${id}`, json('PUT', snippet))).json()).toEqual({ id })
+    expect(
+      (await authed('/api/snippets/00000000-0000-4000-8000-0000000000e2', json('PUT', snippet)))
+        .status,
+    ).toBe(409)
+    expect((await authed(`/api/snippets/${id}`, json('PUT', { name: '' }))).status).toBe(400)
+    expect((await authed(`/api/snippets/${id}`, { method: 'DELETE' })).status).toBe(204)
+
+    const threadId = (await db.query<{ id: string }>(`SELECT id FROM threads LIMIT 1`))[0]!.id
+    const res = await authed('/api/nudges/dismiss', json('POST', { threadIds: [threadId] }))
+    const { dismissed } = (await res.json()) as { dismissed: { id: string }[] }
+    expect(dismissed.map((d) => d.id)).toEqual([threadId])
+    expect((await authed('/api/nudges/dismiss', json('POST', { threadIds: [] }))).status).toBe(400)
+    expect(
+      (await authed('/api/nudges/restore', json('POST', { threadIds: [threadId] }))).status,
+    ).toBe(204)
+  })
+
   it('returns compacted deltas', async () => {
     const delta = (await (await authed('/api/sync?since=0')).json()) as {
       seq: number
@@ -393,6 +501,65 @@ describe('sync endpoints', () => {
     expect((await authed(`/api/messages/00000000-0000-0000-0000-000000000000/body`)).status).toBe(
       404,
     )
+  })
+})
+
+describe('ai assist', () => {
+  let reply: (body: Record<string, unknown>) => FakeReply
+  const fake = fakeAnthropic((b) => reply(b))
+  const aiApp = () =>
+    createApp(env, {
+      ...overrides,
+      ai: async () => createAi({ apiKey: 'k', baseURL: FAKE_ANTHROPIC_URL, fetch: fake.fetch }),
+    })
+  const assist = (a: ReturnType<typeof createApp>, body: unknown) =>
+    a.request('/api/ai/assist', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  const read = async (res: Response) => {
+    let text = ''
+    for await (const t of readAssistStream(res.body!)) text += t
+    return text
+  }
+
+  it('is off without ANTHROPIC_API_KEY', async () => {
+    expect((await assist(app, { mode: 'rewrite', text: 'hi' })).status).toBe(503)
+  })
+
+  it('streams a reply drafted from the thread', async () => {
+    reply = () => ({ chunks: ['Sure, ', 'Friday works.'] })
+    const threadId = (await db.query<{ id: string }>(`SELECT id FROM threads LIMIT 1`))[0]!.id
+    const res = await assist(aiApp(), { mode: 'draft', threadId, instruction: 'say yes' })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('application/x-ndjson')
+    expect(await read(res)).toBe('Sure, Friday works.')
+    const prompt = JSON.stringify(fake.requests.at(-1)!.body.messages)
+    expect(prompt).toContain('hi <there>') // body text, fetched from the provider
+    expect(prompt).toContain('zach@gmail.com') // writing as the thread's account
+  })
+
+  it('rewrites text and reports declines and failures in-stream', async () => {
+    reply = () => ({ chunks: ['Shorter.'] })
+    expect(await read(await assist(aiApp(), { mode: 'rewrite', text: 'A long draft' }))).toBe(
+      'Shorter.',
+    )
+    reply = () => ({ chunks: [], stopReason: 'refusal' })
+    await expect(read(await assist(aiApp(), { mode: 'rewrite', text: 'x' }))).rejects.toThrow(
+      'declined',
+    )
+    reply = () => ({ status: 400 })
+    await expect(read(await assist(aiApp(), { mode: 'rewrite', text: 'x' }))).rejects.toThrow(
+      'unavailable',
+    )
+  })
+
+  it('validates requests', async () => {
+    expect((await assist(aiApp(), { mode: 'summarize' })).status).toBe(400)
+    expect((await assist(aiApp(), { mode: 'shout', text: 'x' })).status).toBe(400)
+    const missing = '00000000-0000-4000-8000-0000000000aa'
+    expect((await assist(aiApp(), { mode: 'summarize', threadId: missing })).status).toBe(404)
   })
 })
 

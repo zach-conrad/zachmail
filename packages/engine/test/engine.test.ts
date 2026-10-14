@@ -7,8 +7,12 @@ import {
   saveCredentials,
   saveDraft,
   createUpload,
+  listDevices,
+  upsertDevice,
   type Db,
+  type DeviceRow,
 } from '@zachmail/db/server'
+import type { PushPayload } from '@zachmail/core'
 import { USER, createTestDb, type TestDb } from '@zachmail/db/testing'
 import { randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -25,6 +29,7 @@ import {
   sweepUploads,
   type EngineConfig,
   type JobLike,
+  type PushSender,
 } from '../src'
 
 const KEY = randomBytes(32).toString('base64')
@@ -174,7 +179,7 @@ beforeAll(async () => {
   db = t.db
   google = fakeGoogle()
   providers = new ProviderFactory(db, config, google.fetchImpl as never)
-  handlers = createHandlers({ db, providers, config })
+  handlers = createHandlers({ db, providers, config, push: fakePush })
   const [a] = await db.query<{ id: string }>(
     `INSERT INTO accounts (user_id, provider, email) VALUES ($1, 'gmail', 'zach@x.com') RETURNING id`,
     [USER],
@@ -188,6 +193,16 @@ beforeAll(async () => {
 })
 
 afterAll(() => t.close())
+
+/** Records pushes; endpoints containing "gone" answer like an expired subscription. */
+const pushed: { endpoint: string; payload: PushPayload }[] = []
+const fakePush: PushSender = {
+  async send(d: DeviceRow, payload: PushPayload) {
+    if (d.token.includes('gone')) return 'gone'
+    pushed.push({ endpoint: d.token, payload })
+    return 'ok'
+  },
+}
 
 describe('engine', () => {
   it('backfills, activates the account, watches and prefetches inbox bodies', async () => {
@@ -233,6 +248,36 @@ describe('engine', () => {
       [accountId],
     )
     expect(acct!.h).toBe('200')
+  })
+
+  it('pushes new Important mail to registered browsers and forgets dead ones', async () => {
+    const keys = { p256dh: 'p', auth: 'a' }
+    await upsertDevice(db, USER, { kind: 'webpush', token: 'https://push/live', keys, label: null })
+    await upsertDevice(db, USER, { kind: 'webpush', token: 'https://push/gone', keys, label: null })
+    expect(await drain()).toContain('notify.push')
+    expect(pushed).toEqual([
+      {
+        endpoint: 'https://push/live',
+        payload: {
+          v: 1,
+          kind: 'mail',
+          notices: [
+            {
+              threadId: expect.any(String),
+              title: 'Ana',
+              body: 'About t1\nsnippet m4',
+              split: 'important',
+            },
+          ],
+          more: 0,
+          badge: 1,
+        },
+      },
+    ])
+    expect((await listDevices(db, USER, 'webpush')).map((d) => d.token)).toEqual([
+      'https://push/live',
+    ])
+    pushed.length = 0
   })
 
   it('serves cached sanitized bodies with images parked behind the proxy', async () => {
@@ -377,6 +422,32 @@ describe('engine', () => {
     )
   })
 
+  it('snoozes at Gmail and brings the thread back unread when the wake job runs', async () => {
+    const [t2] = await db.query<{ id: string }>(
+      `SELECT id FROM threads WHERE provider_thread_id = 't2'`,
+    )
+    const id = '00000000-0000-4000-8000-0000000000f1'
+    google.state.history = [] // the fake doesn't reflect writes; later syncs see no news
+    await acceptOps(db, USER, [
+      { id, at: 1, op: { kind: 'snooze', threadIds: [t2!.id], until: Date.now() + 3_600_000 } },
+    ])
+    google.state.writes = []
+    await handlers['outbox.flush']!({ kind: 'outbox.flush', userId: USER, payload: { accountId } })
+    expect(google.state.writes).toEqual(['modify t2 {"addLabelIds":[],"removeLabelIds":["INBOX"]}'])
+
+    await db.query(`UPDATE threads SET snoozed_until = now() WHERE id = $1`, [t2!.id])
+    await handlers['snooze.wake']!({ kind: 'snooze.wake', userId: USER, payload: {} })
+    await drain()
+    expect(google.state.writes.at(-1)).toBe(
+      'modify t2 {"addLabelIds":["INBOX","UNREAD"],"removeLabelIds":[]}',
+    )
+    const delta = await readDelta(db, USER, 0)
+    expect(delta.upserts.threads.find((x) => x.id === t2!.id)).toMatchObject({
+      unread: true,
+      snoozedUntil: null,
+    })
+  })
+
   it('keeps muted threads out of the inbox when replies arrive', async () => {
     const [t1] = await db.query<{ id: string }>(
       `SELECT id FROM threads WHERE provider_thread_id = 't1'`,
@@ -405,6 +476,8 @@ describe('engine', () => {
     expect(google.state.writes).toEqual(['modify t1 {"addLabelIds":[],"removeLabelIds":["INBOX"]}'])
     const delta = await readDelta(db, USER, 0)
     expect(delta.upserts.threads.find((t) => t.id === t1!.id)).toMatchObject({ muted: true })
+    // The reply landed in a muted thread: no banner.
+    expect(pushed).toEqual([])
   })
 
   it('mirrors drafts to Gmail and deletes them once the message is sent', async () => {
