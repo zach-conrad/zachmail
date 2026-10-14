@@ -5,6 +5,8 @@ import {
   readDelta,
   readOpStatuses,
   saveCredentials,
+  saveDraft,
+  createUpload,
   type Db,
 } from '@zachmail/db/server'
 import { USER, createTestDb, type TestDb } from '@zachmail/db/testing'
@@ -12,8 +14,10 @@ import { randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   ProviderFactory,
+  Storage,
   createHandlers,
   enqueueInitialSync,
+  enqueueDraftSync,
   enqueueOutboxFlush,
   getMessageBody,
   type EngineConfig,
@@ -54,6 +58,7 @@ function fakeGoogle() {
     writes: [] as string[],
     failWrites: 0,
     sent: [] as { raw: string; threadId?: string }[],
+    draftCalls: [] as string[],
   }
   const now = Date.now()
   const threads: Record<string, ReturnType<typeof gmailMsg>[]> = {
@@ -84,6 +89,11 @@ function fakeGoogle() {
       return url.searchParams.get('pageToken')
         ? json({ threads: [{ id: 't2' }] })
         : json({ threads: [{ id: 't1' }], nextPageToken: 'p2' })
+    }
+    if (path.startsWith('/drafts')) {
+      state.draftCalls.push(`${init?.method} ${path}`)
+      if (init?.method === 'DELETE') return new Response(null, { status: 204 })
+      return json({ id: 'gd1' })
     }
     if (path === '/messages/send') {
       const body = JSON.parse(String(init?.body)) as { raw: string; threadId?: string }
@@ -346,6 +356,56 @@ describe('engine', () => {
     expect(google.state.writes).toEqual(['modify t1 {"addLabelIds":[],"removeLabelIds":["INBOX"]}'])
     const delta = await readDelta(db, USER, 0)
     expect(delta.upserts.threads.find((t) => t.id === t1!.id)).toMatchObject({ muted: true })
+  })
+
+  it('mirrors drafts to Gmail and deletes them once the message is sent', async () => {
+    const draftId = '00000000-0000-4000-8000-0000000000c1'
+    const fields = { accountId, to: [{ email: 'ana@x.com' }], subject: 'Draft', html: '<p>one</p>' }
+    expect(await saveDraft(db, USER, draftId, fields)).toBe(1)
+    await enqueueDraftSync(db, USER, draftId)
+    await drain()
+    expect(await saveDraft(db, USER, draftId, { ...fields, html: '<p>two</p>' })).toBe(2)
+    await enqueueDraftSync(db, USER, draftId)
+    await drain()
+    expect(google.state.draftCalls).toEqual(['POST /drafts', 'PUT /drafts/gd1'])
+
+    const id = '00000000-0000-4000-8000-0000000000c2'
+    await acceptSend(db, USER, { ...fields, id, undoMs: 0, draftId })
+    await enqueueOutboxFlush(db, USER, accountId)
+    await drain()
+    expect(google.state.draftCalls.at(-1)).toBe('DELETE /drafts/gd1')
+    expect(await db.query(`SELECT 1 FROM drafts WHERE id = $1`, [draftId])).toEqual([])
+  })
+
+  it('attaches uploaded files from Storage when sending', async () => {
+    const uploadId = '00000000-0000-4000-8000-0000000000b1'
+    await createUpload(db, USER, uploadId, `${USER}/${uploadId}/notes.txt`, {
+      filename: 'notes.txt',
+      mime: 'text/plain',
+      size: 5,
+    })
+    const fetched: string[] = []
+    const storage = new Storage(
+      { url: 'https://proj.supabase.co', serviceKey: 'sk', bucket: 'attachments' },
+      async (input) => {
+        fetched.push(input)
+        return new Response('hello')
+      },
+    )
+    const h = createHandlers({ db, providers, config, storage })
+    const id = '00000000-0000-4000-8000-0000000000b2'
+    const fields = { accountId, to: [{ email: 'ana@x.com' }], subject: 'File', html: '<p>see</p>' }
+    await acceptSend(db, USER, { ...fields, id, undoMs: 0, attachments: [uploadId] })
+    await h['outbox.flush']!({ kind: 'outbox.flush', userId: USER, payload: { accountId } })
+    expect(fetched).toEqual([
+      `https://proj.supabase.co/storage/v1/object/attachments/${USER}/${uploadId}/notes.txt`,
+    ])
+    const raw = google.state.sent.at(-1)!.raw
+    expect(raw).toMatch(/Content-Disposition: attachment; filename="?notes\.txt"?/)
+    expect(raw).toContain(Buffer.from('hello').toString('base64'))
+    await expect(
+      acceptSend(db, USER, { ...fields, id: uploadId, attachments: [id] }),
+    ).rejects.toThrow(/attachment/)
   })
 
   it('parks the account when the refresh token is revoked', async () => {

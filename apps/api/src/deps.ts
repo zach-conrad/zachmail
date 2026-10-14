@@ -1,5 +1,5 @@
 import { fromPostgresJs, type Db } from '@zachmail/db/server'
-import { ProviderFactory, type EngineConfig } from '@zachmail/engine'
+import { ProviderFactory, Storage, type EngineConfig } from '@zachmail/engine'
 import type { FetchLike } from '@zachmail/providers/gmail'
 import type { JWTVerifyGetKey } from 'jose'
 import postgres from 'postgres'
@@ -10,6 +10,8 @@ export interface Deps {
   providers: () => ProviderFactory
   engineConfig: () => EngineConfig
   fetch: FetchLike
+  /** Attachment storage; null until SUPABASE_SERVICE_ROLE_KEY is set. */
+  storage: () => Storage | null
   /** Supabase JWKS (overridable in tests). */
   supabaseKeys?: JWTVerifyGetKey
   /** Google OIDC JWKS for Pub/Sub push tokens (overridable in tests). */
@@ -20,6 +22,14 @@ export interface Deps {
 export function buildDeps(env: Env, overrides: Partial<Deps> = {}): Deps {
   let db: Db | undefined
   let providers: ProviderFactory | undefined
+  let storage: Storage | undefined
+  const storageConfig = env.SUPABASE_SERVICE_ROLE_KEY
+    ? {
+        url: env.SUPABASE_URL,
+        serviceKey: env.SUPABASE_SERVICE_ROLE_KEY,
+        bucket: env.ATTACHMENTS_BUCKET ?? 'attachments',
+      }
+    : undefined
   const engineConfig = (): EngineConfig => ({
     google: {
       clientId: required(env, 'GOOGLE_CLIENT_ID'),
@@ -29,6 +39,7 @@ export function buildDeps(env: Env, overrides: Partial<Deps> = {}): Deps {
     imageProxySecret: required(env, 'IMAGE_PROXY_SECRET'),
     appOrigin: env.APP_ORIGIN,
     tokenKey: env.TOKEN_ENCRYPTION_KEY,
+    storage: storageConfig,
   })
   const getDb =
     overrides.db ??
@@ -47,6 +58,7 @@ export function buildDeps(env: Env, overrides: Partial<Deps> = {}): Deps {
     providers: () => (providers ??= new ProviderFactory(getDb(), engineConfig(), fetchImpl)),
     engineConfig,
     fetch: fetchImpl,
+    storage: () => (storageConfig ? (storage ??= new Storage(storageConfig, fetchImpl)) : null),
     ...overrides,
   }
 }
