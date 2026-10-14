@@ -262,6 +262,39 @@ describe('sync endpoints', () => {
     expect(anon.status).toBe(401)
   })
 
+  it('saves and deletes split rules, queueing one re-split', async () => {
+    const id = '00000000-0000-4000-8000-0000000000f3'
+    const put = (body: unknown, ruleId = id) =>
+      authed(`/api/split-rules/${ruleId}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    const rule = {
+      name: 'Receipts',
+      target: 'custom',
+      match: 'any',
+      conditions: [{ field: 'domain', value: 'stripe.com' }],
+      position: 1,
+    }
+    const res = await put(rule)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ id, ...rule })
+    expect((await put({ ...rule, name: 'Stripe' })).status).toBe(200)
+    expect(await jobCount('splits.recompute')).toBe(1)
+    expect(await (await authed('/api/split-rules')).json()).toEqual([
+      { id, ...rule, name: 'Stripe' },
+    ])
+
+    expect((await put({ ...rule, target: 'nope' })).status).toBe(400)
+    expect((await put(rule, 'not-a-uuid')).status).toBe(400)
+    expect((await put({ ...rule, conditions: [{ field: 'from', value: '' }] })).status).toBe(400)
+
+    const del = await authed(`/api/split-rules/${id}`, { method: 'DELETE' })
+    expect(del.status).toBe(200)
+    expect(await (await authed('/api/split-rules')).json()).toEqual([])
+  })
+
   it('queues a send behind the undo window and undoes it', async () => {
     const accountId = (await db.query<{ id: string }>(`SELECT id FROM accounts LIMIT 1`))[0]!.id
     const id = '00000000-0000-4000-8000-0000000000f2'

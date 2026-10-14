@@ -1,5 +1,7 @@
+import { SPLIT_RULES_DROP, SPLIT_RULES_SCHEMA } from './splitRules'
+
 /** Bump when the client schema changes; the replica is dropped and bootstrapped again. */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 export const SCHEMA = /* sql */ `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -23,6 +25,9 @@ CREATE TABLE IF NOT EXISTS threads (
   has_attachments INTEGER NOT NULL,
   folder_ids TEXT NOT NULL,
   split TEXT,
+  -- Split inputs cached by the last full classify, so a rule edit re-splits without joins.
+  split_from TEXT,
+  list_unsub INTEGER NOT NULL DEFAULT 0,
   -- The server's {folderIds, unread, starred} while pending ops overlay this row, else NULL.
   srv TEXT
 );
@@ -50,7 +55,7 @@ CREATE TABLE IF NOT EXISTS bodies (
   has_remote_images INTEGER NOT NULL,
   fetched_at INTEGER NOT NULL
 );
-`
+${SPLIT_RULES_SCHEMA}`
 
 export const DROP_ALL = /* sql */ `
 DROP TABLE IF EXISTS meta;
@@ -60,4 +65,4 @@ DROP TABLE IF EXISTS threads;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS bodies;
 DROP TABLE IF EXISTS pending_ops;
-`
+${SPLIT_RULES_DROP}`

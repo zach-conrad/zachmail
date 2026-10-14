@@ -9,7 +9,7 @@ export const USER = '00000000-0000-0000-0000-000000000001'
 const ROLES = ['anon', 'authenticated', 'service_role', 'supabase_auth_admin']
 
 const SUPABASE_STUB = `
-  ${ROLES.map((r) => `DO $$ BEGIN CREATE ROLE ${r}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;`).join('\n')}
+  ${ROLES.map((r) => `DO $$ BEGIN CREATE ROLE ${r}; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;`).join('\n')}
   CREATE SCHEMA auth;
   CREATE TABLE auth.users (id uuid PRIMARY KEY, email text);
   CREATE SCHEMA realtime;

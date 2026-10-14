@@ -6,6 +6,7 @@ import type { Env } from './env'
 import { accountRoutes, oauthCallbackRoute } from './routes/accounts'
 import { imageRoutes } from './routes/images'
 import { opsRoutes } from './routes/ops'
+import { splitRuleRoutes } from './routes/splitRules'
 import { syncRoutes } from './routes/sync'
 import { webhookRoutes } from './routes/webhooks'
 
@@ -33,6 +34,7 @@ export function createApp(env: Env, overrides: Partial<Deps> = {}) {
   authed.route('/', accountRoutes(env, deps))
   authed.route('/', syncRoutes(deps))
   authed.route('/', opsRoutes(deps))
+  authed.route('/', splitRuleRoutes(deps))
   api.route('/', authed)
 
   app.route('/api', api)

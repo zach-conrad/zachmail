@@ -2,6 +2,7 @@ import { ResyncRequired, type SyncTransport } from './client'
 import type { OpsRequest, OpsResponse } from './ops'
 import type { ContactRow, DraftRequest, SendRequest, SendResponse } from './send'
 import type { BootstrapLine, MessageBody, SyncDelta } from './protocol'
+import type { SplitRuleRemote } from './split'
 
 export interface HttpTransportOptions {
   /** API origin; '' for same-origin. */
@@ -138,5 +139,28 @@ export async function* readNdjson<T>(stream: ReadableStream<Uint8Array>): AsyncG
     if (buf.trim()) yield JSON.parse(buf) as T
   } finally {
     reader.releaseLock()
+  }
+}
+
+/** PUT/DELETE /api/split-rules/:id, with the same auth as the sync transport. */
+export function splitRuleHttp(opts: HttpTransportOptions): SplitRuleRemote {
+  const f = opts.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
+  const base = opts.baseUrl ?? ''
+  const send = async (method: 'PUT' | 'DELETE', id: string, body?: unknown) => {
+    const token = await opts.token()
+    const path = `/api/split-rules/${encodeURIComponent(id)}`
+    const res = await f(base + path, {
+      method,
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(body ? { 'content-type': 'application/json' } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    })
+    if (!res.ok) throw new HttpError(res.status, path)
+  }
+  return {
+    put: ({ id, ...rule }) => send('PUT', id, rule),
+    delete: (id) => send('DELETE', id),
   }
 }

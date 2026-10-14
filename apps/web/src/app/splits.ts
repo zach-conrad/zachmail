@@ -1,10 +1,4 @@
-export const SPLITS = [
-  { id: 'important', label: 'Important' },
-  { id: 'other', label: 'Other' },
-  { id: 'newsletters', label: 'Newsletters' },
-  { id: 'notifications', label: 'Notifications' },
-] as const
+import { isBuiltInSplit, isUuid } from '@zachmail/core'
 
-export type SplitId = (typeof SPLITS)[number]['id']
-
-export const isSplit = (s: string): s is SplitId => SPLITS.some((x) => x.id === s)
+/** Route guard: a built-in split, or something shaped like a custom split's rule id. */
+export const isSplitKey = (s: string): boolean => isBuiltInSplit(s) || isUuid(s)

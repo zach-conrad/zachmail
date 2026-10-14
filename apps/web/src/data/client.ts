@@ -1,5 +1,5 @@
 import { markOnce } from '../lib/perf'
-import type { OpEnvelope } from '@zachmail/core'
+import type { OpEnvelope, SplitRuleRow } from '@zachmail/core'
 import type { DataApi, FromWorker, InitConfig, Method, ToWorker, WorkerStatus } from './protocol'
 
 type Remote<T> = {
@@ -47,6 +47,11 @@ export class DataClient {
   /** Hand an op the UI has already applied on screen to the worker's queue. */
   op(env: OpEnvelope) {
     this.send({ type: 'op', env })
+  }
+
+  /** Saves (rule) or deletes (null) a split rule; a 'changed' event follows. */
+  editSplitRule(id: string, rule: SplitRuleRow | null) {
+    this.send({ type: 'splitRule', id, rule })
   }
 
   /** Ask the worker to pull now (focus, Realtime nudge). */
