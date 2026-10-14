@@ -17,6 +17,7 @@ import {
   type TriagePayload,
 } from '@zachmail/db/server'
 import { ProviderAuthError, ProviderError, mapLimit, type MailProvider } from '@zachmail/providers'
+import { sentMessageId } from '@zachmail/core'
 import { buildMime, replyReferences } from '@zachmail/mime'
 import type { AccountRecord } from './accounts'
 import { enqueueDraftSync } from './drafts'
@@ -163,7 +164,6 @@ export async function buildOutgoing(
   const threading = parent
     ? replyReferences({ rfc822MessageId: parent.rfc822_message_id, references: parent.references })
     : { references: [] }
-  const domain = account.email.split('@')[1] ?? 'zachmail.local'
   const { raw } = buildMime(
     {
       from: {
@@ -175,7 +175,7 @@ export async function buildOutgoing(
       bcc: p.bcc,
       subject: p.subject,
       html: p.html,
-      ...(opId ? { messageId: `<${opId}@${domain}>` } : {}),
+      ...(opId ? { messageId: sentMessageId(opId, account.email) } : {}),
       ...threading,
       attachments: await loadAttachments(db, owner.userId, p.attachments ?? [], opts.storage),
     },

@@ -4,6 +4,7 @@ import { fromPostgresJs } from '@zachmail/db/server'
 import {
   Storage,
   engineConfigFromEnv,
+  runWakeups,
   sweepOutbox,
   sweepSyncs,
   sweepUploads,
@@ -38,6 +39,8 @@ const db = fromPostgresJs(sql as never)
 const reap = setInterval(() => {
   sql`select reap_stale_jobs()`.catch((err) => log('reap failed', { error: String(err) }))
   sweepOutbox(db).catch((err) => log('outbox sweep failed', { error: String(err) }))
+  // Safety net for lost wake jobs; the timed job is what makes a snooze return on the minute.
+  runWakeups(db).catch((err) => log('wake sweep failed', { error: String(err) }))
 }, 60_000)
 
 // Slower housekeeping: safety-net syncs, stale-sync alerts, orphaned attachment uploads.

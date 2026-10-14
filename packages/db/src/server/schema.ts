@@ -180,6 +180,8 @@ export const threads = pgTable(
     unread: boolean('unread').notNull().default(false),
     starred: boolean('starred').notNull().default(false),
     hasAttachments: boolean('has_attachments').notNull().default(false),
+    /** ZachMail-only: archived at the provider until then, then back to the inbox. */
+    snoozedUntil: timestamp('snoozed_until', { withTimezone: true }),
     /** ZachMail-only state: new replies get archived (Gmail's API has no mute). */
     muted: boolean('muted').notNull().default(false),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -190,6 +192,9 @@ export const threads = pgTable(
       .where(sql`muted`),
     uniqueIndex('threads_account_provider').on(t.accountId, t.providerThreadId),
     index('threads_user_recent').on(t.userId, t.lastMessageAt.desc()),
+    index('threads_snoozed')
+      .on(t.snoozedUntil)
+      .where(sql`snoozed_until is not null`),
     ownRowsReadOnly('threads'),
   ],
 ).enableRLS()
@@ -363,6 +368,39 @@ export const uploads = pgTable(
   () => [ownRowsReadOnly('uploads')],
 ).enableRLS()
 
+export const reminderConditionEnum = pgEnum('reminder_condition', ['always', 'if_no_reply'])
+
+/**
+ * ZachMail-only reminders, at most one per thread. A "remind if no reply" set while composing
+ * has no thread until the sent copy syncs back: it waits on `sent_message_id` (the send's
+ * Message-ID) and gets its thread_id from the sync that brings that message in.
+ */
+export const reminders = pgTable(
+  'reminders',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: ownerId(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    threadId: uuid('thread_id').references(() => threads.id, { onDelete: 'cascade' }),
+    sentMessageId: text('sent_message_id'),
+    /** The op that set it; a send's op id for compose reminders. */
+    opId: uuid('op_id').notNull(),
+    remindAt: timestamp('remind_at', { withTimezone: true }).notNull(),
+    condition: reminderConditionEnum('condition').notNull().default('if_no_reply'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('reminders_thread').on(t.threadId),
+    index('reminders_due').on(t.remindAt),
+    index('reminders_sent_message')
+      .on(t.accountId, t.sentMessageId)
+      .where(sql`thread_id is null`),
+    ownRowsReadOnly('reminders'),
+  ],
+).enableRLS()
+
 /** Single-row allowlist checked by the auth hook: only these emails can ever get a session. */
 export const allowedUsers = pgTable('allowed_users', {
   email: text('email').primaryKey(),
@@ -377,3 +415,4 @@ export type NewJob = typeof jobs.$inferInsert
 export type Folder = typeof folders.$inferSelect
 export type Thread = typeof threads.$inferSelect
 export type Message = typeof messages.$inferSelect
+export type ReminderRecord = typeof reminders.$inferSelect
