@@ -72,7 +72,7 @@ beforeAll(async () => {
   db = t.db
   const [a] = await db.query<{ id: string }>(
     `INSERT INTO accounts (user_id, provider, email, send_as) VALUES ($1, 'gmail', 'zach@x.com', $2::jsonb) RETURNING id`,
-    [USER, JSON.stringify([{ email: 'z@alias.com' }])],
+    [USER, [{ email: 'z@alias.com' }]],
   )
   accountId = a!.id
 })
