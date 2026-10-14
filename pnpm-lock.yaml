@@ -56,6 +56,9 @@ importers:
       '@zachmail/engine':
         specifier: workspace:*
         version: link:../../packages/engine
+      '@zachmail/mime':
+        specifier: workspace:*
+        version: link:../../packages/mime
       '@zachmail/providers':
         specifier: workspace:*
         version: link:../../packages/providers

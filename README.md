@@ -64,3 +64,11 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm size
    `IMAGE_PROXY_SECRET` (same value as Vercel), plus `SUPABASE_URL` and
    `SUPABASE_SERVICE_ROLE_KEY` for attachments. Set the repo variable `FLY_ENABLED=true`
    and secret `FLY_API_TOKEN` so pushes to `main` deploy it.
+5. **Claude connector** (optional): lets Claude search, read, triage, draft and send your mail.
+   In Supabase → Auth → URL Configuration, add the redirect URL
+   `https://mail.zachconrad.dev/api/mcp/oauth/callback`. Vercel already has what it needs
+   (`VITE_SUPABASE_PUBLISHABLE_KEY` and `OAUTH_STATE_SECRET`; set `MCP_TOKEN_SECRET` to sign
+   connector tokens with their own key, and change it to sign every connector out). Then in
+   claude.ai → Settings → Connectors → Add custom connector, use
+   `https://mail.zachconrad.dev/api/mcp`, click Connect, sign in with Google and Allow. Claude
+   Code: `claude mcp add --transport http zachmail https://mail.zachconrad.dev/api/mcp`.

@@ -18,6 +18,7 @@
     "@zachmail/core": "workspace:*",
     "@zachmail/db": "workspace:*",
     "@zachmail/engine": "workspace:*",
+    "@zachmail/mime": "workspace:*",
     "@zachmail/providers": "workspace:*",
     "hono": "^4.13.13",
     "jose": "^6.2.12",

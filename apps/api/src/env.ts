@@ -20,6 +20,12 @@ export interface Env {
   /** Service role key, used only for signed Storage upload URLs and downloads. */
   SUPABASE_SERVICE_ROLE_KEY?: string
   ATTACHMENTS_BUCKET?: string
+  /** Publishable (anon) key; the Claude connector's sign-in exchanges its Supabase code with it. */
+  SUPABASE_PUBLISHABLE_KEY?: string
+  /** Signs Claude connector tokens; defaults to a key derived from OAUTH_STATE_SECRET. Rotate to revoke. */
+  MCP_TOKEN_SECRET?: string
+  /** Extra comma-separated OAuth redirect URIs the connector accepts besides Claude's own. */
+  MCP_REDIRECT_URIS?: string
 }
 
 export function readEnv(source: Record<string, string | undefined> = process.env): Env {
@@ -41,6 +47,10 @@ export function readEnv(source: Record<string, string | undefined> = process.env
     TOKEN_ENCRYPTION_KEY: source.TOKEN_ENCRYPTION_KEY,
     SUPABASE_SERVICE_ROLE_KEY: source.SUPABASE_SERVICE_ROLE_KEY,
     ATTACHMENTS_BUCKET: source.ATTACHMENTS_BUCKET,
+    SUPABASE_PUBLISHABLE_KEY:
+      source.SUPABASE_PUBLISHABLE_KEY ?? source.VITE_SUPABASE_PUBLISHABLE_KEY,
+    MCP_TOKEN_SECRET: source.MCP_TOKEN_SECRET,
+    MCP_REDIRECT_URIS: source.MCP_REDIRECT_URIS,
   }
 }
 
