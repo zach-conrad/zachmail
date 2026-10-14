@@ -20,6 +20,9 @@ export interface Env {
   /** Service role key, used only for signed Storage upload URLs and downloads. */
   SUPABASE_SERVICE_ROLE_KEY?: string
   ATTACHMENTS_BUCKET?: string
+  /** Claude API; AI routes answer 503 while unset. */
+  ANTHROPIC_API_KEY?: string
+  ANTHROPIC_BASE_URL?: string
 }
 
 export function readEnv(source: Record<string, string | undefined> = process.env): Env {
@@ -41,6 +44,8 @@ export function readEnv(source: Record<string, string | undefined> = process.env
     TOKEN_ENCRYPTION_KEY: source.TOKEN_ENCRYPTION_KEY,
     SUPABASE_SERVICE_ROLE_KEY: source.SUPABASE_SERVICE_ROLE_KEY,
     ATTACHMENTS_BUCKET: source.ATTACHMENTS_BUCKET,
+    ANTHROPIC_API_KEY: source.ANTHROPIC_API_KEY,
+    ANTHROPIC_BASE_URL: source.ANTHROPIC_BASE_URL,
   }
 }
 

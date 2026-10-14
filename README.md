@@ -58,9 +58,11 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm size
    | `GMAIL_PUSH_SERVICE_ACCOUNT`                         | the push subscription's service account email     |
    | `OAUTH_STATE_SECRET`, `IMAGE_PROXY_SECRET`           | random strings (`openssl rand -hex 32`)           |
    | `SUPABASE_SERVICE_ROLE_KEY`                          | service role key (signs attachment uploads)       |
+   | `ANTHROPIC_API_KEY` (optional)                       | Claude API key; AI writing help is off without it |
 
 4. **Fly.io**: `fly apps create zachmail-worker`, then `fly secrets set` `DATABASE_URL`
    (session mode, port 5432), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GMAIL_PUBSUB_TOPIC`
    `IMAGE_PROXY_SECRET` (same value as Vercel), plus `SUPABASE_URL` and
-   `SUPABASE_SERVICE_ROLE_KEY` for attachments. Set the repo variable `FLY_ENABLED=true`
+   `SUPABASE_SERVICE_ROLE_KEY` for attachments, and `ANTHROPIC_API_KEY` to turn on AI triage
+   (category, one-line summary and needs-reply on new inbox threads). Set the repo variable `FLY_ENABLED=true`
    and secret `FLY_API_TOKEN` so pushes to `main` deploy it.

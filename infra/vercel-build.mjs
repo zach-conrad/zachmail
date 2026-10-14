@@ -14,8 +14,7 @@ cpSync('apps/web/dist', `${out}/static`, {
 
 const fn = `${out}/functions/api.func`
 mkdirSync(fn, { recursive: true })
-cpSync('apps/api/dist/index.mjs', `${fn}/index.mjs`)
-cpSync('apps/api/dist/index.mjs.map', `${fn}/index.mjs.map`)
+cpSync('apps/api/dist', fn, { recursive: true })
 writeFileSync(`${fn}/package.json`, JSON.stringify({ type: 'module' }))
 writeFileSync(
   `${fn}/.vc-config.json`,

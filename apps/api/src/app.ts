@@ -3,6 +3,7 @@ import { HTTPException } from 'hono/http-exception'
 import { requireUser, type AuthVariables } from './auth'
 import { buildDeps, type Deps } from './deps'
 import type { Env } from './env'
+import { aiRoutes } from './routes/ai'
 import { accountRoutes, oauthCallbackRoute } from './routes/accounts'
 import { imageRoutes } from './routes/images'
 import { opsRoutes } from './routes/ops'
@@ -33,6 +34,7 @@ export function createApp(env: Env, overrides: Partial<Deps> = {}) {
   authed.route('/', accountRoutes(env, deps))
   authed.route('/', syncRoutes(deps))
   authed.route('/', opsRoutes(deps))
+  authed.route('/', aiRoutes(deps))
   api.route('/', authed)
 
   app.route('/api', api)

@@ -2,6 +2,7 @@
  * Wire format between the API and every client replica (web, macOS, iOS). Times are epoch
  * milliseconds so clients can sort and compare without parsing.
  */
+import type { ThreadAi } from './ai'
 import type { OpStatusRow } from './ops'
 
 export interface Address {
@@ -48,6 +49,8 @@ export interface ThreadRow {
   folderIds: string[]
   /** New replies are archived automatically. Optional so older replicas stay valid. */
   muted?: boolean
+  /** Triage result (see ai.ts); null/absent until triaged or while AI is off. */
+  ai?: ThreadAi | null
 }
 
 export interface MessageRow {

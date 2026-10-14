@@ -1,6 +1,8 @@
+import { createAi, type Ai } from '@zachmail/ai'
 import { applySyncBatch, enqueueJob, nudge, updateAccount, type Db } from '@zachmail/db/server'
 import { ProviderAuthError, mapLimit } from '@zachmail/providers'
 import { getAccount, type AccountRecord, type ProviderFactory } from './accounts'
+import { AI_TRIAGE_JOB, enqueueTriage, triageAccount } from './ai'
 import { getMessageBody } from './bodies'
 import type { EngineConfig } from './config'
 import { DRAFT_JOB, syncDraft } from './drafts'
@@ -22,6 +24,7 @@ export const JOB = {
   prefetch: 'bodies.prefetch',
   outbox: OUTBOX_JOB,
   draft: DRAFT_JOB,
+  triage: AI_TRIAGE_JOB,
 } as const
 
 const RECENT_DAYS = 90
@@ -47,9 +50,15 @@ export function createHandlers(deps: {
   config: EngineConfig
   /** Defaults to Supabase Storage from config, when configured. */
   storage?: Storage
+  /** Defaults to a Claude client from config.ai; AI jobs are skipped while neither is set. */
+  ai?: Ai
 }): Record<string, Handler> {
   const { db, providers, config } = deps
   const storage = deps.storage ?? (config.storage ? new Storage(config.storage) : undefined)
+  const ai = deps.ai ?? (config.ai ? createAi(config.ai) : undefined)
+  /** New mail gets triaged once it has landed; a no-op while AI is off. */
+  const afterNewMail = (account: AccountRecord) =>
+    ai ? enqueueTriage(db, account.userId, account.id) : Promise.resolve()
 
   /** Runs fn with the account loaded; auth failures park the account for reconnecting. */
   const withAccount = async (job: JobLike, fn: (a: AccountRecord) => Promise<void>) => {
@@ -91,7 +100,10 @@ export function createHandlers(deps: {
           accountId: account.id,
           batch: page.batch,
         })
-        if (changed) await nudge(db, account.userId)
+        if (changed) {
+          await nudge(db, account.userId)
+          if (window === 'recent') await afterNewMail(account)
+        }
 
         if (page.cursor) {
           await enqueueJob(db, {
@@ -161,6 +173,7 @@ export function createHandlers(deps: {
         if (recovered) await enqueueOutboxFlush(db, account.userId, account.id)
         if (changed) {
           await rearchiveMuted(db, account.userId, account.id)
+          await afterNewMail(account)
           await enqueueJob(db, {
             userId: account.userId,
             kind: JOB.prefetch,
@@ -213,6 +226,13 @@ export function createHandlers(deps: {
       await withAccount({ ...job, payload: { accountId: row.account_id } }, (account) =>
         syncDraft(db, String(job.payload.draftId), providers.forAccount(account), storage),
       )
+    },
+
+    async [JOB.triage](job) {
+      if (!ai) return
+      await withAccount(job, async (account) => {
+        await triageAccount(db, ai, account)
+      })
     },
 
     async [JOB.prefetch](job) {

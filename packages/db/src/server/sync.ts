@@ -270,6 +270,8 @@ const SELECT_FOLDER = `SELECT f.id, f.account_id AS "accountId", f.provider_id A
 const SELECT_THREAD = `SELECT t.id, t.account_id AS "accountId", t.subject, t.snippet, t.participants,
   ${ms('t.last_message_at')} AS "lastMessageAt", t.message_count AS "messageCount", t.unread, t.starred,
   t.has_attachments AS "hasAttachments", t.muted,
+  CASE WHEN t.ai_category IS NULL THEN NULL ELSE jsonb_build_object('category', t.ai_category,
+    'summary', t.ai_summary, 'needsReply', t.ai_needs_reply) END AS ai,
   COALESCE((SELECT array_agg(tf.folder_id::text) FROM thread_folders tf WHERE tf.thread_id = t.id), '{}') AS "folderIds"
   FROM threads t`
 

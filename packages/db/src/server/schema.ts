@@ -182,6 +182,11 @@ export const threads = pgTable(
     hasAttachments: boolean('has_attachments').notNull().default(false),
     /** ZachMail-only state: new replies get archived (Gmail's API has no mute). */
     muted: boolean('muted').notNull().default(false),
+    /** Claude triage (packages/ai), as of `ai_triaged_at`; re-run when newer mail arrives. */
+    aiCategory: text('ai_category'),
+    aiSummary: text('ai_summary'),
+    aiNeedsReply: boolean('ai_needs_reply'),
+    aiTriagedAt: timestamp('ai_triaged_at', { withTimezone: true }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
