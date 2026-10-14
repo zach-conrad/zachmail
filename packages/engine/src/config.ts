@@ -1,3 +1,4 @@
+import { aiConfigFromEnv, type AiConfig } from '@zachmail/ai/config'
 import type { StorageConfig } from './storage'
 
 export interface EngineConfig {
@@ -10,6 +11,8 @@ export interface EngineConfig {
   tokenKey?: string
   /** Supabase Storage for outgoing attachments; uploads are refused while unset. */
   storage?: StorageConfig
+  /** Claude API; every AI feature is off while unset (no ANTHROPIC_API_KEY). */
+  ai?: AiConfig
 }
 
 export function engineConfigFromEnv(
@@ -37,5 +40,6 @@ export function engineConfigFromEnv(
             bucket: env.ATTACHMENTS_BUCKET ?? 'attachments',
           }
         : undefined,
+    ai: aiConfigFromEnv(env),
   }
 }

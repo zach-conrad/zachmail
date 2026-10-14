@@ -187,6 +187,11 @@ export const threads = pgTable(
     muted: boolean('muted').notNull().default(false),
     /** Inbox split under the user's rules (core `compileSplitRules`); null when not in the inbox. */
     split: text('split'),
+    /** Claude triage (packages/ai), as of `ai_triaged_at`; re-run when newer mail arrives. */
+    aiCategory: text('ai_category'),
+    aiSummary: text('ai_summary'),
+    aiNeedsReply: boolean('ai_needs_reply'),
+    aiTriagedAt: timestamp('ai_triaged_at', { withTimezone: true }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

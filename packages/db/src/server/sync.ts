@@ -278,6 +278,8 @@ const SELECT_THREAD = `SELECT t.id, t.account_id AS "accountId", t.subject, t.sn
   t.has_attachments AS "hasAttachments", t.muted, ${ms('t.snoozed_until')} AS "snoozedUntil",
   (SELECT jsonb_build_object('at', ${ms('r.remind_at')}, 'condition', r.condition)
    FROM reminders r WHERE r.thread_id = t.id) AS reminder,
+  CASE WHEN t.ai_category IS NULL THEN NULL ELSE jsonb_build_object('category', t.ai_category,
+    'summary', t.ai_summary, 'needsReply', t.ai_needs_reply) END AS ai,
   COALESCE((SELECT array_agg(tf.folder_id::text) FROM thread_folders tf WHERE tf.thread_id = t.id), '{}') AS "folderIds"
   FROM threads t`
 

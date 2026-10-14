@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@zachmail/ai": "workspace:*",
     "@zachmail/core": "workspace:*",
     "@zachmail/db": "workspace:*",
     "@zachmail/mime": "workspace:*",
