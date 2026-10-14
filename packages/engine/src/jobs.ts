@@ -10,7 +10,7 @@ import {
   type Db,
 } from '@zachmail/db/server'
 import { ProviderAuthError, mapLimit } from '@zachmail/providers'
-import { getAccount, type AccountRecord, type ProviderFactory } from './accounts'
+import { canWatch, getAccount, type AccountRecord, type ProviderFactory } from './accounts'
 import { AI_TRIAGE_JOB, enqueueTriage, triageAccount } from './ai'
 import { getMessageBody } from './bodies'
 import type { EngineConfig } from './config'
@@ -60,6 +60,15 @@ export const enqueueSync = (db: Db, userId: string, accountId: string) =>
 /** Re-splits every inbox thread after the user's split rules change; bursts coalesce. */
 export const enqueueResplit = (db: Db, userId: string) =>
   enqueueJob(db, { userId, kind: JOB.splits, dedupeKey: `splits:${userId}` })
+
+/** Renews the account's push watch now (Graph lifecycle events ask for this). */
+export const enqueueWatchNow = (db: Db, userId: string, accountId: string) =>
+  enqueueJob(db, {
+    userId,
+    kind: JOB.watch,
+    payload: { accountId },
+    dedupeKey: `watch-now:${accountId}`,
+  })
 
 /** Starts the first sync of a freshly connected account. */
 export const enqueueInitialSync = (db: Db, userId: string, accountId: string) =>
@@ -174,7 +183,7 @@ export function createHandlers(deps: {
     async [JOB.sync](job) {
       await withAccount(job, async (account) => {
         // No cursor yet means the first backfill hasn't started; it enqueues a sync when done.
-        if (!account.syncState.historyId) return
+        if (!Object.keys(account.syncState).length) return
         const provider = providers.forAccount(account)
         const r = await provider.incremental(account.syncState)
         if (r.resyncRequired) {
@@ -203,6 +212,8 @@ export function createHandlers(deps: {
         })
         // Ops parked while the account was unreachable can go now.
         if (recovered) await enqueueOutboxFlush(db, account.userId, account.id)
+        // A capped first pass (Outlook folder deltas) carries on in the next job.
+        if (r.more) await enqueueSync(db, account.userId, account.id)
         if (changed) {
           await rearchiveMuted(db, account.userId, account.id)
           await afterNewMail(account)
@@ -219,13 +230,15 @@ export function createHandlers(deps: {
 
     async [JOB.watch](job) {
       await withAccount(job, async (account) => {
-        if (!config.google.pubsubTopic) return
+        if (!canWatch(config, account)) return
         const provider = providers.forAccount(account)
         const w = await provider.watch(account.syncState)
         await updateAccount(db, account.id, {
           syncState: { ...w.state, watchExpiresAt: w.expiresAt.getTime() },
         })
-        // Gmail watches last 7 days; renew daily so one failure never lets it lapse.
+        // Graph drops notifications now and then; a daily sync catches whatever was missed.
+        if (account.provider === 'graph') await enqueueSync(db, account.userId, account.id)
+        // Watches last days (Gmail 7, Graph 3); renew daily so one failure never lets one lapse.
         await enqueueJob(db, {
           userId: account.userId,
           kind: JOB.watch,
