@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   InvalidSplitRuleError,
   compileSplitRules,
+  flushSplitRules,
   inboundSender,
   parseSplitRule,
   splitTabs,
@@ -122,5 +123,37 @@ describe('split rules', () => {
     expect(bad({ ...body, conditions: [{ field: 'body', value: 'x' }] })).toThrow(
       InvalidSplitRuleError,
     )
+  })
+})
+
+describe('flushSplitRules', () => {
+  const outbox = (items: { id: string; rule: SplitRuleRow | null }[]) => {
+    const log: string[] = []
+    return {
+      log,
+      pending: () => items,
+      ack: (p: { id: string }) => void log.push(`ack ${p.id}`),
+      reject: (id: string) => void log.push(`reject ${id}`),
+    }
+  }
+  const fail = (status: number) => Object.assign(new Error('x'), { status })
+
+  it('acks, rejects 4xx and stops on transient errors', async () => {
+    const o = outbox([
+      { id: 'a', rule: rule({ id: 'a' }) },
+      { id: 'b', rule: null },
+      { id: 'c', rule: rule({ id: 'c' }) },
+      { id: 'd', rule: null },
+    ])
+    const remote = {
+      put: async (r: SplitRuleRow) => {
+        if (r.id === 'c') throw fail(503)
+      },
+      delete: async () => {
+        throw fail(400)
+      },
+    }
+    await expect(flushSplitRules(o, remote)).rejects.toThrow()
+    expect(o.log).toEqual(['ack a', 'reject b'])
   })
 })

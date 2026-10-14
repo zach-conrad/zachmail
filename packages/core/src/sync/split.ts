@@ -239,3 +239,42 @@ export function parseSplitRule(id: string, body: unknown): SplitRuleRow {
     position: b.position as number,
   }
 }
+
+// ---- Sending local rule edits ---------------------------------------------------------------
+
+export interface SplitRuleRemote {
+  put(rule: SplitRuleRow): Promise<void>
+  delete(id: string): Promise<void>
+}
+
+/** The replica side: edits made locally and not yet accepted (see local-store). */
+export interface SplitRuleOutbox {
+  pending(): { id: string; rule: SplitRuleRow | null }[]
+  ack(sent: { id: string; rule: SplitRuleRow | null }): void
+  reject(id: string): void
+}
+
+/**
+ * Sends pending rule edits in order. 4xx answers are final (the edit is dropped and the
+ * synced rule shows again); anything else stops the flush so it retries on the next call.
+ * Returns how many edits settled.
+ */
+export async function flushSplitRules(
+  outbox: SplitRuleOutbox,
+  remote: SplitRuleRemote,
+): Promise<number> {
+  let settled = 0
+  for (const p of outbox.pending()) {
+    try {
+      await (p.rule ? remote.put(p.rule) : remote.delete(p.id))
+      outbox.ack(p)
+    } catch (err) {
+      const status = (err as { status?: number }).status
+      const retry = status === undefined || status < 400 || status >= 500
+      if (retry || status === 401 || status === 408 || status === 429) throw err
+      outbox.reject(p.id)
+    }
+    settled++
+  }
+  return settled
+}

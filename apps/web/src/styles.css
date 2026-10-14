@@ -495,6 +495,135 @@ html[data-shell='macos'] body {
   opacity: 0.45;
 }
 
+/* Splits & rules editor */
+.rules-editor {
+  width: min(880px, calc(100% - 32px));
+  max-height: 80vh;
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+  animation: palette-in var(--dur-slow) var(--ease);
+}
+.rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+.rules-list ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rules-list li {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+}
+.rules-list li[aria-current] {
+  background: var(--row-focus);
+}
+.rules-hint {
+  margin: 0;
+  font-size: 13px;
+}
+.rules-item {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.rules-item span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rules-move button,
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.rules-move button:hover:not(:disabled),
+.icon-btn:hover:not(:disabled) {
+  background: var(--row-hover);
+}
+.rules-move button:disabled,
+.icon-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.rules-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  overflow-y: auto;
+}
+.rules-empty {
+  justify-content: center;
+  text-align: center;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.rules-form input,
+.rules-form select {
+  height: 34px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: 400 14px var(--font-ui);
+}
+.conditions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.condition {
+  display: grid;
+  grid-template-columns: 180px 1fr 28px;
+  gap: var(--space-2);
+  width: 100%;
+}
+.rules-actions {
+  display: flex;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+}
+.spacer {
+  flex: 1;
+}
+.btn-danger {
+  color: var(--danger);
+}
+
 @keyframes palette-in {
   from {
     opacity: 0;
@@ -506,6 +635,13 @@ html[data-shell='macos'] body {
   .brand,
   .palette-hint {
     display: none;
+  }
+  .rules-editor {
+    grid-template-columns: 1fr;
+  }
+  .rules-list {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
   }
 }
 
