@@ -1,11 +1,24 @@
-import { readDelta, saveCredentials, type Db } from '@zachmail/db/server'
+import {
+  acceptOps,
+  acceptSend,
+  cancelSend,
+  readDelta,
+  readOpStatuses,
+  saveCredentials,
+  saveDraft,
+  createUpload,
+  type Db,
+} from '@zachmail/db/server'
 import { USER, createTestDb, type TestDb } from '@zachmail/db/testing'
 import { randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   ProviderFactory,
+  Storage,
   createHandlers,
   enqueueInitialSync,
+  enqueueDraftSync,
+  enqueueOutboxFlush,
   getMessageBody,
   type EngineConfig,
   type JobLike,
@@ -30,13 +43,23 @@ const gmailMsg = (id: string, threadId: string, labels: string[], date: number) 
     headers: [
       { name: 'From', value: 'Ana <ana@x.com>' },
       { name: 'Subject', value: `About ${threadId}` },
+      { name: 'Message-ID', value: `<${id}@x.com>` },
     ],
   },
 })
 
 /** Fake Google: token endpoint plus the Gmail calls a sync makes. */
 function fakeGoogle() {
-  const state = { history: [] as unknown[], historyId: '100', refreshes: 0, watchCalls: 0 }
+  const state = {
+    history: [] as unknown[],
+    historyId: '100',
+    refreshes: 0,
+    watchCalls: 0,
+    writes: [] as string[],
+    failWrites: 0,
+    sent: [] as { raw: string; threadId?: string }[],
+    draftCalls: [] as string[],
+  }
   const now = Date.now()
   const threads: Record<string, ReturnType<typeof gmailMsg>[]> = {
     t1: [gmailMsg('m1', 't1', ['INBOX', 'UNREAD'], now - 3_600_000)],
@@ -46,7 +69,7 @@ function fakeGoogle() {
     ],
   }
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
-  const fetchImpl = async (input: string) => {
+  const fetchImpl = async (input: string, init?: RequestInit) => {
     const url = new URL(input)
     if (url.host === 'oauth2.googleapis.com') {
       state.refreshes++
@@ -67,11 +90,32 @@ function fakeGoogle() {
         ? json({ threads: [{ id: 't2' }] })
         : json({ threads: [{ id: 't1' }], nextPageToken: 'p2' })
     }
+    if (path.startsWith('/drafts')) {
+      state.draftCalls.push(`${init?.method} ${path}`)
+      if (init?.method === 'DELETE') return new Response(null, { status: 204 })
+      return json({ id: 'gd1' })
+    }
+    if (path === '/messages/send') {
+      const body = JSON.parse(String(init?.body)) as { raw: string; threadId?: string }
+      state.sent.push({
+        raw: Buffer.from(body.raw, 'base64url').toString(),
+        threadId: body.threadId,
+      })
+      return json({ id: 'sent1', threadId: body.threadId ?? 'tnew' })
+    }
+    const w = path.match(/^\/threads\/(\w+)\/(modify|trash|untrash)$/)
+    if (w) {
+      if (state.failWrites) return json({ error: { code: state.failWrites } }, state.failWrites)
+      state.writes.push(`${w[2]} ${w[1]} ${init?.body ?? ''}`)
+      return json({ id: w[1] })
+    }
     const t = path.match(/^\/threads\/(\w+)$/)
     if (t) return json({ id: t[1], messages: threads[t[1]!] })
     if (path === '/history') return json({ historyId: '200', history: state.history })
     if (path === '/messages/m4' && url.searchParams.get('format') === 'metadata')
       return json(gmailMsg('m4', 't1', ['INBOX', 'UNREAD'], now))
+    if (path === '/messages/m5' && url.searchParams.get('format') === 'metadata')
+      return json(gmailMsg('m5', 't1', ['INBOX', 'UNREAD'], now + 1000))
     const full = path.match(/^\/messages\/(\w+)$/)
     if (full && url.searchParams.get('format') === 'full')
       return json({
@@ -187,6 +231,181 @@ describe('engine', () => {
     expect(r!.fetched).toBe(false)
     expect(r!.body.hasRemoteImages).toBe(true)
     expect(r!.body.html).toContain('data-zm-src="/api/img?u=https%3A%2F%2Ft.example%2Fp.gif&amp;s=')
+  })
+
+  it('applies triage ops at Gmail in order and reconciles with a sync', async () => {
+    const [t1] = await db.query<{ id: string }>(
+      `SELECT id FROM threads WHERE provider_thread_id = 't1'`,
+    )
+    const op = (n: number, kind: 'archive' | 'inbox' | 'read') => ({
+      id: `00000000-0000-4000-8000-00000000000${n}`,
+      at: n,
+      op: { kind, threadIds: [t1!.id] },
+    })
+    const r = await acceptOps(db, USER, [op(1, 'archive'), op(2, 'inbox'), op(3, 'read')])
+    expect(r.accounts).toEqual([accountId])
+    await enqueueOutboxFlush(db, USER, accountId)
+    const ran = await drain()
+    expect(ran.filter((k) => k !== 'bodies.prefetch')).toEqual(['outbox.flush', 'account.sync'])
+    expect(google.state.writes).toEqual([
+      'modify t1 {"addLabelIds":[],"removeLabelIds":["INBOX"]}',
+      'modify t1 {"addLabelIds":["INBOX"],"removeLabelIds":[]}',
+      'modify t1 {"addLabelIds":[],"removeLabelIds":["UNREAD"]}',
+    ])
+    const ops = await readOpStatuses(db, USER, [op(1, 'read').id, op(3, 'read').id])
+    expect(ops.map((o) => o.state)).toEqual(['done', 'done'])
+  })
+
+  it('retries transient failures, then restores Gmail state on a permanent one', async () => {
+    const [t2] = await db.query<{ id: string }>(
+      `SELECT id FROM threads WHERE provider_thread_id = 't2'`,
+    )
+    const id = '00000000-0000-4000-8000-000000000009'
+    await acceptOps(db, USER, [{ id, at: 9, op: { kind: 'archive', threadIds: [t2!.id] } }])
+    const inInbox = async () =>
+      (
+        await db.query(
+          `SELECT 1 FROM thread_folders tf JOIN folders f ON f.id = tf.folder_id
+           WHERE tf.thread_id = $1 AND f.kind = 'inbox'`,
+          [t2!.id],
+        )
+      ).length > 0
+    expect(await inInbox()).toBe(false)
+
+    const flush = () =>
+      handlers['outbox.flush']!({ kind: 'outbox.flush', userId: USER, payload: { accountId } })
+    google.state.failWrites = 503
+    // Fail fast instead of backing off inside the Gmail client.
+    const fast = new ProviderFactory(db, config, google.fetchImpl as never, { maxRetries: 0 })
+    const h = createHandlers({ db, providers: fast, config })
+    await h['outbox.flush']!({ kind: 'outbox.flush', userId: USER, payload: { accountId } })
+    const [row] = await db.query<{ state: string; attempts: number }>(
+      `SELECT state, attempts FROM outbox WHERE op_id = $1`,
+      [id],
+    )
+    expect(row).toMatchObject({ state: 'pending', attempts: 1 })
+
+    google.state.failWrites = 400
+    await db.query(`UPDATE outbox SET not_before = now() WHERE op_id = $1`, [id])
+    await flush()
+    const [status] = await readOpStatuses(db, USER, [id])
+    expect(status).toMatchObject({ state: 'failed' })
+    expect(status!.error).toContain('400')
+    expect(await inInbox()).toBe(true)
+    google.state.failWrites = 0
+  })
+
+  it('sends replies after the undo window, threaded, and lets pending sends be undone', async () => {
+    const [m1] = await db.query<{ id: string }>(
+      `SELECT id FROM messages WHERE provider_message_id = 'm1'`,
+    )
+    const base = {
+      accountId,
+      to: [{ email: 'ana@x.com', name: 'Ana' }],
+      bcc: [{ email: 'me@x.com' }],
+      subject: 'Re: About t1',
+      html: '<p>Sounds good</p>',
+      replyToMessageId: m1!.id,
+    }
+    const now = '00000000-0000-4000-8000-0000000000e1'
+    const later = '00000000-0000-4000-8000-0000000000e2'
+    await acceptSend(db, USER, { ...base, id: now, undoMs: 0 })
+    const at = await acceptSend(db, USER, { ...base, id: later, undoMs: 10_000 })
+    expect(at).toBeGreaterThan(Date.now() + 5_000)
+
+    await handlers['outbox.flush']!({ kind: 'outbox.flush', userId: USER, payload: { accountId } })
+    expect(google.state.sent).toHaveLength(1)
+    const { raw, threadId } = google.state.sent[0]!
+    expect(threadId).toBe('t1')
+    expect(raw).toContain('To: Ana <ana@x.com>')
+    expect(raw).toContain('Bcc: me@x.com')
+    expect(raw).toContain(`Message-ID: <${now}@x.com>`)
+    expect(raw).toContain('In-Reply-To: <m1@x.com>')
+    expect(raw).toContain('References: <m1@x.com>')
+    expect((await readOpStatuses(db, USER, [now]))[0]!.state).toBe('done')
+
+    expect(await cancelSend(db, USER, later)).toBe(true)
+    expect(await cancelSend(db, USER, now)).toBe(false)
+  })
+
+  it('keeps muted threads out of the inbox when replies arrive', async () => {
+    const [t1] = await db.query<{ id: string }>(
+      `SELECT id FROM threads WHERE provider_thread_id = 't1'`,
+    )
+    await acceptOps(db, USER, [
+      {
+        id: '00000000-0000-4000-8000-0000000000d1',
+        at: 1,
+        op: { kind: 'mute', threadIds: [t1!.id] },
+      },
+    ])
+    await enqueueOutboxFlush(db, USER, accountId)
+    await drain()
+    google.state.writes = []
+
+    google.state.history = [{ id: '300', messagesAdded: [{ message: { id: 'm5' } }] }]
+    await handlers['account.sync']!({ kind: 'account.sync', userId: USER, payload: { accountId } })
+    google.state.history = [] // the fake doesn't reflect writes; later syncs see no news
+    const inInbox = await db.query(
+      `SELECT 1 FROM thread_folders tf JOIN folders f ON f.id = tf.folder_id
+       WHERE tf.thread_id = $1 AND f.kind = 'inbox'`,
+      [t1!.id],
+    )
+    expect(inInbox).toEqual([])
+    await drain()
+    expect(google.state.writes).toEqual(['modify t1 {"addLabelIds":[],"removeLabelIds":["INBOX"]}'])
+    const delta = await readDelta(db, USER, 0)
+    expect(delta.upserts.threads.find((t) => t.id === t1!.id)).toMatchObject({ muted: true })
+  })
+
+  it('mirrors drafts to Gmail and deletes them once the message is sent', async () => {
+    const draftId = '00000000-0000-4000-8000-0000000000c1'
+    const fields = { accountId, to: [{ email: 'ana@x.com' }], subject: 'Draft', html: '<p>one</p>' }
+    expect(await saveDraft(db, USER, draftId, fields)).toBe(1)
+    await enqueueDraftSync(db, USER, draftId)
+    await drain()
+    expect(await saveDraft(db, USER, draftId, { ...fields, html: '<p>two</p>' })).toBe(2)
+    await enqueueDraftSync(db, USER, draftId)
+    await drain()
+    expect(google.state.draftCalls).toEqual(['POST /drafts', 'PUT /drafts/gd1'])
+
+    const id = '00000000-0000-4000-8000-0000000000c2'
+    await acceptSend(db, USER, { ...fields, id, undoMs: 0, draftId })
+    await enqueueOutboxFlush(db, USER, accountId)
+    await drain()
+    expect(google.state.draftCalls.at(-1)).toBe('DELETE /drafts/gd1')
+    expect(await db.query(`SELECT 1 FROM drafts WHERE id = $1`, [draftId])).toEqual([])
+  })
+
+  it('attaches uploaded files from Storage when sending', async () => {
+    const uploadId = '00000000-0000-4000-8000-0000000000b1'
+    await createUpload(db, USER, uploadId, `${USER}/${uploadId}/notes.txt`, {
+      filename: 'notes.txt',
+      mime: 'text/plain',
+      size: 5,
+    })
+    const fetched: string[] = []
+    const storage = new Storage(
+      { url: 'https://proj.supabase.co', serviceKey: 'sk', bucket: 'attachments' },
+      async (input) => {
+        fetched.push(input)
+        return new Response('hello')
+      },
+    )
+    const h = createHandlers({ db, providers, config, storage })
+    const id = '00000000-0000-4000-8000-0000000000b2'
+    const fields = { accountId, to: [{ email: 'ana@x.com' }], subject: 'File', html: '<p>see</p>' }
+    await acceptSend(db, USER, { ...fields, id, undoMs: 0, attachments: [uploadId] })
+    await h['outbox.flush']!({ kind: 'outbox.flush', userId: USER, payload: { accountId } })
+    expect(fetched).toEqual([
+      `https://proj.supabase.co/storage/v1/object/attachments/${USER}/${uploadId}/notes.txt`,
+    ])
+    const raw = google.state.sent.at(-1)!.raw
+    expect(raw).toMatch(/Content-Disposition: attachment; filename="?notes\.txt"?/)
+    expect(raw).toContain(Buffer.from('hello').toString('base64'))
+    await expect(
+      acceptSend(db, USER, { ...fields, id: uploadId, attachments: [id] }),
+    ).rejects.toThrow(/attachment/)
   })
 
   it('parks the account when the refresh token is revoked', async () => {

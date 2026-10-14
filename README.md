@@ -57,8 +57,10 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm size
    | `GMAIL_PUSH_AUDIENCE`                                | `https://mail.zachconrad.dev/webhooks/gmail`      |
    | `GMAIL_PUSH_SERVICE_ACCOUNT`                         | the push subscription's service account email     |
    | `OAUTH_STATE_SECRET`, `IMAGE_PROXY_SECRET`           | random strings (`openssl rand -hex 32`)           |
+   | `SUPABASE_SERVICE_ROLE_KEY`                          | service role key (signs attachment uploads)       |
 
 4. **Fly.io**: `fly apps create zachmail-worker`, then `fly secrets set` `DATABASE_URL`
    (session mode, port 5432), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GMAIL_PUBSUB_TOPIC`
-   and `IMAGE_PROXY_SECRET` (same value as Vercel). Set the repo variable `FLY_ENABLED=true`
+   `IMAGE_PROXY_SECRET` (same value as Vercel), plus `SUPABASE_URL` and
+   `SUPABASE_SERVICE_ROLE_KEY` for attachments. Set the repo variable `FLY_ENABLED=true`
    and secret `FLY_API_TOKEN` so pushes to `main` deploy it.

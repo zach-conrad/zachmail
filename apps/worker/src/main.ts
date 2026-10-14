@@ -1,5 +1,7 @@
 import { createServer } from 'node:http'
 import { hostname } from 'node:os'
+import { fromPostgresJs } from '@zachmail/db/server'
+import { sweepOutbox } from '@zachmail/engine'
 import postgres from 'postgres'
 import { buildHandlers } from './handlers'
 import { pgQueue } from './queue'
@@ -26,10 +28,11 @@ const tick = () =>
 
 await sql.listen('jobs', () => void tick())
 const poll = setInterval(tick, POLL_MS)
-const reap = setInterval(
-  () => sql`select reap_stale_jobs()`.catch((err) => log('reap failed', { error: String(err) })),
-  60_000,
-)
+const db = fromPostgresJs(sql as never)
+const reap = setInterval(() => {
+  sql`select reap_stale_jobs()`.catch((err) => log('reap failed', { error: String(err) }))
+  sweepOutbox(db).catch((err) => log('outbox sweep failed', { error: String(err) }))
+}, 60_000)
 void tick()
 
 const health = createServer((req, res) => {

@@ -180,9 +180,14 @@ export const threads = pgTable(
     unread: boolean('unread').notNull().default(false),
     starred: boolean('starred').notNull().default(false),
     hasAttachments: boolean('has_attachments').notNull().default(false),
+    /** ZachMail-only state: new replies get archived (Gmail's API has no mute). */
+    muted: boolean('muted').notNull().default(false),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    index('threads_muted')
+      .on(t.accountId)
+      .where(sql`muted`),
     uniqueIndex('threads_account_provider').on(t.accountId, t.providerThreadId),
     index('threads_user_recent').on(t.userId, t.lastMessageAt.desc()),
     ownRowsReadOnly('threads'),
@@ -284,6 +289,80 @@ export const attachments = pgTable(
   (t) => [index('attachments_message').on(t.messageId), ownRowsReadOnly('attachments')],
 ).enableRLS()
 
+/**
+ * Provider writes waiting for the worker: triage ops now, sends later. One row per client op
+ * per account, executed in `seq` order per account. `payload` holds thread and folder ids
+ * (resolved to provider ids at execution time); `not_before` delays undo-send / send-later.
+ */
+export const outbox = pgTable(
+  'outbox',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+    userId: ownerId(),
+    opId: uuid('op_id').notNull(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
+    state: text('state', { enum: ['pending', 'in_flight', 'done', 'failed'] })
+      .notNull()
+      .default('pending'),
+    notBefore: timestamp('not_before', { withTimezone: true }).notNull().defaultNow(),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('outbox_op_account').on(t.opId, t.accountId),
+    index('outbox_account_open')
+      .on(t.accountId, t.seq)
+      .where(sql`state in ('pending', 'in_flight')`),
+    ownRowsReadOnly('outbox'),
+  ],
+).enableRLS()
+
+/**
+ * Composer drafts, keyed by the client's id. The worker mirrors each to a provider draft
+ * (`synced_version` trails `version` until it has); deleted drafts linger until the provider
+ * copy is gone too.
+ */
+export const drafts = pgTable(
+  'drafts',
+  {
+    id: uuid('id').primaryKey(),
+    userId: ownerId(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    version: integer('version').notNull().default(1),
+    syncedVersion: integer('synced_version').notNull().default(0),
+    providerDraftId: text('provider_draft_id'),
+    deleted: boolean('deleted').notNull().default(false),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [ownRowsReadOnly('drafts')],
+).enableRLS()
+
+/** Files uploaded (straight to Storage) for outgoing mail; referenced by sends and drafts. */
+export const uploads = pgTable(
+  'uploads',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: ownerId(),
+    storageKey: text('storage_key').notNull(),
+    filename: text('filename').notNull(),
+    mime: text('mime').notNull(),
+    size: integer('size').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [ownRowsReadOnly('uploads')],
+).enableRLS()
+
 /** Single-row allowlist checked by the auth hook: only these emails can ever get a session. */
 export const allowedUsers = pgTable('allowed_users', {
   email: text('email').primaryKey(),
@@ -293,6 +372,7 @@ export const allowedUsers = pgTable('allowed_users', {
 export type Account = typeof accounts.$inferSelect
 export type Change = typeof changes.$inferSelect
 export type Job = typeof jobs.$inferSelect
+export type OutboxRow = typeof outbox.$inferSelect
 export type NewJob = typeof jobs.$inferInsert
 export type Folder = typeof folders.$inferSelect
 export type Thread = typeof threads.$inferSelect

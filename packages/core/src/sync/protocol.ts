@@ -2,6 +2,7 @@
  * Wire format between the API and every client replica (web, macOS, iOS). Times are epoch
  * milliseconds so clients can sort and compare without parsing.
  */
+import type { OpStatusRow } from './ops'
 
 export interface Address {
   name?: string
@@ -45,6 +46,8 @@ export interface ThreadRow {
   starred: boolean
   hasAttachments: boolean
   folderIds: string[]
+  /** New replies are archived automatically. Optional so older replicas stay valid. */
+  muted?: boolean
 }
 
 export interface MessageRow {
@@ -86,6 +89,8 @@ export interface SyncDelta {
   more: boolean
   upserts: Rows
   deletes: Deletes
+  /** Status changes of ops this user POSTed to /api/ops (see ops.ts). */
+  ops: OpStatusRow[]
 }
 
 /**

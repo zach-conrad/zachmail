@@ -21,6 +21,7 @@ const env: Env = {
   OAUTH_STATE_SECRET: 'state-secret',
   IMAGE_PROXY_SECRET: 'img-secret',
   TOKEN_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
+  SUPABASE_SERVICE_ROLE_KEY: 'service-key',
 }
 
 const b64 = (s: string) => Buffer.from(s).toString('base64url')
@@ -46,6 +47,8 @@ const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
       threadId: 'pt1',
       payload: { mimeType: 'text/plain', body: { data: b64('hi <there>') } },
     })
+  if (url.pathname.startsWith('/storage/v1/object/upload/sign/'))
+    return json({ url: `${url.pathname.replace('/storage/v1', '')}?token=t` })
   if (url.host === '93.184.216.34')
     return new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } })
   return json({}, 404)
@@ -231,6 +234,109 @@ describe('sync endpoints', () => {
       },
     })
     messageId = (await db.query<{ id: string }>(`SELECT id FROM messages LIMIT 1`))[0]!.id
+  })
+
+  it('accepts triage ops idempotently and queues one outbox flush', async () => {
+    const threadId = (await db.query<{ id: string }>(`SELECT id FROM threads LIMIT 1`))[0]!.id
+    const id = '00000000-0000-4000-8000-0000000000f1'
+    const post = (body: unknown) =>
+      authed('/api/ops', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    const body = { ops: [{ id, at: Date.now(), op: { kind: 'read', threadIds: [threadId] } }] }
+    const res = await post(body)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ accepted: [id], rejected: [] })
+    expect(await (await post(body)).json()).toEqual({ accepted: [id], rejected: [] })
+    expect(await jobCount('outbox.flush')).toBe(1)
+    const [thread] = await db.query<{ unread: boolean }>(
+      `SELECT unread FROM threads WHERE id = $1`,
+      [threadId],
+    )
+    expect(thread!.unread).toBe(false)
+
+    expect((await post({ ops: [{ id: 'nope' }] })).status).toBe(400)
+    const anon = await app.request('/api/ops', { method: 'POST', body: JSON.stringify(body) })
+    expect(anon.status).toBe(401)
+  })
+
+  it('queues a send behind the undo window and undoes it', async () => {
+    const accountId = (await db.query<{ id: string }>(`SELECT id FROM accounts LIMIT 1`))[0]!.id
+    const id = '00000000-0000-4000-8000-0000000000f2'
+    const send = (body: unknown) =>
+      authed('/api/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    const msg = { id, accountId, to: [{ email: 'ana@x.com' }], subject: 'Hi', html: '<p>Hi</p>' }
+    const res = await send(msg)
+    expect(res.status).toBe(202)
+    const { sendAt } = (await res.json()) as { sendAt: number }
+    expect(sendAt).toBeGreaterThan(Date.now() + 5_000)
+    expect(await (await send(msg)).json()).toEqual({ id, sendAt })
+
+    expect((await send({ ...msg, to: [{ email: 'not an email' }] })).status).toBe(400)
+    expect(
+      (await send({ ...msg, id: '00000000-0000-4000-8000-0000000000f3', accountId: id })).status,
+    ).toBe(422)
+
+    expect((await authed(`/api/send/${id}`, { method: 'DELETE' })).status).toBe(200)
+    expect((await authed(`/api/send/${id}`, { method: 'DELETE' })).status).toBe(409)
+    expect((await authed('/api/send/nope', { method: 'DELETE' })).status).toBe(400)
+  })
+
+  it('signs attachment uploads into a per-user path', async () => {
+    const res = await authed('/api/uploads', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filename: 'Q4 plan (final).pdf', mime: 'application/pdf', size: 10 }),
+    })
+    expect(res.status).toBe(201)
+    const { id, uploadUrl } = (await res.json()) as { id: string; uploadUrl: string }
+    expect(uploadUrl).toBe(
+      `${SUPABASE_URL}/storage/v1/object/upload/sign/attachments/${USER}/${id}/Q4_plan_final_.pdf?token=t`,
+    )
+    const [row] = await db.query<{ filename: string }>(
+      `SELECT filename FROM uploads WHERE id = $1`,
+      [id],
+    )
+    expect(row!.filename).toBe('Q4 plan (final).pdf')
+    const tooBig = await authed('/api/uploads', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filename: 'a.bin', mime: 'application/octet-stream', size: 1e9 }),
+    })
+    expect(tooBig.status).toBe(400)
+  })
+
+  it('saves and deletes drafts', async () => {
+    const accountId = (await db.query<{ id: string }>(`SELECT id FROM accounts LIMIT 1`))[0]!.id
+    const id = '00000000-0000-4000-8000-0000000000f4'
+    const put = (body: unknown) =>
+      authed(`/api/drafts/${id}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    const draft = { accountId, subject: '', html: '<p>wip</p>' }
+    expect(await (await put(draft)).json()).toEqual({ id, version: 1 })
+    expect(await (await put(draft)).json()).toEqual({ id, version: 2 })
+    expect(await jobCount('draft.sync')).toBe(1)
+    expect((await put({ ...draft, accountId: id })).status).toBe(422)
+    expect((await authed(`/api/drafts/${id}`, { method: 'DELETE' })).status).toBe(204)
+    expect(
+      (await authed('/api/drafts/00000000-0000-4000-8000-0000000000f5', { method: 'DELETE' }))
+        .status,
+    ).toBe(404)
+  })
+
+  it('lists contacts from the mirror', async () => {
+    const res = await authed('/api/contacts')
+    const { contacts } = (await res.json()) as { contacts: { email: string }[] }
+    expect(contacts.map((c) => c.email)).toContain('ana@x.com')
   })
 
   it('returns compacted deltas', async () => {

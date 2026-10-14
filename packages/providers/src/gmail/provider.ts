@@ -2,6 +2,8 @@ import type {
   BackfillPage,
   IncrementalResult,
   MailProvider,
+  ProviderChange,
+  SentRef,
   ProviderMessage,
   RawBody,
   SyncBatch,
@@ -24,6 +26,8 @@ export interface GmailProviderOptions {
   fetch?: FetchLike
   /** Parallel Gmail requests per sync (Gmail allows ~250 quota units/s per user). */
   concurrency?: number
+  /** Retries of rate-limited / 5xx requests before giving up (default 4). */
+  maxRetries?: number
 }
 
 export class GmailProvider implements MailProvider {
@@ -31,7 +35,7 @@ export class GmailProvider implements MailProvider {
   private concurrency: number
 
   constructor(private opts: GmailProviderOptions) {
-    this.api = new GmailApi(opts.tokens, opts.fetch)
+    this.api = new GmailApi(opts.tokens, opts.fetch, opts.maxRetries)
     this.concurrency = opts.concurrency ?? 8
   }
 
@@ -173,7 +177,96 @@ export class GmailProvider implements MailProvider {
     )
     return decodeBase64Url(a.data)
   }
+
+  async apply(providerThreadIds: string[], change: ProviderChange): Promise<void> {
+    const add = new Set(change.add)
+    const remove = new Set(change.remove)
+    if (change.unread !== undefined) (change.unread ? add : remove).add('UNREAD')
+    if (change.starred !== undefined) (change.starred ? add : remove).add('STARRED')
+    // Trash has its own endpoints; modify can't move messages in or out of it.
+    const trash = add.delete('TRASH')
+    const untrash = remove.delete('TRASH')
+    for (const id of add) remove.delete(id)
+
+    await mapLimit(providerThreadIds, this.concurrency, async (id) => {
+      try {
+        if (untrash) await this.api.post(`/threads/${id}/untrash`, {})
+        if (add.size || remove.size)
+          await this.api.post(`/threads/${id}/modify`, {
+            addLabelIds: [...add],
+            removeLabelIds: [...remove],
+          })
+        if (trash) await this.api.post(`/threads/${id}/trash`, {})
+      } catch (err) {
+        notFoundAs(undefined)(err)
+      }
+    })
+  }
+
+  async send(raw: Uint8Array, opts: { providerThreadId?: string } = {}): Promise<SentRef> {
+    // Big messages go through the media endpoint; it can't carry threadId, but Gmail threads
+    // by In-Reply-To/References and subject, which replies always set.
+    const r =
+      raw.byteLength > JSON_RAW_LIMIT
+        ? await this.api.uploadMessage<{ id: string; threadId: string }>(
+            'POST',
+            '/messages/send',
+            raw,
+            { idempotent: false },
+          )
+        : await this.api.post<{ id: string; threadId: string }>(
+            '/messages/send',
+            { raw: Buffer.from(raw).toString('base64url'), threadId: opts.providerThreadId },
+            { idempotent: false },
+          )
+    return { providerMessageId: r.id, providerThreadId: r.threadId }
+  }
+
+  async saveDraft(
+    raw: Uint8Array,
+    opts: { providerDraftId?: string | null; providerThreadId?: string },
+  ): Promise<string> {
+    const large = raw.byteLength > JSON_RAW_LIMIT
+    const body = {
+      message: { raw: Buffer.from(raw).toString('base64url'), threadId: opts.providerThreadId },
+    }
+    if (opts.providerDraftId) {
+      const path = `/drafts/${opts.providerDraftId}`
+      const updated = await (
+        large
+          ? this.api.uploadMessage<{ id: string }>('PUT', path, raw)
+          : this.api.put<{ id: string }>(path, { id: opts.providerDraftId, ...body })
+      ).catch(notFoundAs(null))
+      if (updated) return updated.id
+    }
+    const created = large
+      ? await this.api.uploadMessage<{ id: string }>('POST', '/drafts', raw)
+      : await this.api.post<{ id: string }>('/drafts', body)
+    return created.id
+  }
+
+  async deleteDraft(providerDraftId: string): Promise<void> {
+    await this.api.delete(`/drafts/${providerDraftId}`).catch(notFoundAs(undefined))
+  }
+
+  async fetchThreads(providerThreadIds: string[]): Promise<SyncBatch> {
+    const threads = await mapLimit(providerThreadIds, this.concurrency, (id) =>
+      this.api
+        .get<GmailThread>(`/threads/${id}`, {
+          format: 'metadata',
+          metadataHeaders: METADATA_HEADERS,
+        })
+        .catch(notFoundAs(null)),
+    )
+    return {
+      messages: threads.flatMap((t) => t?.messages ?? []).map(normalizeMessage),
+      deletedMessageIds: [],
+    }
+  }
 }
+
+/** Above this, messages are sent as a media upload instead of base64 JSON. */
+const JSON_RAW_LIMIT = 4 * 1024 * 1024
 
 const emptyBatch = (): SyncBatch => ({ messages: [], deletedMessageIds: [] })
 

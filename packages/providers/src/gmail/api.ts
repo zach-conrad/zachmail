@@ -1,4 +1,4 @@
-import { ProviderAuthError } from '../types'
+import { ProviderAuthError, ProviderError } from '../types'
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
@@ -7,17 +7,19 @@ export interface TokenSource {
   getAccessToken(force?: boolean): Promise<string>
 }
 
-export class GmailHttpError extends Error {
+export class GmailHttpError extends ProviderError {
+  override name = 'GmailHttpError'
   constructor(
     readonly status: number,
     message: string,
+    retriable = status === 429 || status >= 500,
   ) {
-    super(message)
-    this.name = 'GmailHttpError'
+    super(message, retriable)
   }
 }
 
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
+const UPLOAD_BASE = 'https://gmail.googleapis.com/upload/gmail/v1/users/me'
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /** Thin Gmail REST client: auth, one forced token refresh on 401, backoff on 429/5xx. */
@@ -35,8 +37,37 @@ export class GmailApi {
     return this.request<T>('GET', path, query)
   }
 
-  async post<T>(path: string, body: unknown) {
-    return this.request<T>('POST', path, {}, body)
+  /**
+   * `idempotent: false` (sends) never retries a 5xx: Gmail may have acted before failing, and
+   * a retry could deliver the message twice.
+   */
+  async post<T>(path: string, body: unknown, opts: { idempotent?: boolean } = {}) {
+    return this.request<T>('POST', path, {}, body, opts.idempotent ?? true)
+  }
+
+  async put<T>(path: string, body: unknown) {
+    return this.request<T>('PUT', path, {}, body)
+  }
+
+  async delete(path: string) {
+    await this.request<unknown>('DELETE', path, {})
+  }
+
+  /** Media upload of a whole RFC 822 message (up to Gmail's 35 MB, vs ~5 MB as JSON). */
+  async uploadMessage<T>(
+    method: 'POST' | 'PUT',
+    path: string,
+    raw: Uint8Array,
+    opts: { idempotent?: boolean } = {},
+  ) {
+    return this.request<T>(
+      method,
+      path,
+      { uploadType: 'media' },
+      undefined,
+      opts.idempotent ?? true,
+      raw,
+    )
   }
 
   private async request<T>(
@@ -44,8 +75,10 @@ export class GmailApi {
     path: string,
     query: Record<string, string | number | boolean | string[] | undefined>,
     body?: unknown,
+    idempotent = true,
+    rawMessage?: Uint8Array,
   ): Promise<T> {
-    const url = new URL(BASE + path)
+    const url = new URL((rawMessage ? UPLOAD_BASE : BASE) + path)
     for (const [k, v] of Object.entries(query)) {
       if (v === undefined) continue
       if (Array.isArray(v)) v.forEach((x) => url.searchParams.append(k, x))
@@ -59,21 +92,27 @@ export class GmailApi {
         method,
         headers: {
           authorization: `Bearer ${token}`,
-          ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+          ...(rawMessage
+            ? { 'content-type': 'message/rfc822' }
+            : body !== undefined
+              ? { 'content-type': 'application/json' }
+              : {}),
         },
-        body: body !== undefined ? JSON.stringify(body) : undefined,
+        body: rawMessage ? rawMessage : body !== undefined ? JSON.stringify(body) : undefined,
       })
-      if (res.ok) return (await res.json()) as T
+      if (res.ok) {
+        const text = await res.text()
+        return (text ? JSON.parse(text) : undefined) as T
+      }
 
       if (res.status === 401 && !forced) {
         forced = true
         continue
       }
       if (res.status === 401) throw new ProviderAuthError('Gmail rejected the access token')
-      const retriable =
-        res.status === 429 ||
-        res.status >= 500 ||
-        (res.status === 403 && (await isRateLimit(res.clone())))
+      const rateLimited =
+        res.status === 429 || (res.status === 403 && (await isRateLimit(res.clone())))
+      const retriable = rateLimited || (idempotent && res.status >= 500)
       if (retriable && attempt < this.maxRetries) {
         const retryAfter = Number(res.headers.get('retry-after'))
         await sleep(retryAfter > 0 ? retryAfter * 1000 : 2 ** attempt * 500 + Math.random() * 250)
@@ -82,6 +121,7 @@ export class GmailApi {
       throw new GmailHttpError(
         res.status,
         `Gmail ${method} ${path} → ${res.status}: ${await res.text()}`,
+        retriable,
       )
     }
   }
