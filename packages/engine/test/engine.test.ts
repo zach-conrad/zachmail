@@ -548,3 +548,147 @@ describe('engine', () => {
     expect(a!.status).toBe('needs_reauth')
   })
 })
+
+describe('outlook accounts', () => {
+  /** Fake Microsoft: rotating refresh tokens, a small mailbox, an inbox delta 25 pages long. */
+  function fakeMicrosoft() {
+    const state = { refreshTokens: [] as string[], deltaPages: 0, subscriptions: 0 }
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
+    const message = (id: string) => ({
+      id,
+      conversationId: `c-${id}`,
+      subject: `About ${id}`,
+      receivedDateTime: new Date().toISOString(),
+      parentFolderId: 'F-inbox',
+      isRead: false,
+    })
+    const route = (method: string, path: string): [number, unknown] => {
+      if (path.startsWith('/me/mailFolders/inbox')) return [200, { id: 'F-inbox' }]
+      if (path.startsWith('/me/mailFolders/archive')) return [200, { id: 'F-archive' }]
+      if (/^\/me\/mailFolders\/\w+\?/.test(path)) return [404, {}]
+      if (path.startsWith('/me/mailFolders?'))
+        return [
+          200,
+          {
+            value: [
+              { id: 'F-inbox', displayName: 'Inbox' },
+              { id: 'F-archive', displayName: 'Archive' },
+            ],
+          },
+        ]
+      if (path.startsWith('/me/mailFolders/F-archive/messages/delta'))
+        return [200, { value: [], '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/done' }]
+      if (path.startsWith('/me/mailFolders/F-inbox/messages/delta') || path.startsWith('/page')) {
+        const n = ++state.deltaPages
+        return [
+          200,
+          n < 25
+            ? {
+                value: [message(`d${n}`)],
+                '@odata.nextLink': `https://graph.microsoft.com/v1.0/page${n}`,
+              }
+            : { value: [], '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/done' },
+        ]
+      }
+      if (path === '/done')
+        return [200, { value: [], '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/done' }]
+      if (method === 'POST' && path === '/subscriptions') {
+        state.subscriptions++
+        return [
+          201,
+          { id: 'sub1', expirationDateTime: new Date(Date.now() + 86_400_000).toISOString() },
+        ]
+      }
+      if (path.startsWith('/me/messages?')) return [200, { value: [message('recent')] }]
+      if (/^\/me\/messages\/\w+\/attachments/.test(path)) return [200, { value: [] }]
+      if (/^\/me\/messages\/\w+\?/.test(path))
+        return [200, { body: { contentType: 'text', content: 'hello' } }]
+      return [404, {}]
+    }
+    const fetchImpl = async (input: string, init?: RequestInit) => {
+      const url = new URL(input)
+      if (url.host === 'login.microsoftonline.com') {
+        const rt = new URLSearchParams(String(init?.body)).get('refresh_token')!
+        state.refreshTokens.push(rt)
+        return json({
+          access_token: 'at',
+          refresh_token: `${rt}+`,
+          expires_in: 3600,
+          scope: 'Mail.ReadWrite',
+        })
+      }
+      const path = url.pathname.replace('/v1.0', '') + url.search
+      if (path === '/$batch') {
+        const { requests } = JSON.parse(String(init!.body)) as {
+          requests: { id: string; method: string; url: string }[]
+        }
+        return json({
+          responses: requests.map((r) => {
+            const [status, body] = route(r.method, r.url)
+            return { id: r.id, status, body }
+          }),
+        })
+      }
+      const [status, body] = route(init?.method ?? 'GET', path)
+      return json(body, status)
+    }
+    return { state, fetchImpl }
+  }
+
+  it('backfills, carries a long first delta across jobs, subscribes and keeps rotated tokens', async () => {
+    const ms = fakeMicrosoft()
+    const msConfig: EngineConfig = {
+      ...config,
+      google: { clientId: 'cid', clientSecret: 'secret' },
+      microsoft: { clientId: 'mcid', clientSecret: 'msecret', webhookSecret: 'whs' },
+    }
+    const factory = new ProviderFactory(db, msConfig, ms.fetchImpl as never)
+    handlers = createHandlers({ db, providers: factory, config: msConfig })
+    const [a] = await db.query<{ id: string }>(
+      `INSERT INTO accounts (user_id, provider, email) VALUES ($1, 'graph', 'zach@zachconrad.dev') RETURNING id`,
+      [USER],
+    )
+    await saveCredentials(db, await factory.encryptionKey(), {
+      accountId: a!.id,
+      userId: USER,
+      secret: { refreshToken: 'mrt' },
+    })
+    await db.query(`DELETE FROM jobs`)
+    await enqueueInitialSync(db, USER, a!.id)
+    const ran = await drain()
+
+    // 25 delta pages at 20 per job: the sync ran twice and finished the pass.
+    expect(ran.filter((k) => k === 'account.sync').length).toBeGreaterThanOrEqual(2)
+    expect(ms.state.deltaPages).toBe(25)
+    expect(ms.state.subscriptions).toBe(1)
+    const [acct] = await db.query<{ status: string; sync_state: Record<string, unknown> }>(
+      `SELECT status, sync_state FROM accounts WHERE id = $1`,
+      [a!.id],
+    )
+    expect(acct!.status).toBe('active')
+    expect(acct!.sync_state).toMatchObject({
+      subscriptionId: 'sub1',
+      deltas: { 'F-inbox': 'https://graph.microsoft.com/v1.0/done' },
+    })
+    const n = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM messages WHERE account_id = $1`,
+      [a!.id],
+    )
+    expect(n[0]!.n).toBe(25) // 24 from the delta + the backfilled one
+
+    // The access token is cached; a forced refresh uses the rotated refresh token.
+    expect(ms.state.refreshTokens).toEqual(['mrt'])
+    const fresh = new ProviderFactory(db, msConfig, ms.fetchImpl as never)
+    await fresh
+      .forAccount({
+        id: a!.id,
+        userId: USER,
+        provider: 'graph',
+        email: '',
+        status: 'active',
+        syncState: {},
+      })
+      .fetchBody('recent')
+    expect(ms.state.refreshTokens).toEqual(['mrt', 'mrt+'])
+  })
+})

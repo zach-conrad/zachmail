@@ -3,7 +3,7 @@ import { FAKE_ANTHROPIC_URL, fakeAnthropic, type FakeReply } from '@zachmail/ai/
 import { readAssistStream } from '@zachmail/core'
 import { applySyncBatch, saveCredentials, type Db } from '@zachmail/db/server'
 import { USER, createTestDb, type TestDb } from '@zachmail/db/testing'
-import { proxiedImageUrl } from '@zachmail/engine'
+import { graphClientState, proxiedImageUrl } from '@zachmail/engine'
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair, type CryptoKey } from 'jose'
 import { randomBytes } from 'node:crypto'
 import { gunzipSync } from 'node:zlib'
@@ -26,6 +26,9 @@ const env: Env = {
   TOKEN_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
   SUPABASE_SERVICE_ROLE_KEY: 'service-key',
   VAPID_PUBLIC_KEY: 'BPublicKey',
+  MICROSOFT_CLIENT_ID: 'ms-cid',
+  MICROSOFT_CLIENT_SECRET: 'ms-secret',
+  GRAPH_WEBHOOK_SECRET: 'graph-secret',
 }
 
 const b64 = (s: string) => Buffer.from(s).toString('base64url')
@@ -43,6 +46,19 @@ const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
     }
     return json({ access_token: 'at2', expires_in: 3600 })
   }
+  if (url.host === 'login.microsoftonline.com') {
+    const params = new URLSearchParams(String(init?.body))
+    return params.get('code') === 'ms-code' && params.get('code_verifier')
+      ? json({
+          access_token: 'mat',
+          refresh_token: 'mrt',
+          expires_in: 3600,
+          scope: 'Mail.ReadWrite',
+        })
+      : json({ error: 'invalid_grant' }, 400)
+  }
+  if (url.host === 'graph.microsoft.com' && url.pathname === '/v1.0/me')
+    return json({ mail: null, userPrincipalName: 'Zach@ZachConrad.dev', displayName: 'Zach' })
   if (url.pathname.endsWith('/profile'))
     return json({ emailAddress: 'Zach@Gmail.com', historyId: '1' })
   if (url.pathname.includes('/messages/pm1'))
@@ -565,6 +581,114 @@ describe('image proxy', () => {
       (await app.request(proxiedImageUrl('http://127.0.0.1/x.png', env.IMAGE_PROXY_SECRET!)))
         .status,
     ).toBe(403)
+  })
+})
+
+describe('outlook connect', () => {
+  async function start(query = '') {
+    const res = await authed(`/api/accounts/connect/graph${query}`, { method: 'POST' })
+    const { url } = (await res.json()) as { url: string }
+    const cookie = res.headers.get('set-cookie')!.split(';')[0]!
+    return { url: new URL(url), cookie }
+  }
+  const callback = (query: string, cookie: string) =>
+    app.request(`/api/accounts/callback/graph?${query}`, { headers: { cookie } })
+
+  it('signs in through Microsoft with PKCE and creates the account', async () => {
+    const { url, cookie } = await start('?hint=zach%40zachconrad.dev')
+    expect(url.origin + url.pathname).toBe(
+      'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+    )
+    expect(url.searchParams.get('scope')).toContain('Mail.ReadWrite')
+    expect(url.searchParams.get('scope')).toContain('offline_access')
+    expect(url.searchParams.get('login_hint')).toBe('zach@zachconrad.dev')
+    expect(url.searchParams.get('redirect_uri')).toBe(
+      'https://mail.example.com/api/accounts/callback/graph',
+    )
+
+    const res = await callback(`code=ms-code&state=${url.searchParams.get('state')}`, cookie)
+    expect(res.headers.get('location')).toBe('/?connected=Zach%40ZachConrad.dev')
+    const [acct] = await db.query<{ email: string; display_name: string }>(
+      `SELECT email, display_name FROM accounts WHERE provider = 'graph'`,
+    )
+    expect(acct).toEqual({ email: 'zach@zachconrad.dev', display_name: 'Zach' })
+  })
+
+  it('turns a blocked user consent into an admin-consent prompt', async () => {
+    const { url, cookie } = await start()
+    const res = await callback(
+      `error=access_denied&error_description=${encodeURIComponent('AADSTS90094: Admin consent is required')}&state=${url.searchParams.get('state')}`,
+      cookie,
+    )
+    expect(res.headers.get('location')).toBe(
+      '/?connect_error=admin_consent_required&provider=graph',
+    )
+  })
+
+  it('runs tenant-wide admin consent, then carries on into sign-in', async () => {
+    const { url, cookie } = await start('?admin=1')
+    expect(url.pathname).toBe('/organizations/v2.0/adminconsent')
+    expect(url.searchParams.get('scope')).toContain('https://graph.microsoft.com/Mail.Send')
+
+    const res = await callback(
+      `admin_consent=True&tenant=t1&state=${url.searchParams.get('state')}`,
+      cookie,
+    )
+    const next = new URL(res.headers.get('location')!)
+    expect(next.pathname).toBe('/common/oauth2/v2.0/authorize')
+    expect(res.headers.get('set-cookie')).toContain('zm_oauth=')
+
+    const denied = await start('?admin=1')
+    expect(
+      (
+        await callback(
+          `error=access_denied&state=${denied.url.searchParams.get('state')}`,
+          denied.cookie,
+        )
+      ).headers.get('location'),
+    ).toBe('/?connect_error=access_denied&provider=graph')
+  })
+})
+
+describe('outlook webhook', () => {
+  const notify = (body: unknown, query = '') =>
+    app.request(`/webhooks/graph${query}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+
+  it('echoes the validation token', async () => {
+    const res = await notify({}, '?validationToken=abc%20123')
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('abc 123')
+  })
+
+  it('syncs on notifications that carry the account clientState only', async () => {
+    const [acct] = await db.query<{ id: string }>(
+      `UPDATE accounts SET sync_state = '{"subscriptionId":"sub-1"}' WHERE provider = 'graph' RETURNING id`,
+    )
+    await db.query(`DELETE FROM jobs`)
+    const good = graphClientState(env.GRAPH_WEBHOOK_SECRET!, acct!.id)
+    expect(
+      (await notify({ value: [{ subscriptionId: 'sub-1', clientState: 'forged' }] })).status,
+    ).toBe(202)
+    expect(await jobCount('account.sync')).toBe(0)
+
+    await notify({
+      value: [
+        { subscriptionId: 'sub-1', clientState: good },
+        { subscriptionId: 'sub-1', clientState: good },
+      ],
+    })
+    expect(await jobCount('account.sync')).toBe(1)
+
+    await notify({
+      value: [
+        { subscriptionId: 'sub-1', clientState: good, lifecycleEvent: 'reauthorizationRequired' },
+      ],
+    })
+    expect(await jobCount('gmail.watch')).toBe(1)
   })
 })
 

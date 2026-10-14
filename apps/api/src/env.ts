@@ -13,6 +13,13 @@ export interface Env {
   GMAIL_PUSH_AUDIENCE?: string
   /** Service account the push subscription authenticates as. */
   GMAIL_PUSH_SERVICE_ACCOUNT?: string
+  /** Azure app registration for Microsoft 365 / Outlook.com (Graph). */
+  MICROSOFT_CLIENT_ID?: string
+  MICROSOFT_CLIENT_SECRET?: string
+  /** 'common' (default) or one tenant's id/domain. */
+  MICROSOFT_TENANT?: string
+  /** Signs Graph clientState values; Outlook push is off while unset. */
+  GRAPH_WEBHOOK_SECRET?: string
   /** HMAC secrets for OAuth state and image-proxy URLs. */
   OAUTH_STATE_SECRET?: string
   IMAGE_PROXY_SECRET?: string
@@ -41,6 +48,10 @@ export function readEnv(source: Record<string, string | undefined> = process.env
     GMAIL_PUBSUB_TOPIC: source.GMAIL_PUBSUB_TOPIC,
     GMAIL_PUSH_AUDIENCE: source.GMAIL_PUSH_AUDIENCE,
     GMAIL_PUSH_SERVICE_ACCOUNT: source.GMAIL_PUSH_SERVICE_ACCOUNT,
+    MICROSOFT_CLIENT_ID: source.MICROSOFT_CLIENT_ID,
+    MICROSOFT_CLIENT_SECRET: source.MICROSOFT_CLIENT_SECRET,
+    MICROSOFT_TENANT: source.MICROSOFT_TENANT,
+    GRAPH_WEBHOOK_SECRET: source.GRAPH_WEBHOOK_SECRET,
     OAUTH_STATE_SECRET: source.OAUTH_STATE_SECRET,
     IMAGE_PROXY_SECRET: source.IMAGE_PROXY_SECRET,
     TOKEN_ENCRYPTION_KEY: source.TOKEN_ENCRYPTION_KEY,

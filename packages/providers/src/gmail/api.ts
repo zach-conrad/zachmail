@@ -1,11 +1,6 @@
-import { ProviderAuthError, ProviderError } from '../types'
+import { ProviderAuthError, ProviderError, type FetchLike, type TokenSource } from '../types'
 
-export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
-
-export interface TokenSource {
-  /** Returns a valid access token; `force` bypasses any cache after a 401. */
-  getAccessToken(force?: boolean): Promise<string>
-}
+export type { FetchLike, TokenSource } from '../types'
 
 export class GmailHttpError extends ProviderError {
   override name = 'GmailHttpError'
