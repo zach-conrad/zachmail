@@ -22,6 +22,7 @@ const env: Env = {
   IMAGE_PROXY_SECRET: 'img-secret',
   TOKEN_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
   SUPABASE_SERVICE_ROLE_KEY: 'service-key',
+  VAPID_PUBLIC_KEY: 'BPublicKey',
 }
 
 const b64 = (s: string) => Buffer.from(s).toString('base64url')
@@ -293,6 +294,49 @@ describe('sync endpoints', () => {
     const del = await authed(`/api/split-rules/${id}`, { method: 'DELETE' })
     expect(del.status).toBe(200)
     expect(await (await authed('/api/split-rules')).json()).toEqual([])
+  })
+
+  it('registers push subscriptions and saves notification rules', async () => {
+    const json = (method: string, body: unknown) => ({
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    expect(await (await authed('/api/push/key')).json()).toEqual({ key: 'BPublicKey' })
+
+    const subscription = { endpoint: 'https://push.example/s1', keys: { p256dh: 'p', auth: 'a' } }
+    const put = await authed('/api/devices', json('PUT', { kind: 'webpush', subscription }))
+    expect(put.status).toBe(200)
+    expect(
+      (await authed('/api/devices', json('PUT', { kind: 'webpush', subscription: {} }))).status,
+    ).toBe(400)
+    const devices = () => db.query(`SELECT token FROM devices`)
+    expect(await devices()).toEqual([{ token: 'https://push.example/s1' }])
+    await authed('/api/devices', json('DELETE', { token: subscription.endpoint }))
+    expect(await devices()).toEqual([])
+
+    expect(await (await authed('/api/notification-settings')).json()).toEqual({
+      enabled: true,
+      splits: ['important'],
+      vips: [],
+      mutedAccounts: [],
+    })
+    const saved = await authed(
+      '/api/notification-settings',
+      json('PUT', { enabled: true, splits: ['important'], vips: ['Mom@x.com'], mutedAccounts: [] }),
+    )
+    expect(await saved.json()).toMatchObject({ vips: ['mom@x.com'] })
+    expect(
+      (
+        await authed(
+          '/api/notification-settings',
+          json('PUT', { enabled: true, splits: [], vips: ['nope'], mutedAccounts: [] }),
+        )
+      ).status,
+    ).toBe(400)
+
+    expect((await authed('/api/notifications/test', { method: 'POST' })).status).toBe(202)
+    expect(await jobCount('notify.test')).toBe(1)
   })
 
   it('queues a send behind the undo window and undoes it', async () => {

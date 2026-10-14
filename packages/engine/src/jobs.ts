@@ -12,6 +12,14 @@ import { getMessageBody } from './bodies'
 import type { EngineConfig } from './config'
 import { DRAFT_JOB, syncDraft } from './drafts'
 import { Storage } from './storage'
+import {
+  NOTIFY_JOB,
+  NOTIFY_TEST_JOB,
+  enqueueNotify,
+  notifyNewMail,
+  sendTestNotification,
+  type PushSender,
+} from './notify'
 import { OUTBOX_JOB, enqueueOutboxFlush, flushOutbox, rearchiveMuted } from './outbox'
 
 export interface JobLike {
@@ -30,6 +38,8 @@ export const JOB = {
   outbox: OUTBOX_JOB,
   draft: DRAFT_JOB,
   splits: 'splits.recompute',
+  notify: NOTIFY_JOB,
+  notifyTest: NOTIFY_TEST_JOB,
 } as const
 
 const RECENT_DAYS = 90
@@ -59,6 +69,8 @@ export function createHandlers(deps: {
   config: EngineConfig
   /** Defaults to Supabase Storage from config, when configured. */
   storage?: Storage
+  /** Web Push delivery; notifications are skipped while VAPID keys are unset. */
+  push?: PushSender
 }): Record<string, Handler> {
   const { db, providers, config } = deps
   const storage = deps.storage ?? (config.storage ? new Storage(config.storage) : undefined)
@@ -157,11 +169,13 @@ export function createHandlers(deps: {
           })
           return
         }
-        const { changed } = await applySyncBatch(db, {
+        const { changed, inserted } = await applySyncBatch(db, {
           userId: account.userId,
           accountId: account.id,
           batch: r.batch,
         })
+        // Only incremental sync notifies: backfills replay history, not news.
+        if (inserted.length && deps.push) await enqueueNotify(db, account.userId, inserted)
         const recovered = account.status === 'needs_reauth' || account.status === 'error'
         await updateAccount(db, account.id, {
           syncState: r.next,
@@ -207,6 +221,16 @@ export function createHandlers(deps: {
       // Clients evaluate the same rules locally the moment they change; this keeps the
       // stored split (notifications, badges) in step.
       await db.transaction((tx) => recomputeSplits(tx, job.userId, null))
+    },
+
+    async [JOB.notify](job) {
+      if (!deps.push) return
+      const ids = job.payload.messageIds
+      if (Array.isArray(ids)) await notifyNewMail(db, deps.push, job.userId, ids.map(String))
+    },
+
+    async [JOB.notifyTest](job) {
+      if (deps.push) await sendTestNotification(db, deps.push, job.userId)
     },
 
     async [JOB.outbox](job) {

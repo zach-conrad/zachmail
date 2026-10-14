@@ -1,5 +1,5 @@
 import { useNavigate } from '@tanstack/react-router'
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { Inbox } from '../inbox/Inbox'
 import { endInteraction } from '../lib/perf'
 import { keymap, splitTabs, type CommandId, type FolderRow, type SplitKey } from '@zachmail/core'
@@ -10,10 +10,14 @@ import { AppHeader } from './AppHeader'
 import { CheatSheet } from './CheatSheet'
 import { CommandPalette, type PaletteItem } from './CommandPalette'
 import { UndoToast } from './UndoToast'
+import { usePushBridge } from '../notifications/usePushBridge'
 
-type Overlay = 'palette' | 'shortcuts' | 'rules' | null
+// Settings panes load on first open so they never weigh on the initial bundle.
+const NotificationSettingsPane = lazy(() => import('../notifications/NotificationSettingsPane'))
 
-export function Shell({ split }: { split: SplitKey }) {
+type Overlay = 'palette' | 'shortcuts' | 'rules' | 'notifications' | null
+
+export function Shell({ split, openThread }: { split: SplitKey; openThread: string | null }) {
   const navigate = useNavigate()
   const { client, splitRules, accounts, editSplitRule } = useData()
   const tabs = useMemo(() => splitTabs(splitRules ?? []), [splitRules])
@@ -32,6 +36,10 @@ export function Shell({ split }: { split: SplitKey }) {
   }, [overlay])
 
   const goSplit = (id: SplitKey) => void navigate({ to: '/inbox/$split', params: { split: id } })
+  usePushBridge(client, (threadId, toSplit) => {
+    setOverlay(null)
+    void navigate({ to: '/inbox/$split', params: { split: toSplit }, search: { thread: threadId } })
+  })
   const cycle = (dir: 1 | -1) => {
     const i = tabs.findIndex((s) => s.key === split)
     goSplit(tabs[(i + dir + tabs.length) % tabs.length]!.key)
@@ -57,6 +65,7 @@ export function Shell({ split }: { split: SplitKey }) {
     'app.palette': () => open('palette'),
     'app.shortcuts': () => open('shortcuts'),
     'app.splitRules': () => open('rules'),
+    'app.notifications': () => open('notifications'),
     ...(overlay ? { 'nav.back': () => setOverlay(null) } : {}),
   })
 
@@ -78,7 +87,7 @@ export function Shell({ split }: { split: SplitKey }) {
     <div className="shell">
       <AppHeader split={split} tabs={tabs} onPalette={() => open('palette')} />
       <main className="main">
-        <Inbox key={split} split={split} active={!overlay} />
+        <Inbox key={split} split={split} active={!overlay} openThread={openThread} />
       </main>
       <UndoToast />
       {overlay === 'palette' && (
@@ -93,6 +102,15 @@ export function Shell({ split }: { split: SplitKey }) {
           onDelete={(id) => editSplitRule(id, null)}
           onClose={() => setOverlay(null)}
         />
+      )}
+      {overlay === 'notifications' && (
+        <Suspense fallback={null}>
+          <NotificationSettingsPane
+            tabs={tabs}
+            accounts={[...accounts.values()]}
+            onClose={() => setOverlay(null)}
+          />
+        </Suspense>
       )}
       {overlay === 'shortcuts' && (
         <CheatSheet available={available} onClose={() => setOverlay(null)} />

@@ -64,6 +64,13 @@
       "when": 1791978148950,
       "tag": "0008_split_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791980667925,
+      "tag": "0012_notifications",
+      "breakpoints": true
     }
   ]
 }

@@ -20,6 +20,8 @@ export interface Env {
   /** Service role key, used only for signed Storage upload URLs and downloads. */
   SUPABASE_SERVICE_ROLE_KEY?: string
   ATTACHMENTS_BUCKET?: string
+  /** Web Push application server key (public half; the worker holds the private one). */
+  VAPID_PUBLIC_KEY?: string
 }
 
 export function readEnv(source: Record<string, string | undefined> = process.env): Env {
@@ -41,6 +43,7 @@ export function readEnv(source: Record<string, string | undefined> = process.env
     TOKEN_ENCRYPTION_KEY: source.TOKEN_ENCRYPTION_KEY,
     SUPABASE_SERVICE_ROLE_KEY: source.SUPABASE_SERVICE_ROLE_KEY,
     ATTACHMENTS_BUCKET: source.ATTACHMENTS_BUCKET,
+    VAPID_PUBLIC_KEY: source.VAPID_PUBLIC_KEY,
   }
 }
 
