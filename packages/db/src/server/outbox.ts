@@ -239,6 +239,8 @@ export interface SendPayload {
   subject: string
   html: string
   replyToMessageId: string | null
+  /** Send payloads only: the draft to delete once sent. */
+  draftId?: string | null
 }
 
 export class SendRejectedError extends Error {
@@ -270,6 +272,7 @@ export async function acceptSend(db: Db, userId: string, req: SendRequest): Prom
       subject: req.subject,
       html: req.html,
       replyToMessageId: req.replyToMessageId ?? null,
+      draftId: req.draftId ?? null,
     }
     const notBefore = Math.max(Date.now() + (req.undoMs ?? DEFAULT_UNDO_MS), req.sendAt ?? 0)
     const inserted = await tx.query<{ at: number }>(

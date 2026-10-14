@@ -43,6 +43,13 @@
       "when": 1791943622715,
       "tag": "0005_thread_mute",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791960176438,
+      "tag": "0006_drafts",
+      "breakpoints": true
     }
   ]
 }

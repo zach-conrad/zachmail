@@ -3,6 +3,7 @@ import { ProviderAuthError, mapLimit } from '@zachmail/providers'
 import { getAccount, type AccountRecord, type ProviderFactory } from './accounts'
 import { getMessageBody } from './bodies'
 import type { EngineConfig } from './config'
+import { DRAFT_JOB, syncDraft } from './drafts'
 import { OUTBOX_JOB, enqueueOutboxFlush, flushOutbox, rearchiveMuted } from './outbox'
 
 export interface JobLike {
@@ -19,6 +20,7 @@ export const JOB = {
   watch: 'gmail.watch',
   prefetch: 'bodies.prefetch',
   outbox: OUTBOX_JOB,
+  draft: DRAFT_JOB,
 } as const
 
 const RECENT_DAYS = 90
@@ -192,6 +194,17 @@ export function createHandlers(deps: {
           enqueueSync(db, account.userId, account.id),
         )
       })
+    },
+
+    async [JOB.draft](job) {
+      const [row] = await db.query<{ account_id: string }>(
+        `SELECT account_id FROM drafts WHERE id = $1`,
+        [job.payload.draftId],
+      )
+      if (!row) return
+      await withAccount({ ...job, payload: { accountId: row.account_id } }, (account) =>
+        syncDraft(db, String(job.payload.draftId), providers.forAccount(account)),
+      )
     },
 
     async [JOB.prefetch](job) {
