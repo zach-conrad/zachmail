@@ -1,5 +1,10 @@
 import { fromPostgresJs, type Db } from '@zachmail/db/server'
-import { ProviderFactory, Storage, type EngineConfig } from '@zachmail/engine'
+import {
+  ProviderFactory,
+  Storage,
+  microsoftConfigFromEnv,
+  type EngineConfig,
+} from '@zachmail/engine'
 import type { FetchLike } from '@zachmail/providers/gmail'
 import type { JWTVerifyGetKey } from 'jose'
 import postgres from 'postgres'
@@ -36,6 +41,7 @@ export function buildDeps(env: Env, overrides: Partial<Deps> = {}): Deps {
       clientSecret: required(env, 'GOOGLE_CLIENT_SECRET'),
       pubsubTopic: env.GMAIL_PUBSUB_TOPIC,
     },
+    microsoft: microsoftConfigFromEnv({ ...env }),
     imageProxySecret: required(env, 'IMAGE_PROXY_SECRET'),
     appOrigin: env.APP_ORIGIN,
     tokenKey: env.TOKEN_ENCRYPTION_KEY,

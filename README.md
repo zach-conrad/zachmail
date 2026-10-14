@@ -43,7 +43,19 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm size
    Publisher role on it, and add a push subscription to
    `https://mail.zachconrad.dev/webhooks/gmail` with authentication enabled (a service
    account of yours; the audience is the webhook URL).
-3. **Vercel**: import this repo (root directory = repo root; `vercel.json` handles the build).
+3. **Microsoft** (Outlook / Microsoft 365, optional): in the Entra admin center
+   (entra.microsoft.com → App registrations → New registration) create an app for
+   "Accounts in any organizational directory and personal Microsoft accounts", with the Web
+   redirect URI `https://mail.zachconrad.dev/api/accounts/callback/graph`. Under API
+   permissions add Microsoft Graph delegated `Mail.ReadWrite`, `Mail.Send`,
+   `MailboxSettings.Read`, `User.Read`, `offline_access`; under Certificates & secrets make a
+   client secret (note its expiry). Work tenants that block user consent, which GoDaddy-managed
+   Microsoft 365 tenants often do, need a tenant admin to approve the app once: either
+   "Grant admin consent" on the API permissions page, or the in-app flow
+   (`POST /api/accounts/connect/graph?admin=1`), which the callback suggests on its own when
+   Microsoft says admin approval is needed. Sign-in through a federated tenant (GoDaddy,
+   Okta, ADFS) is Microsoft's normal redirect; nothing to configure.
+4. **Vercel**: import this repo (root directory = repo root; `vercel.json` handles the build).
    Add the domain `mail.zachconrad.dev` and a CNAME to `cname.vercel-dns.com`. Env:
 
    | Variable                                             | Value                                             |
@@ -58,9 +70,13 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm size
    | `GMAIL_PUSH_SERVICE_ACCOUNT`                         | the push subscription's service account email     |
    | `OAUTH_STATE_SECRET`, `IMAGE_PROXY_SECRET`           | random strings (`openssl rand -hex 32`)           |
    | `SUPABASE_SERVICE_ROLE_KEY`                          | service role key (signs attachment uploads)       |
+   | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`     | the Entra app (Outlook accounts)                  |
+   | `GRAPH_WEBHOOK_SECRET`                               | random string; Outlook push is off without it     |
+   | `MICROSOFT_TENANT`                                   | optional; defaults to `common`                    |
 
-4. **Fly.io**: `fly apps create zachmail-worker`, then `fly secrets set` `DATABASE_URL`
+5. **Fly.io**: `fly apps create zachmail-worker`, then `fly secrets set` `DATABASE_URL`
    (session mode, port 5432), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GMAIL_PUBSUB_TOPIC`
    `IMAGE_PROXY_SECRET` (same value as Vercel), plus `SUPABASE_URL` and
-   `SUPABASE_SERVICE_ROLE_KEY` for attachments. Set the repo variable `FLY_ENABLED=true`
+   `SUPABASE_SERVICE_ROLE_KEY` for attachments, and the same `MICROSOFT_*` and
+   `GRAPH_WEBHOOK_SECRET` values as Vercel for Outlook. Set the repo variable `FLY_ENABLED=true`
    and secret `FLY_API_TOKEN` so pushes to `main` deploy it.
