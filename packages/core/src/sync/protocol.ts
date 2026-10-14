@@ -3,6 +3,7 @@
  * milliseconds so clients can sort and compare without parsing.
  */
 import type { OpStatusRow } from './ops'
+import type { SplitRuleRow } from './split'
 
 export interface Address {
   name?: string
@@ -72,6 +73,7 @@ export interface Rows {
   folders: FolderRow[]
   threads: ThreadRow[]
   messages: MessageRow[]
+  splitRules: SplitRuleRow[]
 }
 
 export interface Deletes {
@@ -79,6 +81,7 @@ export interface Deletes {
   folder: string[]
   thread: string[]
   message: string[]
+  splitRule: string[]
 }
 
 /** GET /api/sync?since=<seq>. Apply upserts then deletes; repeat while `more`. */
@@ -104,5 +107,17 @@ export interface MessageBody {
   hasRemoteImages: boolean
 }
 
-export const emptyRows = (): Rows => ({ accounts: [], folders: [], threads: [], messages: [] })
-export const emptyDeletes = (): Deletes => ({ account: [], folder: [], thread: [], message: [] })
+export const emptyRows = (): Rows => ({
+  accounts: [],
+  folders: [],
+  threads: [],
+  messages: [],
+  splitRules: [],
+})
+export const emptyDeletes = (): Deletes => ({
+  account: [],
+  folder: [],
+  thread: [],
+  message: [],
+  splitRule: [],
+})

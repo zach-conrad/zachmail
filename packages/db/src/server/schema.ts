@@ -7,6 +7,7 @@ import { sql } from 'drizzle-orm'
 import {
   bigserial,
   boolean,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -180,6 +181,8 @@ export const threads = pgTable(
     unread: boolean('unread').notNull().default(false),
     starred: boolean('starred').notNull().default(false),
     hasAttachments: boolean('has_attachments').notNull().default(false),
+    /** Inbox split under the user's rules (core `compileSplitRules`); null when not in the inbox. */
+    split: text('split'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -320,6 +323,31 @@ export const outbox = pgTable(
   ],
 ).enableRLS()
 
+/**
+ * User split rules (core `SplitRuleRow`). ZachMail-only data: written by the API, synced to
+ * clients as the `split_rule` entity, evaluated on ingest into `threads.split`. Ids are
+ * client-generated so an offline edit keeps its id.
+ */
+export const splitRules = pgTable(
+  'split_rules',
+  {
+    id: uuid('id').primaryKey(),
+    userId: ownerId(),
+    name: text('name').notNull(),
+    target: text('target').notNull(),
+    match: text('match', { enum: ['all', 'any'] })
+      .notNull()
+      .default('all'),
+    conditions: jsonb('conditions')
+      .$type<{ field: string; value: string }[]>()
+      .notNull()
+      .default([]),
+    position: doublePrecision('position').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('split_rules_user').on(t.userId, t.position), ownRowsReadOnly('split_rules')],
+).enableRLS()
+
 /** Single-row allowlist checked by the auth hook: only these emails can ever get a session. */
 export const allowedUsers = pgTable('allowed_users', {
   email: text('email').primaryKey(),
@@ -334,3 +362,4 @@ export type NewJob = typeof jobs.$inferInsert
 export type Folder = typeof folders.$inferSelect
 export type Thread = typeof threads.$inferSelect
 export type Message = typeof messages.$inferSelect
+export type SplitRule = typeof splitRules.$inferSelect

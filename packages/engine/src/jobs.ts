@@ -1,4 +1,11 @@
-import { applySyncBatch, enqueueJob, nudge, updateAccount, type Db } from '@zachmail/db/server'
+import {
+  applySyncBatch,
+  enqueueJob,
+  nudge,
+  recomputeSplits,
+  updateAccount,
+  type Db,
+} from '@zachmail/db/server'
 import { ProviderAuthError, mapLimit } from '@zachmail/providers'
 import { getAccount, type AccountRecord, type ProviderFactory } from './accounts'
 import { getMessageBody } from './bodies'
@@ -19,6 +26,7 @@ export const JOB = {
   watch: 'gmail.watch',
   prefetch: 'bodies.prefetch',
   outbox: OUTBOX_JOB,
+  splits: 'splits.recompute',
 } as const
 
 const RECENT_DAYS = 90
@@ -28,6 +36,10 @@ const DAY = 24 * 60 * 60 * 1000
 /** Enqueue an incremental sync for an account, coalescing bursts of push notifications. */
 export const enqueueSync = (db: Db, userId: string, accountId: string) =>
   enqueueJob(db, { userId, kind: JOB.sync, payload: { accountId }, dedupeKey: `sync:${accountId}` })
+
+/** Re-splits every inbox thread after the user's split rules change; bursts coalesce. */
+export const enqueueResplit = (db: Db, userId: string) =>
+  enqueueJob(db, { userId, kind: JOB.splits, dedupeKey: `splits:${userId}` })
 
 /** Starts the first sync of a freshly connected account. */
 export const enqueueInitialSync = (db: Db, userId: string, accountId: string) =>
@@ -182,6 +194,12 @@ export function createHandlers(deps: {
           runAt: new Date(Date.now() + DAY),
         })
       })
+    },
+
+    async [JOB.splits](job) {
+      // Clients evaluate the same rules locally the moment they change; this keeps the
+      // stored split (notifications, badges) in step.
+      await db.transaction((tx) => recomputeSplits(tx, job.userId, null))
     },
 
     async [JOB.outbox](job) {

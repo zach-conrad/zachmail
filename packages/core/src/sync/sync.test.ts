@@ -32,6 +32,7 @@ const delta = (seq: number, more = false, threads = 0): SyncDelta => ({
   more,
   upserts: { ...emptyRows(), threads: Array.from({ length: threads }, () => ({}) as never) },
   deletes: emptyDeletes(),
+  ops: [],
 })
 
 function transport(lines: BootstrapLine[], deltas: Record<number, SyncDelta | Error>) {
