@@ -1,4 +1,12 @@
-import { acceptOps, readDelta, readOpStatuses, saveCredentials, type Db } from '@zachmail/db/server'
+import {
+  acceptOps,
+  acceptSend,
+  cancelSend,
+  readDelta,
+  readOpStatuses,
+  saveCredentials,
+  type Db,
+} from '@zachmail/db/server'
 import { USER, createTestDb, type TestDb } from '@zachmail/db/testing'
 import { randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -31,6 +39,7 @@ const gmailMsg = (id: string, threadId: string, labels: string[], date: number) 
     headers: [
       { name: 'From', value: 'Ana <ana@x.com>' },
       { name: 'Subject', value: `About ${threadId}` },
+      { name: 'Message-ID', value: `<${id}@x.com>` },
     ],
   },
 })
@@ -44,6 +53,7 @@ function fakeGoogle() {
     watchCalls: 0,
     writes: [] as string[],
     failWrites: 0,
+    sent: [] as { raw: string; threadId?: string }[],
   }
   const now = Date.now()
   const threads: Record<string, ReturnType<typeof gmailMsg>[]> = {
@@ -74,6 +84,14 @@ function fakeGoogle() {
       return url.searchParams.get('pageToken')
         ? json({ threads: [{ id: 't2' }] })
         : json({ threads: [{ id: 't1' }], nextPageToken: 'p2' })
+    }
+    if (path === '/messages/send') {
+      const body = JSON.parse(String(init?.body)) as { raw: string; threadId?: string }
+      state.sent.push({
+        raw: Buffer.from(body.raw, 'base64url').toString(),
+        threadId: body.threadId,
+      })
+      return json({ id: 'sent1', threadId: body.threadId ?? 'tnew' })
     }
     const w = path.match(/^\/threads\/(\w+)\/(modify|trash|untrash)$/)
     if (w) {
@@ -263,6 +281,39 @@ describe('engine', () => {
     expect(status!.error).toContain('400')
     expect(await inInbox()).toBe(true)
     google.state.failWrites = 0
+  })
+
+  it('sends replies after the undo window, threaded, and lets pending sends be undone', async () => {
+    const [m1] = await db.query<{ id: string }>(
+      `SELECT id FROM messages WHERE provider_message_id = 'm1'`,
+    )
+    const base = {
+      accountId,
+      to: [{ email: 'ana@x.com', name: 'Ana' }],
+      bcc: [{ email: 'me@x.com' }],
+      subject: 'Re: About t1',
+      html: '<p>Sounds good</p>',
+      replyToMessageId: m1!.id,
+    }
+    const now = '00000000-0000-4000-8000-0000000000e1'
+    const later = '00000000-0000-4000-8000-0000000000e2'
+    await acceptSend(db, USER, { ...base, id: now, undoMs: 0 })
+    const at = await acceptSend(db, USER, { ...base, id: later, undoMs: 10_000 })
+    expect(at).toBeGreaterThan(Date.now() + 5_000)
+
+    await handlers['outbox.flush']!({ kind: 'outbox.flush', userId: USER, payload: { accountId } })
+    expect(google.state.sent).toHaveLength(1)
+    const { raw, threadId } = google.state.sent[0]!
+    expect(threadId).toBe('t1')
+    expect(raw).toContain('To: Ana <ana@x.com>')
+    expect(raw).toContain('Bcc: me@x.com')
+    expect(raw).toContain(`Message-ID: <${now}@x.com>`)
+    expect(raw).toContain('In-Reply-To: <m1@x.com>')
+    expect(raw).toContain('References: <m1@x.com>')
+    expect((await readOpStatuses(db, USER, [now]))[0]!.state).toBe('done')
+
+    expect(await cancelSend(db, USER, later)).toBe(true)
+    expect(await cancelSend(db, USER, now)).toBe(false)
   })
 
   it('parks the account when the refresh token is revoked', async () => {

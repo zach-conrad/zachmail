@@ -8,9 +8,11 @@ import {
   stalledOutboxAccounts,
   type Db,
   type OutboxItem,
+  type SendPayload,
   type TriagePayload,
 } from '@zachmail/db/server'
 import { ProviderAuthError, ProviderError, type MailProvider } from '@zachmail/providers'
+import { buildMime, replyReferences } from '@zachmail/mime'
 import type { AccountRecord } from './accounts'
 
 export const OUTBOX_JOB = 'outbox.flush'
@@ -24,7 +26,9 @@ export const enqueueOutboxFlush = (db: Db, userId: string, accountId: string, ru
     userId,
     kind: OUTBOX_JOB,
     payload: { accountId },
-    dedupeKey: `outbox:${accountId}`,
+    // Timed flushes (retries, undo windows) get their own key so an earlier pending flush
+    // can't swallow them.
+    dedupeKey: runAt ? `outbox:${accountId}:${runAt.getTime()}` : `outbox:${accountId}`,
     runAt,
   })
 
@@ -81,7 +85,7 @@ export async function flushOutbox(
 }
 
 async function execute(db: Db, item: OutboxItem, provider: MailProvider) {
-  if (item.kind === 'send') throw new ProviderError('Sending is not available yet', false)
+  if (item.kind === 'send') return send(db, item, provider)
   const p = item.payload as unknown as TriagePayload
   const threads = await providerThreadIds(db, p.threadIds)
   if (!threads.length) return
@@ -97,6 +101,47 @@ async function execute(db: Db, item: OutboxItem, provider: MailProvider) {
     unread: p.unread,
     starred: p.starred,
   })
+}
+
+async function send(db: Db, item: OutboxItem, provider: MailProvider) {
+  const p = item.payload as unknown as SendPayload
+  const [account] = await db.query<{ email: string; display_name: string | null }>(
+    `SELECT email, display_name FROM accounts WHERE id = $1`,
+    [item.accountId],
+  )
+  if (!account) throw new ProviderError('The account was removed', false)
+  const [parent] = p.replyToMessageId
+    ? await db.query<{
+        rfc822_message_id: string | null
+        references: string[]
+        provider_thread_id: string
+      }>(
+        `SELECT m.rfc822_message_id, m."references", t.provider_thread_id
+         FROM messages m JOIN threads t ON t.id = m.thread_id WHERE m.id = $1`,
+        [p.replyToMessageId],
+      )
+    : []
+  const threading = parent
+    ? replyReferences({ rfc822MessageId: parent.rfc822_message_id, references: parent.references })
+    : { references: [] }
+  const { raw } = buildMime(
+    {
+      from: {
+        email: account.email,
+        ...(account.display_name ? { name: account.display_name } : {}),
+      },
+      to: p.to,
+      cc: p.cc,
+      bcc: p.bcc,
+      subject: p.subject,
+      html: p.html,
+      // Stable per op, so a message that did go out can be recognised when it syncs back.
+      messageId: `<${item.opId}@${account.email.split('@')[1] ?? 'zachmail.local'}>`,
+      ...threading,
+    },
+    { includeBcc: true },
+  )
+  await provider.send(raw, parent ? { providerThreadId: parent.provider_thread_id } : {})
 }
 
 const providerThreadIds = async (db: Db, ids: string[]) =>
