@@ -8,6 +8,7 @@ import { AppHeader } from './AppHeader'
 import { CheatSheet } from './CheatSheet'
 import { CommandPalette, type PaletteItem } from './CommandPalette'
 import { SPLITS, type SplitId } from './splits'
+import { UndoToast } from './UndoToast'
 
 type Overlay = 'palette' | 'shortcuts' | null
 
@@ -59,6 +60,7 @@ export function Shell({ split }: { split: SplitId }) {
       <main className="main">
         <Inbox key={split} split={split} active={!overlay} />
       </main>
+      <UndoToast />
       {overlay === 'palette' && (
         <CommandPalette available={available} extra={extra} onClose={() => setOverlay(null)} />
       )}

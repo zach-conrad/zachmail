@@ -1,4 +1,5 @@
 import { ResyncRequired, type SyncTransport } from './client'
+import type { OpsRequest, OpsResponse } from './ops'
 import type { BootstrapLine, MessageBody, SyncDelta } from './protocol'
 
 export interface HttpTransportOptions {
@@ -21,15 +22,19 @@ export class HttpError extends Error {
 /** The client side of the wire contract in protocol.ts. */
 export function httpTransport(opts: HttpTransportOptions): SyncTransport & {
   body(messageId: string, signal?: AbortSignal): Promise<MessageBody>
+  ops(req: OpsRequest, signal?: AbortSignal): Promise<OpsResponse>
 } {
   const f = opts.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
   const base = opts.baseUrl ?? ''
 
-  async function get(path: string, signal?: AbortSignal): Promise<Response> {
+  async function get(path: string, signal?: AbortSignal, body?: unknown): Promise<Response> {
     const token = await opts.token()
+    const headers: Record<string, string> = token ? { authorization: `Bearer ${token}` } : {}
+    if (body !== undefined) headers['content-type'] = 'application/json'
     const res = await f(base + path, {
       signal,
-      headers: token ? { authorization: `Bearer ${token}` } : {},
+      headers,
+      ...(body !== undefined && { method: 'POST', body: JSON.stringify(body) }),
     })
     if (res.status === 410) throw new ResyncRequired()
     if (!res.ok) throw new HttpError(res.status, path)
@@ -47,6 +52,9 @@ export function httpTransport(opts: HttpTransportOptions): SyncTransport & {
     async body(messageId, signal) {
       const path = `/api/messages/${encodeURIComponent(messageId)}/body`
       return (await (await get(path, signal)).json()) as MessageBody
+    },
+    async ops(req, signal) {
+      return (await (await get('/api/ops', signal, req)).json()) as OpsResponse
     },
   }
 }

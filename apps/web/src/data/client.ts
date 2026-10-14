@@ -1,11 +1,12 @@
 import { markOnce } from '../lib/perf'
+import type { OpEnvelope } from '@zachmail/core'
 import type { DataApi, FromWorker, InitConfig, Method, ToWorker, WorkerStatus } from './protocol'
 
 type Remote<T> = {
   [K in keyof T]: T[K] extends (...a: infer A) => infer R ? (...a: A) => Promise<Awaited<R>> : never
 }
 
-export type DataEvent = Extract<FromWorker, { type: 'changed' | 'bodies' }>
+export type DataEvent = Extract<FromWorker, { type: 'changed' | 'bodies' | 'opFailed' }>
 
 /** Main-thread handle on the data worker: typed RPC for reads, events for changes. */
 export class DataClient {
@@ -41,6 +42,11 @@ export class DataClient {
 
   setToken(token: string | null) {
     this.send({ type: 'token', token })
+  }
+
+  /** Hand an op the UI has already applied on screen to the worker's queue. */
+  op(env: OpEnvelope) {
+    this.send({ type: 'op', env })
   }
 
   /** Ask the worker to pull now (focus, Realtime nudge). */

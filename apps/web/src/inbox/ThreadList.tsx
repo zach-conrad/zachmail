@@ -19,11 +19,12 @@ const OVERSCAN = 8
 interface Props {
   model: ListModel
   focus: number
+  selected: ReadonlySet<string>
   onActivate: (index: number, e: MouseEvent) => void
 }
 
 /** Virtualized thread list: fixed-height rows, only what is on screen plus overscan. */
-export function ThreadList({ model, focus, onActivate }: Props) {
+export function ThreadList({ model, focus, selected, onActivate }: Props) {
   useSyncExternalStore(model.subscribe, model.getVersion)
   const ref = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
@@ -57,8 +58,16 @@ export function ThreadList({ model, focus, onActivate }: Props) {
 
   const rows = []
   for (let i = start; i < end; i++) {
+    const item = model.get(i)
     rows.push(
-      <Row key={i} index={i} item={model.get(i)} focused={i === focus} onActivate={onActivate} />,
+      <Row
+        key={i}
+        index={i}
+        item={item}
+        focused={i === focus}
+        selected={!!item && selected.has(item.id)}
+        onActivate={onActivate}
+      />,
     )
   }
 
@@ -83,11 +92,13 @@ const Row = memo(function Row({
   index,
   item,
   focused,
+  selected,
   onActivate,
 }: {
   index: number
   item: ThreadListItem | undefined
   focused: boolean
+  selected: boolean
   onActivate: Props['onActivate']
 }) {
   const { accounts, ownEmails } = useData()
@@ -100,7 +111,7 @@ const Row = memo(function Row({
     <div
       id={`row-${item.id}`}
       role="option"
-      aria-selected={focused}
+      aria-selected={focused || selected}
       aria-label={[
         item.unread ? 'Unread' : '',
         sender,
@@ -113,6 +124,7 @@ const Row = memo(function Row({
       className="row"
       data-unread={item.unread || undefined}
       data-focused={focused || undefined}
+      data-selected={selected || undefined}
       style={style}
       onClick={(e) => onActivate(index, e)}
     >

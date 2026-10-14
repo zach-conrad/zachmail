@@ -1,8 +1,9 @@
+import type { OpEnvelope } from '@zachmail/core'
 import type { StoreApi } from '@zachmail/local-store'
 
 /** Store reads the UI may call over the worker boundary (writes stay inside the worker). */
 export type ReadMethod =
-  'accounts' | 'countThreads' | 'listThreads' | 'indexOfThread' | 'getThread' | 'unread'
+  'accounts' | 'folders' | 'countThreads' | 'listThreads' | 'indexOfThread' | 'getThread' | 'unread'
 
 export interface DataApi extends Pick<StoreApi, ReadMethod> {
   /** Fetch and cache the bodies a thread view needs; resolves once they are stored. */
@@ -18,6 +19,8 @@ export type ToWorker =
   | { type: 'init'; config: InitConfig }
   | { type: 'token'; token: string | null }
   | { type: 'nudge' }
+  /** A triage op the UI already applied on screen: persist, overlay and send it. */
+  | { type: 'op'; env: OpEnvelope }
   | { type: 'call'; id: number; method: Method; args: unknown[] }
 
 export interface WorkerStatus {
@@ -34,3 +37,5 @@ export type FromWorker =
   /** Bodies for these threads were stored. */
   | { type: 'bodies'; threadIds: string[] }
   | { type: 'status'; status: WorkerStatus }
+  /** The server refused or could not apply an op; its threads are back to server state. */
+  | { type: 'opFailed'; id: string; error: string }

@@ -1,9 +1,13 @@
 /// <reference lib="webworker" />
 import {
+  OpDrain,
   SyncClient,
   httpTransport,
   startSyncLoop,
   type MessageBody,
+  type OpEnvelope,
+  type OpsResponse,
+  type SyncSink,
   type SyncTransport,
 } from '@zachmail/core'
 import { SqlStore } from '@zachmail/local-store'
@@ -19,6 +23,8 @@ const post = (m: FromWorker) => self.postMessage(m)
 let token: string | null = null
 let sync: { pull(): Promise<void> } | null = null
 let api: DataApi | null = null
+let enqueue: ((env: OpEnvelope) => void) | null = null
+let drain = () => {}
 const queue: ToWorker[] = []
 const status: WorkerStatus = { storage: 'memory', syncing: false, error: null }
 const setStatus = (s: Partial<WorkerStatus>) => {
@@ -33,10 +39,16 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     const first = token === null && m.token !== null
     token = m.token
     if (first) void sync?.pull()
-  } else if (m.type === 'nudge') void sync?.pull()
-  else if (!api) queue.push(m)
+    drain()
+  } else if (m.type === 'nudge') {
+    void sync?.pull()
+    drain()
+  } else if (!api || !enqueue) queue.push(m)
+  else if (m.type === 'op') enqueue(m.env)
   else void call(m)
 }
+
+self.addEventListener('online', () => drain())
 
 async function call(m: Extract<ToWorker, { type: 'call' }>) {
   try {
@@ -56,6 +68,8 @@ async function init(config: InitConfig) {
 
   let fetchBody: (id: string) => Promise<MessageBody>
   let transport: SyncTransport
+  // Demo mode has no server: ops are accepted on the spot and settle as if done.
+  let sendOps: ((ops: OpEnvelope[]) => Promise<OpsResponse>) | null = null
   if (config.mode === 'demo') {
     const fx = await import('./fixture')
     transport = fx.fixtureTransport(config.threads)
@@ -66,6 +80,7 @@ async function init(config: InitConfig) {
     const http = httpTransport({ baseUrl: config.apiBase, token: () => token })
     transport = http
     fetchBody = (id) => http.body(id)
+    sendOps = (ops) => http.ops({ ops })
   }
 
   const inflight = new Set<string>()
@@ -75,6 +90,7 @@ async function init(config: InitConfig) {
     unread: (q, since, limit) => store.unread(q, since, limit),
     listThreads: (q, offset, limit) => store.listThreads(q, offset, limit),
     indexOfThread: (q, id) => store.indexOfThread(q, id),
+    folders: () => store.folders(),
     getThread: (id) => store.getThread(id),
     async ensureBodies(threadIds) {
       const missing = store.bodiesMissing(threadIds).filter((m) => !inflight.has(m.messageId))
@@ -102,10 +118,40 @@ async function init(config: InitConfig) {
       return fetched.length
     },
   }
-  for (const m of queue.splice(0)) if (m.type === 'call') void call(m)
+  enqueue = (env) => {
+    store.enqueueOp(env)
+    post({ type: 'changed' })
+    drain()
+  }
+
+  const ops = new OpDrain(store, {
+    send: sendOps,
+    ready: () => config.mode === 'demo' || !!token,
+    onFailed: (rows) => {
+      for (const r of rows) post({ type: 'opFailed', id: r.id, error: r.error })
+      post({ type: 'changed' })
+    },
+  })
+  drain = () => void ops.run()
+
+  for (const m of queue.splice(0)) {
+    if (m.type === 'call') void call(m)
+    else if (m.type === 'op') enqueue(m.env)
+  }
+
+  const sink: SyncSink = {
+    getSeq: () => store.getSeq(),
+    reset: () => store.reset(),
+    apply(upserts, deletes, seq, ops = []) {
+      store.apply(upserts, deletes, seq, ops)
+      for (const o of ops)
+        if (o.state === 'failed')
+          post({ type: 'opFailed', id: o.id, error: o.error ?? 'The change could not be applied' })
+    },
+  }
 
   let lastError: string | null = null
-  const client = new SyncClient(store, transport, {
+  const client = new SyncClient(sink, transport, {
     onChange: () => post({ type: 'changed' }),
     onError: (err) => (lastError = String(err)),
   })
@@ -117,6 +163,7 @@ async function init(config: InitConfig) {
       setStatus({ syncing: true })
       await client.pull()
       setStatus({ syncing: false, error: lastError })
+      drain()
     },
   }
   startSyncLoop(sync)
