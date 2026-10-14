@@ -57,6 +57,7 @@ export const keymap = [
   { id: 'compose.reply', label: 'Reply', group: 'compose', keys: ['r'] },
   { id: 'compose.replyAll', label: 'Reply all', group: 'compose', keys: ['a'] },
   { id: 'compose.forward', label: 'Forward', group: 'compose', keys: ['f'] },
+  { id: 'compose.send', label: 'Send', group: 'compose', keys: ['mod+enter'] },
   // Selection
   { id: 'select.toggle', label: 'Select', group: 'selection', keys: ['x'] },
   {

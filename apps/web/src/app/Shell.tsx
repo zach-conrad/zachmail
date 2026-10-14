@@ -1,47 +1,82 @@
 import { useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
-import { useCommands } from '../lib/useCommands'
-import { InboxZero } from '../inbox/InboxZero'
+import { useLayoutEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { Composer } from '../compose/Composer'
+import { newDraft } from '../compose/draft'
+import { useData } from '../data/DataProvider'
+import { Inbox } from '../inbox/Inbox'
+import { endInteraction } from '../lib/perf'
+import { keymap, type CommandId } from '@zachmail/core'
+import { canRun, useCommands } from '../lib/useCommands'
 import { AppHeader } from './AppHeader'
+import { CheatSheet } from './CheatSheet'
+import { CommandPalette, type PaletteItem } from './CommandPalette'
 import { SPLITS, type SplitId } from './splits'
+import { UndoToast } from './UndoToast'
+
+type Overlay = 'palette' | 'shortcuts' | null
 
 export function Shell({ split }: { split: SplitId }) {
   const navigate = useNavigate()
-  const [paletteOpen, setPaletteOpen] = useState(false)
+  const { compose, accounts } = useData()
+  useSyncExternalStore(compose.subscribe, compose.getVersion)
+  const sheet = compose.sheet
+  const [overlay, setOverlay] = useState<Overlay>(null)
+  // What the views underneath can run, captured before the overlay deactivates them.
+  const [available, setAvailable] = useState<CommandId[]>([])
+  const open = (o: Exclude<Overlay, null>) => {
+    if (overlay === o) return setOverlay(null)
+    setAvailable(keymap.map((b) => b.id).filter(canRun))
+    setOverlay(o)
+  }
 
+  useLayoutEffect(() => {
+    if (overlay === 'palette') endInteraction('app.palette')
+  }, [overlay])
+
+  const goSplit = (id: SplitId) => void navigate({ to: '/inbox/$split', params: { split: id } })
   const cycle = (dir: 1 | -1) => {
     const i = SPLITS.findIndex((s) => s.id === split)
-    const next = SPLITS[(i + dir + SPLITS.length) % SPLITS.length]!
-    void navigate({ to: '/inbox/$split', params: { split: next.id } })
+    goSplit(SPLITS[(i + dir + SPLITS.length) % SPLITS.length]!.id)
   }
 
   useCommands({
     'nav.nextSplit': () => cycle(1),
     'nav.prevSplit': () => cycle(-1),
-    'go.inbox': () => void navigate({ to: '/inbox/$split', params: { split: 'important' } }),
-    'app.palette': () => setPaletteOpen((o) => !o),
-    'nav.back': () => setPaletteOpen(false),
+    'go.inbox': () => goSplit('important'),
+    'app.palette': () => open('palette'),
+    'app.shortcuts': () => open('shortcuts'),
+    'compose.new': () => {
+      const first = accounts.keys().next().value
+      if (first) compose.open(compose.resume(null) ?? newDraft(first))
+    },
+    ...(overlay ? { 'nav.back': () => setOverlay(null) } : {}),
   })
+
+  const extra = useMemo<PaletteItem[]>(
+    () =>
+      SPLITS.filter((s) => s.id !== split).map((s) => ({
+        id: `split.${s.id}`,
+        label: `Go to ${s.label}`,
+        run: () => goSplit(s.id),
+      })),
+    // goSplit only closes over navigate, which is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [split],
+  )
 
   return (
     <div className="shell">
-      <AppHeader split={split} onPalette={() => setPaletteOpen(true)} />
-      <main className="panes">
-        <div className="list-pane">
-          <InboxZero hero={split === 'important'} />
-        </div>
+      <AppHeader split={split} onPalette={() => open('palette')} />
+      <main className="main">
+        <Inbox key={split} split={split} active={!overlay && !sheet} />
       </main>
-      {paletteOpen && (
-        <div className="palette-backdrop" onClick={() => setPaletteOpen(false)}>
-          <div
-            className="palette"
-            role="dialog"
-            aria-label="Command palette"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <input autoFocus className="palette-input" placeholder="Type a command or search…" />
-          </div>
-        </div>
+      {sheet && <Composer key={sheet.id} initial={sheet} />}
+      <UndoToast />
+      {overlay === 'palette' && (
+        <CommandPalette available={available} extra={extra} onClose={() => setOverlay(null)} />
+      )}
+      {overlay === 'shortcuts' && (
+        <CheatSheet available={available} onClose={() => setOverlay(null)} />
       )}
     </div>
   )

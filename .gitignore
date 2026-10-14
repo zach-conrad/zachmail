@@ -8,3 +8,7 @@ dist
 *.log
 .DS_Store
 coverage
+dist-perf
+test-results
+playwright-report
+AGENTS.md
