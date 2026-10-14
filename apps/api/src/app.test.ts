@@ -233,6 +233,58 @@ describe('sync endpoints', () => {
     messageId = (await db.query<{ id: string }>(`SELECT id FROM messages LIMIT 1`))[0]!.id
   })
 
+  it('accepts triage ops idempotently and queues one outbox flush', async () => {
+    const threadId = (await db.query<{ id: string }>(`SELECT id FROM threads LIMIT 1`))[0]!.id
+    const id = '00000000-0000-4000-8000-0000000000f1'
+    const post = (body: unknown) =>
+      authed('/api/ops', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    const body = { ops: [{ id, at: Date.now(), op: { kind: 'read', threadIds: [threadId] } }] }
+    const res = await post(body)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ accepted: [id], rejected: [] })
+    expect(await (await post(body)).json()).toEqual({ accepted: [id], rejected: [] })
+    expect(await jobCount('outbox.flush')).toBe(1)
+    const [thread] = await db.query<{ unread: boolean }>(
+      `SELECT unread FROM threads WHERE id = $1`,
+      [threadId],
+    )
+    expect(thread!.unread).toBe(false)
+
+    expect((await post({ ops: [{ id: 'nope' }] })).status).toBe(400)
+    const anon = await app.request('/api/ops', { method: 'POST', body: JSON.stringify(body) })
+    expect(anon.status).toBe(401)
+  })
+
+  it('queues a send behind the undo window and undoes it', async () => {
+    const accountId = (await db.query<{ id: string }>(`SELECT id FROM accounts LIMIT 1`))[0]!.id
+    const id = '00000000-0000-4000-8000-0000000000f2'
+    const send = (body: unknown) =>
+      authed('/api/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    const msg = { id, accountId, to: [{ email: 'ana@x.com' }], subject: 'Hi', html: '<p>Hi</p>' }
+    const res = await send(msg)
+    expect(res.status).toBe(202)
+    const { sendAt } = (await res.json()) as { sendAt: number }
+    expect(sendAt).toBeGreaterThan(Date.now() + 5_000)
+    expect(await (await send(msg)).json()).toEqual({ id, sendAt })
+
+    expect((await send({ ...msg, to: [{ email: 'not an email' }] })).status).toBe(400)
+    expect(
+      (await send({ ...msg, id: '00000000-0000-4000-8000-0000000000f3', accountId: id })).status,
+    ).toBe(422)
+
+    expect((await authed(`/api/send/${id}`, { method: 'DELETE' })).status).toBe(200)
+    expect((await authed(`/api/send/${id}`, { method: 'DELETE' })).status).toBe(409)
+    expect((await authed('/api/send/nope', { method: 'DELETE' })).status).toBe(400)
+  })
+
   it('returns compacted deltas', async () => {
     const delta = (await (await authed('/api/sync?since=0')).json()) as {
       seq: number

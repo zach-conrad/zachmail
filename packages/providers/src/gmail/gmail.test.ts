@@ -204,3 +204,91 @@ describe('GmailProvider.fetchBody', () => {
     ])
   })
 })
+
+describe('GmailProvider.apply', () => {
+  const recorder = (missing: string[] = []) => {
+    const calls: { path: string; body: unknown }[] = []
+    const fetchImpl: FetchLike = async (input, init) => {
+      const path = new URL(input).pathname.replace('/gmail/v1/users/me', '')
+      calls.push({ path, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (missing.some((id) => path.startsWith(`/threads/${id}/`)))
+        return new Response('{}', { status: 404 })
+      return new Response('{}', { status: 200 })
+    }
+    const gmail = new GmailProvider({
+      fetch: fetchImpl,
+      tokens: { getAccessToken: async () => 't' },
+    })
+    return { gmail, calls }
+  }
+
+  it('maps flags to labels and uses modify', async () => {
+    const { gmail, calls } = recorder()
+    await gmail.apply(['t1'], { add: ['STARRED'], remove: ['INBOX'], unread: false, starred: true })
+    expect(calls).toEqual([
+      {
+        path: '/threads/t1/modify',
+        body: { addLabelIds: ['STARRED'], removeLabelIds: ['INBOX', 'UNREAD'] },
+      },
+    ])
+  })
+
+  it('uses the trash endpoints and skips threads that are gone', async () => {
+    const { gmail, calls } = recorder(['gone'])
+    await gmail.apply(['t1', 'gone'], { add: ['TRASH'], remove: ['INBOX'] })
+    expect(calls.map((c) => c.path)).toEqual([
+      '/threads/t1/modify',
+      '/threads/gone/modify',
+      '/threads/t1/trash',
+    ])
+    calls.length = 0
+    await gmail.apply(['t1'], { add: ['INBOX'], remove: ['TRASH', 'SPAM'] })
+    expect(calls).toEqual([
+      { path: '/threads/t1/untrash', body: {} },
+      { path: '/threads/t1/modify', body: { addLabelIds: ['INBOX'], removeLabelIds: ['SPAM'] } },
+    ])
+  })
+
+  it('reports client errors as permanent and server errors as retriable', async () => {
+    for (const [status, retriable] of [
+      [400, false],
+      [503, true],
+    ] as const) {
+      const gmail = new GmailProvider({
+        fetch: async () => new Response('{}', { status }),
+        tokens: { getAccessToken: async () => 't' },
+        maxRetries: 0,
+      })
+      await expect(gmail.apply(['t1'], { add: ['INBOX'], remove: [] })).rejects.toMatchObject({
+        retriable,
+      })
+    }
+  })
+})
+
+describe('GmailProvider.send', () => {
+  it('posts the raw message on the thread and never retries a server error', async () => {
+    let calls = 0
+    let sent: { raw: string; threadId?: string } | undefined
+    const make = (status: number) =>
+      new GmailProvider({
+        tokens: { getAccessToken: async () => 't' },
+        fetch: async (_input, init) => {
+          calls++
+          sent = JSON.parse(String(init?.body))
+          return new Response(JSON.stringify({ id: 'm9', threadId: 't9' }), { status })
+        },
+      })
+    const raw = new TextEncoder().encode('Subject: hi\r\n\r\nbody\r\n')
+    expect(await make(200).send(raw, { providerThreadId: 't9' })).toEqual({
+      providerMessageId: 'm9',
+      providerThreadId: 't9',
+    })
+    expect(Buffer.from(sent!.raw, 'base64url').toString()).toBe('Subject: hi\r\n\r\nbody\r\n')
+    expect(sent!.threadId).toBe('t9')
+
+    calls = 0
+    await expect(make(500).send(raw)).rejects.toMatchObject({ retriable: false })
+    expect(calls).toBe(1)
+  })
+})
