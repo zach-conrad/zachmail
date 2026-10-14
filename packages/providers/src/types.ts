@@ -1,5 +1,12 @@
 import type { Address } from '@zachmail/mime'
 
+export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
+
+export interface TokenSource {
+  /** Returns a valid access token; `force` bypasses any cache after a 401. */
+  getAccessToken(force?: boolean): Promise<string>
+}
+
 export type FolderKind =
   'inbox' | 'sent' | 'drafts' | 'trash' | 'spam' | 'archive' | 'starred' | 'important' | 'custom'
 
@@ -71,6 +78,8 @@ export interface IncrementalResult {
   next: SyncState
   /** The provider can no longer serve deltas from this state; run a full resync. */
   resyncRequired?: boolean
+  /** More changes are waiting (a capped first pass); run another incremental soon. */
+  more?: boolean
 }
 
 export interface WatchResult {
@@ -92,7 +101,10 @@ export interface SentRef {
 }
 
 export interface MailProvider {
-  /** Initial state to record before a backfill starts (e.g. the current Gmail historyId). */
+  /**
+   * Initial state to record before a backfill starts (e.g. the current Gmail historyId). Must
+   * be non-empty: an empty state means the account has not started syncing.
+   */
   initialState(): Promise<SyncState>
   /** One page of history, newest first. */
   backfillPage(
