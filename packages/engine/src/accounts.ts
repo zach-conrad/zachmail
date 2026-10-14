@@ -32,6 +32,7 @@ export class ProviderFactory {
     private db: Db,
     private config: EngineConfig,
     private fetchImpl: FetchLike = fetch,
+    private opts: { maxRetries?: number } = {},
   ) {}
 
   private tokenKey() {
@@ -48,6 +49,7 @@ export class ProviderFactory {
     const gmail = new GmailProvider({
       fetch: this.fetchImpl,
       pubsubTopic: this.config.google.pubsubTopic,
+      maxRetries: this.opts.maxRetries,
       tokens: { getAccessToken: (force) => this.accessToken(account, force) },
     })
     return Object.assign(gmail, { gmail })

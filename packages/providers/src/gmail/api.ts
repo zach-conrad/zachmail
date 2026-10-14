@@ -1,4 +1,4 @@
-import { ProviderAuthError } from '../types'
+import { ProviderAuthError, ProviderError } from '../types'
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
@@ -7,13 +7,13 @@ export interface TokenSource {
   getAccessToken(force?: boolean): Promise<string>
 }
 
-export class GmailHttpError extends Error {
+export class GmailHttpError extends ProviderError {
+  override name = 'GmailHttpError'
   constructor(
     readonly status: number,
     message: string,
   ) {
-    super(message)
-    this.name = 'GmailHttpError'
+    super(message, status === 429 || status >= 500)
   }
 }
 
