@@ -109,6 +109,17 @@ export interface MailProvider {
   send(raw: Uint8Array, opts?: { providerThreadId?: string }): Promise<SentRef>
   /** Current metadata of whole threads, used to restore the mirror after a failed write. */
   fetchThreads(providerThreadIds: string[]): Promise<SyncBatch>
+  /** Threads matching a query in the provider's own syntax, newest first. */
+  searchThreads(
+    query: string,
+    opts: { limit: number; pageToken?: string | null },
+  ): Promise<SearchPage>
+}
+
+export interface SearchPage {
+  providerThreadIds: string[]
+  /** Pass back to continue; null when there are no more results. */
+  pageToken: string | null
 }
 
 export class ProviderAuthError extends Error {

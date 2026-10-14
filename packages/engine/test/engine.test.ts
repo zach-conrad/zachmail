@@ -16,6 +16,7 @@ import {
   enqueueInitialSync,
   enqueueOutboxFlush,
   getMessageBody,
+  searchMail,
   type EngineConfig,
   type JobLike,
 } from '../src'
@@ -54,6 +55,7 @@ function fakeGoogle() {
     writes: [] as string[],
     failWrites: 0,
     sent: [] as { raw: string; threadId?: string }[],
+    searches: [] as string[],
   }
   const now = Date.now()
   const threads: Record<string, ReturnType<typeof gmailMsg>[]> = {
@@ -62,6 +64,7 @@ function fakeGoogle() {
       gmailMsg('m2', 't2', ['INBOX'], now - 7_200_000),
       gmailMsg('m3', 't2', ['SENT'], now - 7_100_000),
     ],
+    zebra: [gmailMsg('m9', 'zebra', ['INBOX'], Date.UTC(2019, 0, 1))],
   }
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
   const fetchImpl = async (input: string, init?: RequestInit) => {
@@ -80,7 +83,14 @@ function fakeGoogle() {
         ],
       })
     if (path === '/threads') {
-      if (url.searchParams.get('q')?.includes('older_than')) return json({})
+      const q = url.searchParams.get('q') ?? ''
+      if (q.includes('older_than')) return json({})
+      if (!q.includes('newer_than')) {
+        state.searches.push(q)
+        if (q.includes('zebra')) return json({ threads: [{ id: 'zebra' }] })
+        if (q.includes('larger:')) return json({ threads: [{ id: 't1' }], nextPageToken: 'n2' })
+        return json({})
+      }
       return url.searchParams.get('pageToken')
         ? json({ threads: [{ id: 't2' }] })
         : json({ threads: [{ id: 't1' }], nextPageToken: 'p2' })
@@ -314,6 +324,43 @@ describe('engine', () => {
 
     expect(await cancelSend(db, USER, later)).toBe(true)
     expect(await cancelSend(db, USER, now)).toBe(false)
+  })
+
+  it('searches the mirror, then Gmail for mail older than it', async () => {
+    const [st] = await db.query<{ c: boolean }>(
+      `SELECT (sync_state ->> 'mirrorComplete')::boolean AS c FROM accounts WHERE id = $1`,
+      [accountId],
+    )
+    expect(st!.c).toBe(true)
+    const local = await searchMail(db, providers, USER, { q: 'about', limit: 1 })
+    expect(local.threads).toHaveLength(1)
+    expect(local.messages.every((m) => m.threadId === local.threads[0]!.id)).toBe(true)
+    const rest = await searchMail(db, providers, USER, { q: 'about', cursor: local.nextCursor })
+    expect(rest.threads).toHaveLength(1)
+    expect(rest.nextCursor).toBeNull() // whole history mirrored: Gmail isn't asked
+    expect(google.state.searches).toEqual([])
+
+    await db.query(`UPDATE accounts SET sync_state = sync_state - 'mirrorComplete'`)
+    const first = await searchMail(db, providers, USER, { q: 'zebra' })
+    expect(first).toMatchObject({ threads: [], source: 'mirror' })
+    expect(first.nextCursor).not.toBeNull()
+    const older = await searchMail(db, providers, USER, { q: 'zebra', cursor: first.nextCursor })
+    expect(older.source).toBe('provider')
+    expect(older.threads.map((t) => t.subject)).toEqual(['About zebra'])
+    expect(older.messages).toHaveLength(1)
+    expect(older.nextCursor).toBeNull()
+    expect(google.state.searches[0]).toMatch(/^zebra before:\d+$/)
+    // Hydrated into the mirror: now found locally, and it syncs to clients.
+    expect((await searchMail(db, providers, USER, { q: 'zebra' })).threads).toHaveLength(1)
+
+    const raw = await searchMail(db, providers, USER, { q: 'larger:5M' })
+    expect(raw.source).toBe('provider')
+    expect(raw.threads.map((t) => t.subject)).toEqual(['About t1'])
+    expect(raw.nextCursor).not.toBeNull()
+    expect(google.state.searches.at(-1)).toBe('larger:5M')
+    await expect(searchMail(db, providers, USER, { q: 'x', cursor: 'junk' })).rejects.toThrow(
+      'Bad cursor',
+    )
   })
 
   it('parks the account when the refresh token is revoked', async () => {

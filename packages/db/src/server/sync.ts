@@ -222,6 +222,14 @@ export async function recomputeThreads(tx: Queryable, userId: string, threadIds:
   )
 }
 
+/** Records that the backfill has mirrored an account's whole history (search stops asking it). */
+export async function markMirrorComplete(db: Queryable, accountId: string) {
+  await db.query(
+    `UPDATE accounts SET sync_state = sync_state || '{"mirrorComplete": true}' WHERE id = $1`,
+    [accountId],
+  )
+}
+
 export async function updateAccount(
   db: Queryable,
   accountId: string,
@@ -233,8 +241,10 @@ export async function updateAccount(
   },
 ) {
   const rows = await db.query<{ user_id: string }>(
+    // mirrorComplete is engine bookkeeping, not a provider cursor: keep it across cursor writes.
     `UPDATE accounts SET
-       sync_state = COALESCE($2::jsonb, sync_state),
+       sync_state = COALESCE($2::jsonb || jsonb_strip_nulls(
+         jsonb_build_object('mirrorComplete', sync_state -> 'mirrorComplete')), sync_state),
        status = COALESCE($3::account_status, status),
        last_synced_at = COALESCE($4::timestamptz, last_synced_at),
        last_error = CASE WHEN $5::boolean THEN $6 ELSE last_error END

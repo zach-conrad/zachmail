@@ -49,7 +49,8 @@ export async function searchMirror(
       `${f.negated ? 'NOT ' : ''}EXISTS (SELECT 1 FROM thread_folders tf
          WHERE tf.thread_id = t.id AND tf.folder_id = ANY(${p(f.ids)}::uuid[]))`,
     )
-  if (opts.olderThan != null) where.push(`t.last_message_at < to_timestamp(${p(opts.olderThan / 1000)})`)
+  if (opts.olderThan != null)
+    where.push(`t.last_message_at < to_timestamp(${p(opts.olderThan / 1000)})`)
   if (opts.after)
     where.push(
       `(t.last_message_at, t.id) < (to_timestamp(${p(opts.after.at / 1000)}), ${p(opts.after.id)}::uuid)`,
@@ -63,7 +64,9 @@ export async function searchMirror(
   if (plan.after !== undefined) msg.push(`m.date >= to_timestamp(${p(plan.after / 1000)})`)
   if (plan.before !== undefined) msg.push(`m.date < to_timestamp(${p(plan.before / 1000)})`)
   if (msg.length)
-    where.push(`t.id IN (SELECT m.thread_id FROM messages m WHERE m.user_id = $1 AND ${msg.join(' AND ')})`)
+    where.push(
+      `t.id IN (SELECT m.thread_id FROM messages m WHERE m.user_id = $1 AND ${msg.join(' AND ')})`,
+    )
 
   return db.query<ThreadRow>(
     `${SELECT_THREAD} WHERE ${where.join(' AND ')}

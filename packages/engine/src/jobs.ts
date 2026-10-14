@@ -1,4 +1,11 @@
-import { applySyncBatch, enqueueJob, nudge, updateAccount, type Db } from '@zachmail/db/server'
+import {
+  applySyncBatch,
+  enqueueJob,
+  markMirrorComplete,
+  nudge,
+  updateAccount,
+  type Db,
+} from '@zachmail/db/server'
 import { ProviderAuthError, mapLimit } from '@zachmail/providers'
 import { getAccount, type AccountRecord, type ProviderFactory } from './accounts'
 import { getMessageBody } from './bodies'
@@ -119,6 +126,8 @@ export function createHandlers(deps: {
             dedupeKey: `backfill:${account.id}:older:start`,
             runAt: new Date(Date.now() + 60_000),
           })
+        } else {
+          await markMirrorComplete(db, account.id)
         }
       })
     },
