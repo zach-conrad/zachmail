@@ -2,6 +2,7 @@ import type { Deletes, OpStatusRow, Rows, SyncDelta } from '@zachmail/core'
 import { emptyDeletes, emptyRows } from '@zachmail/core'
 import type { SyncBatch } from '@zachmail/providers'
 import { attachSentReminders, unsnoozeOnReply } from './snooze'
+import { SELECT_SPLIT_RULE, recomputeSplits } from './splits'
 import type { Db, Queryable } from './sql'
 
 type Entity = keyof Deletes
@@ -224,6 +225,7 @@ export async function recomputeThreads(tx: Queryable, userId: string, threadIds:
      ON CONFLICT DO NOTHING`,
     [threadIds, userId],
   )
+  await recomputeSplits(tx, userId, threadIds)
 }
 
 export async function updateAccount(
@@ -308,7 +310,13 @@ export async function readDelta(
       [userId, since, upTo],
     )
 
-    const want: Record<Entity, string[]> = { account: [], folder: [], thread: [], message: [] }
+    const want: Record<Entity, string[]> = {
+      account: [],
+      folder: [],
+      thread: [],
+      message: [],
+      splitRule: [],
+    }
     const deletes = emptyDeletes()
     const opIds: string[] = []
     for (const c of latest) {
@@ -337,6 +345,7 @@ export async function readDelta(
     await load('folders', SELECT_FOLDER, 'f', want.folder)
     await load('threads', SELECT_THREAD, 't', want.thread)
     await load('messages', SELECT_MESSAGE, 'm', want.message)
+    await load('splitRules', SELECT_SPLIT_RULE, 'r', want.splitRule)
 
     const ops = opIds.length ? await readOpStatuses(tx, userId, opIds) : []
 
@@ -361,7 +370,15 @@ export async function readOpStatuses(
 }
 
 const entityOf = (k: keyof Rows): Entity =>
-  (({ accounts: 'account', folders: 'folder', threads: 'thread', messages: 'message' }) as const)[k]
+  (
+    ({
+      accounts: 'account',
+      folders: 'folder',
+      threads: 'thread',
+      messages: 'message',
+      splitRules: 'splitRule',
+    }) as const
+  )[k]
 
 /**
  * Initial replica: everything for threads active in the last `days`, in chunks the API
@@ -383,6 +400,7 @@ export async function readBootstrap(
     onRows({
       accounts: await tx.query(`${SELECT_ACCOUNT} WHERE a.user_id = $1`, [userId]),
       folders: await tx.query(`${SELECT_FOLDER} WHERE f.user_id = $1`, [userId]),
+      splitRules: await tx.query(`${SELECT_SPLIT_RULE} WHERE r.user_id = $1`, [userId]),
     })
     const cutoff = `now() - make_interval(days => $2)`
     let cursor: { at: number; id: string } | null = null

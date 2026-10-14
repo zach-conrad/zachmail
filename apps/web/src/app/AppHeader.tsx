@@ -1,19 +1,27 @@
+import type { SplitKey, SplitTab } from '@zachmail/core'
 import { Link } from '@tanstack/react-router'
-import { SPLITS, type SplitId } from './splits'
 import { Kbd } from './Kbd'
 
-export function AppHeader({ split, onPalette }: { split: SplitId; onPalette: () => void }) {
+export function AppHeader({
+  split,
+  tabs,
+  onPalette,
+}: {
+  split: SplitKey
+  tabs: readonly SplitTab[]
+  onPalette: () => void
+}) {
   return (
     <header className="app-header">
       <span className="brand">ZachMail</span>
       <nav className="splits" aria-label="Splits">
-        {SPLITS.map((s) => (
+        {tabs.map((s) => (
           <Link
-            key={s.id}
+            key={s.key}
             to="/inbox/$split"
-            params={{ split: s.id }}
+            params={{ split: s.key }}
             className="split-tab"
-            aria-current={s.id === split ? 'page' : undefined}
+            aria-current={s.key === split ? 'page' : undefined}
           >
             {s.label}
           </Link>

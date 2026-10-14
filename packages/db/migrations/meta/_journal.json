@@ -64,6 +64,13 @@
       "when": 1791961610546,
       "tag": "0008_snooze_reminders",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792000797348,
+      "tag": "0009_split_rules",
+      "breakpoints": true
     }
   ]
 }
