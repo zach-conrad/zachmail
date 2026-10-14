@@ -1,6 +1,10 @@
 import {
   applyEffect,
+  DEFAULT_NUDGE_AFTER_MS,
+  DEFAULT_NUDGE_WINDOW_MS,
   compileSplitRules,
+  followUpNudge,
+  type ComposerEdit,
   inboundSender,
   opEffect,
   type AccountRow,
@@ -8,12 +12,16 @@ import {
   type Deletes,
   type FolderKind,
   type FolderRow,
+  type FollowUpNudge,
   type MessageBody,
   type MessageRow,
+  type NudgeDismissalRow,
+  type NudgeOptions,
   type OpEnvelope,
   type OpStatusRow,
   type Rows,
   type CompiledSplitRules,
+  type SnippetRow,
   type SplitKey,
   type SplitRuleRow,
   type SyncSink,
@@ -21,6 +29,7 @@ import {
 } from '@zachmail/core'
 import type { SqlDriver, SqlValue } from './driver'
 import { DROP_ALL, SCHEMA, SCHEMA_VERSION } from './schema'
+import { EditableTable } from './editable'
 import { SplitRuleTable, type PendingSplitRule } from './splitRules'
 
 /** One row of the inbox list: only what ThreadRow renders. */
@@ -43,6 +52,11 @@ export interface ListQuery {
   split: SplitKey
   /** Account scope; null or absent means all accounts. */
   accountId?: string | null
+}
+
+/** A follow-up nudge with the row the list renders. */
+export interface FollowUpItem extends FollowUpNudge {
+  thread: ThreadListItem
 }
 
 export interface ThreadDetail {
@@ -108,6 +122,20 @@ export interface StoreApi extends SyncSink {
    */
   resplitPending(): number
   resplitStep(max?: number): number
+
+  // ---- Snippets and follow-up nudges ------------------------------------------------------
+  /** Snippets with unsent local edits on top, by name. */
+  snippets(): SnippetRow[]
+  /** Saves (snippet) or deletes (null) a snippet locally. */
+  editSnippet(id: string, snippet: SnippetRow | null): void
+  /** Hides (dismiss) or brings back the nudges on these threads, locally first. */
+  dismissNudges(threadIds: readonly string[], dismiss: boolean): void
+  /** Due follow-up nudges at `now`, most recently due first, at most `limit`. */
+  followUps(now: number, opts?: NudgeOptions, limit?: number): FollowUpItem[]
+  /** Local snippet and dismissal edits the server has not accepted yet, oldest first. */
+  composerEdits(): ComposerEdit[]
+  ackComposerEdit(sent: ComposerEdit): void
+  rejectComposerEdit(sent: ComposerEdit): void
 }
 
 /** The fields of a thread that ops change; `srv` holds the server's copy while overlaid. */
@@ -146,6 +174,8 @@ export class SqlStore implements StoreApi {
   private folderOf = new Map<string, Map<FolderKind, string>>()
   private ops: QueuedOp[] = []
   private rules: SplitRuleTable
+  private snippetRows: EditableTable<SnippetRow>
+  private dismissals: EditableTable<NudgeDismissalRow>
   private compiled: CompiledSplitRules = compileSplitRules([])
   /** Threads a rules change moves, written a chunk at a time by `resplitStep`. */
   private resplitIds: string[] = []
@@ -162,6 +192,8 @@ export class SqlStore implements StoreApi {
       String(SCHEMA_VERSION),
     ])
     this.rules = new SplitRuleTable(db)
+    this.snippetRows = new EditableTable(db, 'snippets')
+    this.dismissals = new EditableTable(db, 'nudge_dismissals')
     this.loadLookups()
     this.ops = this.db
       .all<{ envelope: string; sent: number }>(
@@ -187,6 +219,8 @@ export class SqlStore implements StoreApi {
       this.db.run(`DELETE FROM pending_ops WHERE sent = 1`)
       // The snapshot resends every rule; unsent local edits stay on top.
       this.rules.clearSynced()
+      this.snippetRows.clearSynced()
+      this.dismissals.clearSynced()
     })
     this.ops = this.ops.filter((o) => !o.sent)
     this.loadLookups()
@@ -276,6 +310,8 @@ export class SqlStore implements StoreApi {
         this.compiled = compileSplitRules(this.rules.effective())
         rulesChanged = JSON.stringify(this.compiled.rules) !== before
       }
+      this.snippetRows.applySynced(upserts.snippets, deletes?.snippet ?? [])
+      this.dismissals.applySynced(upserts.nudgeDismissals, deletes?.nudgeDismissal ?? [])
       if (lookupsChanged) this.loadLookups()
       // Fresh server rows replaced any overlay; put pending ops back on top of them.
       if (this.ops.length && upserts.threads?.length) {
@@ -590,6 +626,75 @@ export class SqlStore implements StoreApi {
     this.queueResplit()
   }
 
+  // ---- Snippets and follow-up nudges ------------------------------------------------------
+
+  snippets(): SnippetRow[] {
+    return this.snippetRows.effective().sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  editSnippet(id: string, snippet: SnippetRow | null): void {
+    this.tx(() => this.snippetRows.edit(id, snippet))
+  }
+
+  dismissNudges(threadIds: readonly string[], dismiss: boolean): void {
+    this.tx(() => {
+      for (const ids of chunks(threadIds))
+        for (const t of this.db.all<{ id: string; at: number }>(
+          `SELECT id, last_message_at AS at FROM threads WHERE id IN (${marks(ids.length)})`,
+          ids,
+        ))
+          this.dismissals.edit(t.id, dismiss ? { id: t.id, lastMessageAt: t.at } : null)
+    })
+  }
+
+  followUps(now: number, opts: NudgeOptions = {}, limit = 100): FollowUpItem[] {
+    const own = [...this.ownEmails]
+    if (!own.length) return []
+    const after = opts.afterMs ?? DEFAULT_AFTER
+    const window = opts.windowMs ?? DEFAULT_WINDOW
+    // Candidates: threads whose latest message is Zach's, in the nudge window. The age and
+    // sender filters run in SQLite so only a handful of rows cross into JS.
+    const rows = this.db.all<ThreadSqlRow & { mdata: string }>(
+      `SELECT t.*, m.data AS mdata FROM threads t
+       JOIN messages m ON m.id = (SELECT l.id FROM messages l WHERE l.thread_id = t.id
+         ORDER BY l.date DESC, l.id DESC LIMIT 1)
+       WHERE t.last_message_at BETWEEN ? AND ? AND m.from_email IN (${marks(own.length)})`,
+      [now - window, now - after, ...own],
+    )
+    if (!rows.length) return []
+    const skipFolderIds = new Set(
+      [...this.folderKind].filter(([, k]) => k === 'trash' || k === 'spam').map(([id]) => id),
+    )
+    const dismissals = new Map(this.dismissals.effective().map((d) => [d.id, d.lastMessageAt]))
+    const ctx = { ownEmails: this.ownEmails, skipFolderIds, dismissals, now }
+    const out: FollowUpItem[] = []
+    for (const r of rows) {
+      const thread = toListItem(r)
+      const n = followUpNudge(thread, [JSON.parse(r.mdata) as MessageRow], ctx, opts)
+      if (n) out.push({ ...n, thread })
+    }
+    return out.sort((a, b) => b.dueAt - a.dueAt).slice(0, limit)
+  }
+
+  composerEdits(): ComposerEdit[] {
+    return [
+      ...this.snippetRows.pending().map((p) => ({ kind: 'snippet' as const, ...p })),
+      ...this.dismissals.pending().map((p) => ({ kind: 'nudge' as const, ...p })),
+    ]
+  }
+
+  ackComposerEdit(sent: ComposerEdit): void {
+    this.tx(() =>
+      sent.kind === 'snippet' ? this.snippetRows.ack(sent) : this.dismissals.ack(sent),
+    )
+  }
+
+  rejectComposerEdit(sent: ComposerEdit): void {
+    this.tx(() =>
+      sent.kind === 'snippet' ? this.snippetRows.reject(sent.id) : this.dismissals.reject(sent.id),
+    )
+  }
+
   /** Runs a query whose single row/column is JSON text, so results cross wasm in one string. */
   private json<T>(sql: string, params: readonly SqlValue[] = []): T {
     const r = this.db.all<{ j: string | null }>(sql, params)[0]
@@ -691,6 +796,8 @@ export class SqlStore implements StoreApi {
 type SplitChange = [id: string, split: SplitKey | null, from: string | null, listUnsub: number]
 
 const RESPLIT_CHUNK = 200
+const DEFAULT_AFTER = DEFAULT_NUDGE_AFTER_MS
+const DEFAULT_WINDOW = DEFAULT_NUDGE_WINDOW_MS
 
 // Every to/cc address in a thread, lowercased, as a JSON array.
 const RECIPIENTS_SQL = `json((SELECT json_group_array(DISTINCT e) FROM (

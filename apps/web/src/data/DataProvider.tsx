@@ -1,4 +1,4 @@
-import type { AccountRow, SplitRuleRow } from '@zachmail/core'
+import type { AccountRow, SnippetRow, SplitRuleRow } from '@zachmail/core'
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useAuth } from '../auth/session'
 import { demoMode, supabase } from '../lib/supabase'
@@ -19,6 +19,10 @@ interface Data {
   splitRules: SplitRuleRow[] | null
   /** Saves (rule) or deletes (null) a split rule; tabs update this frame, lists follow. */
   editSplitRule: (id: string, rule: SplitRuleRow | null) => void
+  /** Snippets as the replica sees them (local edits included), by name. */
+  snippets: SnippetRow[]
+  /** Saves (snippet) or deletes (null) a snippet; shows this frame, syncs after. */
+  editSnippet: (id: string, snippet: SnippetRow | null) => void
 }
 
 const DataContext = createContext<Data | null>(null)
@@ -51,6 +55,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const { client } = base
   const [accounts, setAccounts] = useState<Map<string, AccountRow>>(new Map())
   const [splitRules, setSplitRules] = useState<SplitRuleRow[] | null>(null)
+  const [snippets, setSnippets] = useState<SnippetRow[]>([])
 
   useEffect(() => {
     client.retain()
@@ -107,12 +112,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const key = JSON.stringify(rows)
         setSplitRules((prev) => (JSON.stringify(prev) === key ? prev : rows))
       })
+    const loadSnippets = () =>
+      void client.api.snippets().then((rows) => {
+        if (cancelled) return
+        const key = JSON.stringify(rows)
+        setSnippets((prev) => (JSON.stringify(prev) === key ? prev : rows))
+      })
     load()
     loadRules()
+    loadSnippets()
     const off = client.subscribe((e) => {
       if (e.type !== 'changed') return
       load()
       loadRules()
+      loadSnippets()
     })
     return () => {
       cancelled = true
@@ -133,8 +146,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
         })
         base.client.editSplitRule(id, rule)
       },
+      snippets,
+      editSnippet: (id, snippet) => {
+        setSnippets((rs) => {
+          const rest = rs.filter((r) => r.id !== id)
+          return snippet ? [...rest, snippet].sort((a, b) => a.name.localeCompare(b.name)) : rest
+        })
+        base.client.editSnippet(id, snippet)
+      },
     }),
-    [base, accounts, splitRules],
+    [base, accounts, splitRules, snippets],
   )
 
   useDesktopUnread(client, value.ownEmails)

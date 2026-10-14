@@ -1,6 +1,8 @@
 import { useNavigate } from '@tanstack/react-router'
 import { useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { Composer } from '../compose/Composer'
+import { SnippetsEditor } from '../compose/SnippetsEditor'
+import { FollowUps } from '../followups/FollowUps'
 import { newDraft } from '../compose/draft'
 import { Inbox } from '../inbox/Inbox'
 import { endInteraction } from '../lib/perf'
@@ -13,7 +15,7 @@ import { CheatSheet } from './CheatSheet'
 import { CommandPalette, type PaletteItem } from './CommandPalette'
 import { UndoToast } from './UndoToast'
 
-type Overlay = 'palette' | 'shortcuts' | 'rules' | null
+type Overlay = 'palette' | 'shortcuts' | 'rules' | 'followUps' | 'snippets' | null
 
 export function Shell({ split }: { split: SplitKey }) {
   const navigate = useNavigate()
@@ -65,6 +67,8 @@ export function Shell({ split }: { split: SplitKey }) {
       if (first) compose.open(compose.resume(null) ?? newDraft(first))
     },
     'app.splitRules': () => open('rules'),
+    'app.snippets': () => open('snippets'),
+    'go.followUps': () => open('followUps'),
     ...(overlay ? { 'nav.back': () => setOverlay(null) } : {}),
   })
 
@@ -103,6 +107,8 @@ export function Shell({ split }: { split: SplitKey }) {
           onClose={() => setOverlay(null)}
         />
       )}
+      {overlay === 'followUps' && <FollowUps onClose={() => setOverlay(null)} />}
+      {overlay === 'snippets' && <SnippetsEditor onClose={() => setOverlay(null)} />}
       {overlay === 'shortcuts' && (
         <CheatSheet available={available} onClose={() => setOverlay(null)} />
       )}

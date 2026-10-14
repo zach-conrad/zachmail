@@ -25,7 +25,7 @@ export class ComposeStore {
 
   open(d: Draft) {
     this.kept.delete(keyOf(d))
-    if (d.kind === 'new') this.sheet = d
+    if (d.kind === 'new' || d.sheet) this.sheet = d
     else {
       if (this.inline && this.inline.threadId !== d.threadId) this.keep(this.inline)
       this.inline = d

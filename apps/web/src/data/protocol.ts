@@ -4,6 +4,7 @@ import type {
   OpEnvelope,
   SendRequest,
   SendResponse,
+  SnippetRow,
   SplitRuleRow,
 } from '@zachmail/core'
 import type { StoreApi } from '@zachmail/local-store'
@@ -18,6 +19,8 @@ export type ReadMethod =
   | 'getThread'
   | 'unread'
   | 'splitRules'
+  | 'snippets'
+  | 'followUps'
 
 export interface DataApi extends Pick<StoreApi, ReadMethod> {
   /** Fetch and cache the bodies a thread view needs; resolves once they are stored. */
@@ -45,6 +48,10 @@ export type ToWorker =
   | { type: 'op'; env: OpEnvelope }
   /** Save (rule) or delete (null) a split rule: re-split locally now, send when online. */
   | { type: 'splitRule'; id: string; rule: SplitRuleRow | null }
+  /** Save (snippet) or delete (null) a snippet: local now, sent when online. */
+  | { type: 'snippet'; id: string; snippet: SnippetRow | null }
+  /** Hide (dismiss) or bring back follow-up nudges on these threads. */
+  | { type: 'nudges'; threadIds: string[]; dismiss: boolean }
   | { type: 'call'; id: number; method: Method; args: unknown[] }
 
 export interface WorkerStatus {
