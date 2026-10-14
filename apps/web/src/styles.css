@@ -623,6 +623,63 @@ html[data-shell='macos'] body {
 .btn-danger {
   color: var(--danger);
 }
+/* Undo toast: a glass capsule, bottom-left (design §5.6, §6.1). */
+.toast {
+  position: fixed;
+  left: var(--space-4);
+  bottom: var(--space-4);
+  max-width: min(560px, calc(100% - 32px));
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 40px;
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--surface-raised) 78%, transparent);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  box-shadow: var(--shadow-float);
+  color: var(--text);
+  white-space: nowrap;
+  animation: toast-in var(--dur-base) var(--ease);
+}
+.toast[data-error] {
+  padding-right: var(--space-4);
+  color: var(--danger);
+}
+.toast-check {
+  color: var(--success);
+}
+.toast-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.toast-undo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--row-focus);
+  color: var(--text);
+  font: inherit;
+}
+
+.row[data-selected] {
+  background: var(--row-focus);
+}
+.row[data-selected] .dot {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
 
 @keyframes palette-in {
   from {

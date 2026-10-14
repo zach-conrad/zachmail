@@ -1,5 +1,5 @@
 /** Bump when the client schema changes; the replica is dropped and bootstrapped again. */
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 export const SCHEMA = /* sql */ `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS threads (
   starred INTEGER NOT NULL,
   has_attachments INTEGER NOT NULL,
   folder_ids TEXT NOT NULL,
-  split TEXT
+  split TEXT,
+  -- The server's {folderIds, unread, starred} while pending ops overlay this row, else NULL.
+  srv TEXT
 );
 CREATE INDEX IF NOT EXISTS threads_split ON threads (split, last_message_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS messages (
@@ -35,6 +37,13 @@ CREATE TABLE IF NOT EXISTS messages (
   data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_thread ON messages (thread_id, date);
+-- Triage ops applied locally and not yet settled by the server, in the order they were made.
+CREATE TABLE IF NOT EXISTS pending_ops (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT NOT NULL UNIQUE,
+  envelope TEXT NOT NULL,
+  sent INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS bodies (
   message_id TEXT PRIMARY KEY,
   html TEXT NOT NULL,
@@ -50,4 +59,5 @@ DROP TABLE IF EXISTS folders;
 DROP TABLE IF EXISTS threads;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS bodies;
+DROP TABLE IF EXISTS pending_ops;
 `

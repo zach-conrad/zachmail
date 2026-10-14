@@ -1,4 +1,4 @@
-import type { FolderRow, MessageRow, ThreadRow } from '@zachmail/core'
+import type { FolderRow, MessageRow, OpEnvelope, ThreadRow } from '@zachmail/core'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { openSqliteWasm } from '../src/sqlite-wasm'
 import { SqlStore } from '../src/store'
@@ -168,5 +168,75 @@ describe('SqlStore', () => {
     store.reset()
     expect(store.getSeq()).toBeNull()
     expect(store.countThreads({ split: 'other' })).toBe(0)
+  })
+})
+
+describe('SqlStore pending ops', () => {
+  const env = (id: string, op: OpEnvelope['op']): OpEnvelope => ({ id, op, at: 1 })
+  const seed = () =>
+    store.apply(
+      {
+        folders: [folder('arch', 'archive')],
+        threads: [thread('t1', 1, ['inbox', 'imp']), thread('t2', 2, ['inbox', 'imp'])],
+        messages: [message('m1', 't1', 1), message('m2', 't2', 2)],
+      },
+      null,
+      1,
+    )
+  const ids = () => store.listThreads({ split: 'important' }, 0, 10).map((t) => t.id)
+
+  it('applies an op locally at once and keeps it over fresh server rows', () => {
+    seed()
+    store.enqueueOp(env('o1', { kind: 'archive', threadIds: ['t2'] }))
+    expect(ids()).toEqual(['t1'])
+    expect(store.unsentOps(10).map((e) => e.id)).toEqual(['o1'])
+    // A delta that predates the op still shows t2 in the inbox; the overlay wins.
+    store.apply({ threads: [thread('t2', 3, ['inbox', 'imp'])] }, null, 2)
+    expect(ids()).toEqual(['t1'])
+    expect(store.getThread('t2')!.thread.lastMessageAt).toBe(3)
+  })
+
+  it('restores server state when an op fails, and drops it when done', () => {
+    seed()
+    store.enqueueOp(env('o1', { kind: 'archive', threadIds: ['t1'] }))
+    store.enqueueOp(env('o2', { kind: 'read', threadIds: ['t2'] }))
+    store.markOpsSent(['o1', 'o2'])
+    expect(store.unsentOps(10)).toEqual([])
+    store.apply({}, null, 2, [{ id: 'o1', state: 'failed', error: 'nope' }])
+    expect(ids()).toEqual(['t2', 't1'])
+    // The server applied o2 and says so in the same delta.
+    store.apply({ threads: [{ ...thread('t2', 2, ['inbox', 'imp']), unread: false }] }, null, 3, [
+      { id: 'o2', state: 'done', error: null },
+    ])
+    expect(store.listThreads({ split: 'important' }, 0, 1)[0]).toMatchObject({ unread: false })
+  })
+
+  it('reapplies queued ops in order, and folds them in with keep', () => {
+    seed()
+    store.enqueueOp(env('o1', { kind: 'archive', threadIds: ['t1'] }))
+    store.enqueueOp(env('o2', { kind: 'inbox', threadIds: ['t1'] }))
+    expect(ids()).toEqual(['t2', 't1'])
+    store.settleOps(['o2'])
+    expect(ids()).toEqual(['t2'])
+    store.settleOps(['o1'], true)
+    expect(ids()).toEqual(['t2'])
+    store.apply({ threads: [thread('t2', 2, ['inbox', 'imp'])] }, null, 2)
+    expect(store.unsentOps(10)).toEqual([])
+  })
+
+  it('keeps unsent ops across a fresh bootstrap', () => {
+    seed()
+    store.enqueueOp(env('o1', { kind: 'archive', threadIds: ['t1'] }))
+    store.enqueueOp(env('o2', { kind: 'star', threadIds: ['t2'] }))
+    store.markOpsSent(['o2'])
+    store.reset()
+    store.apply(
+      { accounts: [account], folders: [folder('inbox', 'inbox'), folder('imp', 'important')] },
+      null,
+      null,
+    )
+    seed()
+    expect(ids()).toEqual(['t2'])
+    expect(store.unsentOps(10).map((e) => e.id)).toEqual(['o1'])
   })
 })

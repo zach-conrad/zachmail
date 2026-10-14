@@ -47,6 +47,8 @@ export interface ThreadRow {
   starred: boolean
   hasAttachments: boolean
   folderIds: string[]
+  /** New replies are archived automatically. Optional so older replicas stay valid. */
+  muted?: boolean
 }
 
 export interface MessageRow {

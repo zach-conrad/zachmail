@@ -111,6 +111,21 @@ describe('SyncClient', () => {
   })
 })
 
+describe('SyncClient ops', () => {
+  it('hands op status rows to the sink even when no rows changed', async () => {
+    const seen: unknown[] = []
+    const sink: SyncSink = {
+      getSeq: () => 3,
+      reset: () => {},
+      apply: (_r, _d, _s, ops) => void seen.push(ops),
+    }
+    const status = { id: 'op-1', state: 'done' as const, error: null }
+    const client = new SyncClient(sink, transport([], { 3: { ...delta(3), ops: [status] } }).t)
+    await client.pull()
+    expect(seen).toEqual([[status]])
+  })
+})
+
 describe('readNdjson', () => {
   it('parses lines split across chunks', async () => {
     const enc = new TextEncoder()

@@ -1,3 +1,4 @@
+import type { OpStatusRow } from './ops'
 import type { BootstrapLine, Deletes, Rows, SyncDelta } from './protocol'
 
 /** Where synced rows land: the local replica (SQLite on every platform). */
@@ -5,11 +6,15 @@ export interface SyncSink {
   getSeq(): number | null | Promise<number | null>
   /** Drop every synced row; called before a fresh bootstrap. */
   reset(): void | Promise<void>
-  /** Apply rows (and deletes), and record `seq` when given, in one transaction. */
+  /**
+   * Apply rows (and deletes), settle ops the server reports done or failed, and record `seq`
+   * when given, in one transaction.
+   */
   apply(
     upserts: Partial<Rows>,
     deletes: Partial<Deletes> | null,
     seq: number | null,
+    ops?: readonly OpStatusRow[],
   ): void | Promise<void>
 }
 
@@ -100,7 +105,7 @@ export class SyncClient {
       const d = await this.transport.delta(seq, this.abort.signal)
       const empty = d.seq === seq && !d.more && isEmpty(d)
       if (!empty) {
-        await this.sink.apply(d.upserts, d.deletes, d.seq)
+        await this.sink.apply(d.upserts, d.deletes, d.seq, d.ops ?? [])
         this.opts.onChange?.()
         await yieldToEventLoop()
       }
@@ -114,6 +119,7 @@ export class SyncClient {
 const yieldToEventLoop = () => new Promise<void>((r) => setTimeout(r, 0))
 
 const isEmpty = (d: SyncDelta) =>
+  !d.ops?.length &&
   Object.values(d.upserts).every((a: unknown[]) => a.length === 0) &&
   Object.values(d.deletes).every((a: unknown[]) => a.length === 0)
 

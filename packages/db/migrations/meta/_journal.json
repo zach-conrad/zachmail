@@ -40,8 +40,15 @@
     {
       "idx": 5,
       "version": "7",
-      "when": 1791943815649,
-      "tag": "0005_split_rules",
+      "when": 1791943622715,
+      "tag": "0005_thread_mute",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791960517397,
+      "tag": "0006_split_rules",
       "breakpoints": true
     }
   ]

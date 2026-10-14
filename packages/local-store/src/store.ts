@@ -1,11 +1,16 @@
 import {
+  applyEffect,
   classifySplit,
+  opEffect,
   type AccountRow,
   type Address,
   type Deletes,
   type FolderKind,
+  type FolderRow,
   type MessageBody,
   type MessageRow,
+  type OpEnvelope,
+  type OpStatusRow,
   type Rows,
   type SplitId,
   type SyncSink,
@@ -26,6 +31,7 @@ export interface ThreadListItem {
   unread: boolean
   starred: boolean
   hasAttachments: boolean
+  folderIds: string[]
 }
 
 export interface ListQuery {
@@ -49,8 +55,14 @@ export interface ThreadDetail {
 export interface StoreApi extends SyncSink {
   getSeq(): number | null
   reset(): void
-  apply(upserts: Partial<Rows>, deletes: Partial<Deletes> | null, seq: number | null): void
+  apply(
+    upserts: Partial<Rows>,
+    deletes: Partial<Deletes> | null,
+    seq: number | null,
+    ops?: readonly OpStatusRow[],
+  ): void
   accounts(): AccountRow[]
+  folders(): FolderRow[]
   countThreads(q: ListQuery): number
   /** Unread threads in a view, and the newest few that arrived after `since` (epoch ms). */
   unread(q: ListQuery, since: number, limit: number): { count: number; fresh: ThreadListItem[] }
@@ -61,6 +73,33 @@ export interface StoreApi extends SyncSink {
   /** Of the messages a thread view expands on open (latest + unread), those without a body. */
   bodiesMissing(threadIds: readonly string[]): { messageId: string; threadId: string }[]
   putBodies(bodies: readonly MessageBody[]): void
+
+  // ---- Triage ops (architecture §6.4) ----------------------------------------------------
+  /** Applies an op to the replica now and queues it for the server. */
+  enqueueOp(env: OpEnvelope): void
+  /** Queued ops the server has not accepted yet, oldest first. */
+  unsentOps(limit: number): OpEnvelope[]
+  /** The server accepted these; they stay overlaid until a delta settles them. */
+  markOpsSent(ids: readonly string[]): void
+  /**
+   * Forgets ops and re-derives their threads from server state, which already carries a done
+   * op and has been restored after a failed one. `keep` instead folds their effect into the
+   * server state, for a replica with no server behind it (demo mode).
+   */
+  settleOps(ids: readonly string[], keep?: boolean): void
+}
+
+/** The fields of a thread that ops change; `srv` holds the server's copy while overlaid. */
+interface Overlayable {
+  folderIds: string[]
+  unread: boolean
+  starred: boolean
+}
+
+interface QueuedOp {
+  env: OpEnvelope
+  threads: Set<string>
+  sent: boolean
 }
 
 const CHUNK = 400 // stays well under SQLite's bound-parameter limit
@@ -83,6 +122,8 @@ export class SqlStore implements StoreApi {
   private folderKind = new Map<string, FolderKind>()
   private accountsWithImportant = new Set<string>()
   private ownEmails = new Set<string>()
+  private folderOf = new Map<string, Map<FolderKind, string>>()
+  private ops: QueuedOp[] = []
 
   constructor(private db: SqlDriver) {
     db.exec('PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY; PRAGMA cache_size = -32000;')
@@ -96,6 +137,11 @@ export class SqlStore implements StoreApi {
       String(SCHEMA_VERSION),
     ])
     this.loadLookups()
+    this.ops = this.db
+      .all<{ envelope: string; sent: number }>(
+        `SELECT envelope, sent FROM pending_ops ORDER BY seq`,
+      )
+      .map((r) => queued(JSON.parse(r.envelope) as OpEnvelope, !!r.sent))
   }
 
   // ---- Sync sink -------------------------------------------------------------------------
@@ -110,11 +156,20 @@ export class SqlStore implements StoreApi {
       for (const t of ['accounts', 'folders', 'threads', 'messages', 'bodies'])
         this.db.run(`DELETE FROM ${t}`)
       this.db.run(`DELETE FROM meta WHERE key = 'seq'`)
+      // The server already holds accepted ops, so the snapshot carries them. Unsent ones stay
+      // queued and re-apply as their threads arrive.
+      this.db.run(`DELETE FROM pending_ops WHERE sent = 1`)
     })
+    this.ops = this.ops.filter((o) => !o.sent)
     this.loadLookups()
   }
 
-  apply(upserts: Partial<Rows>, deletes: Partial<Deletes> | null, seq: number | null): void {
+  apply(
+    upserts: Partial<Rows>,
+    deletes: Partial<Deletes> | null,
+    seq: number | null,
+    ops: readonly OpStatusRow[] = [],
+  ): void {
     this.tx(() => {
       const touched = new Set<string>()
       let lookupsChanged = false
@@ -185,8 +240,15 @@ export class SqlStore implements StoreApi {
         }
         lookupsChanged ||= !!deletes.account?.length || !!deletes.folder?.length
       }
+      if (lookupsChanged) this.loadLookups()
+      // Fresh server rows replaced any overlay; put pending ops back on top of them.
+      if (this.ops.length && upserts.threads?.length) {
+        const queuedOn = new Set(this.ops.flatMap((o) => [...o.threads]))
+        this.rebase(upserts.threads.map((t) => t.id).filter((id) => queuedOn.has(id)))
+      }
+      const settled = ops.filter((o) => o.state !== 'pending').map((o) => o.id)
+      if (settled.length) for (const id of this.settle(settled, false)) touched.add(id)
       if (lookupsChanged) {
-        this.loadLookups()
         this.classify(null)
       } else if (touched.size) {
         this.classify([...touched])
@@ -202,6 +264,12 @@ export class SqlStore implements StoreApi {
     return this.db
       .all<{ data: string }>(`SELECT data FROM accounts ORDER BY rowid`)
       .map((r) => JSON.parse(r.data) as AccountRow)
+  }
+
+  folders(): FolderRow[] {
+    return this.json<FolderRow[]>(
+      `SELECT json_group_array(json(data)) AS j FROM (SELECT data FROM folders ORDER BY rowid)`,
+    )
   }
 
   countThreads(q: ListQuery): number {
@@ -223,7 +291,8 @@ export class SqlStore implements StoreApi {
          'subject', subject, 'snippet', snippet, 'participants', json(participants),
          'lastMessageAt', last_message_at, 'messageCount', message_count,
          'unread', json('true'), 'starred', json(iif(starred, 'true', 'false')),
-         'hasAttachments', json(iif(has_attachments, 'true', 'false')))) AS j
+         'hasAttachments', json(iif(has_attachments, 'true', 'false')),
+         'folderIds', json(folder_ids))) AS j
        FROM (SELECT * FROM threads WHERE ${where} AND unread = 1 AND last_message_at > ?
              ORDER BY last_message_at DESC, id DESC LIMIT ?)`,
       [...params, since, limit],
@@ -239,7 +308,8 @@ export class SqlStore implements StoreApi {
          'lastMessageAt', last_message_at, 'messageCount', message_count,
          'unread', json(iif(unread, 'true', 'false')),
          'starred', json(iif(starred, 'true', 'false')),
-         'hasAttachments', json(iif(has_attachments, 'true', 'false')))) AS j
+         'hasAttachments', json(iif(has_attachments, 'true', 'false')),
+         'folderIds', json(folder_ids))) AS j
        FROM (SELECT * FROM threads WHERE ${where}
              ORDER BY last_message_at DESC, id DESC LIMIT ? OFFSET ?)`,
       [...params, limit, offset],
@@ -280,9 +350,8 @@ export class SqlStore implements StoreApi {
           hasRemoteImages: !!b.has_remote_images,
         }
     }
-    const item = toListItem(t)
     return {
-      thread: { ...item, folderIds: JSON.parse(t.folder_ids) as string[] },
+      thread: toListItem(t),
       messages,
       bodies,
     }
@@ -318,6 +387,39 @@ export class SqlStore implements StoreApi {
     })
   }
 
+  // ---- Triage ops ------------------------------------------------------------------------
+
+  enqueueOp(env: OpEnvelope): void {
+    this.tx(() => {
+      this.db.run(`INSERT OR IGNORE INTO pending_ops (id, envelope) VALUES (?, ?)`, [
+        env.id,
+        JSON.stringify(env),
+      ])
+      if (this.ops.some((o) => o.env.id === env.id)) return
+      this.ops.push(queued(env, false))
+      this.rebase(env.op.threadIds)
+      this.classify(env.op.threadIds)
+    })
+  }
+
+  unsentOps(limit: number): OpEnvelope[] {
+    return this.ops
+      .filter((o) => !o.sent)
+      .slice(0, limit)
+      .map((o) => o.env)
+  }
+
+  markOpsSent(ids: readonly string[]): void {
+    const set = new Set(ids)
+    for (const o of this.ops) if (set.has(o.env.id)) o.sent = true
+    for (const c of chunks(ids))
+      this.db.run(`UPDATE pending_ops SET sent = 1 WHERE id IN (${marks(c.length)})`, c)
+  }
+
+  settleOps(ids: readonly string[], keep = false): void {
+    this.tx(() => this.classify(this.settle(ids, keep)))
+  }
+
   close(): void {
     this.db.close()
   }
@@ -340,13 +442,69 @@ export class SqlStore implements StoreApi {
       this.db.run(`DELETE FROM ${table} WHERE ${col} IN (${marks(c.length)})`, c)
   }
 
+  /** Drops ops and re-derives their threads; returns the threads touched. */
+  private settle(ids: readonly string[], keep: boolean): string[] {
+    const set = new Set(ids)
+    const gone = this.ops.filter((o) => set.has(o.env.id))
+    if (!gone.length) return []
+    this.ops = this.ops.filter((o) => !set.has(o.env.id))
+    for (const c of chunks(ids))
+      this.db.run(`DELETE FROM pending_ops WHERE id IN (${marks(c.length)})`, c)
+    const threads = [...new Set(gone.flatMap((o) => [...o.threads]))]
+    this.rebase(threads, keep ? gone : [])
+    return threads
+  }
+
+  /**
+   * Recomputes threads as server state (with `fold` merged into it) plus every queued op that
+   * touches them, in order. Rows with nothing queued drop their overlay. Does not reclassify.
+   */
+  private rebase(threadIds: readonly string[], fold: readonly QueuedOp[] = []) {
+    type Row = [id: string, accountId: string, f: string[], u: number, s: number, srv: Overlayable]
+    const rows = chunks([...new Set(threadIds)]).flatMap((ids) =>
+      this.json<Row[]>(
+        `SELECT json_group_array(json_array(id, account_id, json(folder_ids), unread, starred,
+           json(srv))) AS j FROM threads WHERE id IN (${marks(ids.length)})`,
+        ids,
+      ),
+    )
+    const out: [string, string, number, number, string | null][] = []
+    for (const [id, accountId, f, u, s, srv] of rows) {
+      const kinds = this.folderOf.get(accountId)
+      const effect = (o: QueuedOp) => opEffect(o.env.op, (k) => kinds?.get(k))
+      const step = (t: Overlayable, o: QueuedOp) =>
+        o.threads.has(id) ? applyEffect(t as Overlayable & ThreadRow, effect(o)) : t
+      const server = fold.reduce(step, srv ?? { folderIds: f, unread: !!u, starred: !!s })
+      const mine = this.ops.filter((o) => o.threads.has(id))
+      const now = mine.reduce(step, server)
+      out.push([
+        id,
+        JSON.stringify(now.folderIds),
+        +now.unread,
+        +now.starred,
+        mine.length ? JSON.stringify(pick(server)) : null,
+      ])
+    }
+    if (out.length)
+      this.db.run(
+        `UPDATE threads SET folder_ids = c.value ->> 1, unread = c.value ->> 2,
+           starred = c.value ->> 3, srv = c.value ->> 4
+         FROM jsonb_each(?) AS c WHERE threads.id = c.value ->> 0`,
+        [JSON.stringify(out)],
+      )
+  }
+
   private loadLookups() {
     this.folderKind.clear()
+    this.folderOf.clear()
     this.accountsWithImportant.clear()
     for (const f of this.db.all<{ id: string; account_id: string; kind: FolderKind }>(
       `SELECT id, account_id, kind FROM folders`,
     )) {
       this.folderKind.set(f.id, f.kind)
+      let byKind = this.folderOf.get(f.account_id)
+      if (!byKind) this.folderOf.set(f.account_id, (byKind = new Map()))
+      if (f.kind !== 'custom' && !byKind.has(f.kind)) byKind.set(f.kind, f.id)
       if (f.kind === 'important') this.accountsWithImportant.add(f.account_id)
     }
     this.ownEmails = new Set(this.accounts().map((a) => a.email.toLowerCase()))
@@ -419,8 +577,21 @@ function toListItem(r: ThreadSqlRow): ThreadListItem {
     unread: !!r.unread,
     starred: !!r.starred,
     hasAttachments: !!r.has_attachments,
+    folderIds: JSON.parse(r.folder_ids) as string[],
   }
 }
+
+const queued = (env: OpEnvelope, sent: boolean): QueuedOp => ({
+  env,
+  threads: new Set(env.op.threadIds),
+  sent,
+})
+
+const pick = ({ folderIds, unread, starred }: Overlayable): Overlayable => ({
+  folderIds,
+  unread,
+  starred,
+})
 
 const marks = (n: number) => Array.from({ length: n }, () => '?').join(', ')
 

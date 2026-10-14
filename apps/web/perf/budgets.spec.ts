@@ -96,6 +96,32 @@ test('command palette opens < 16 ms', async () => {
   expect(pct(xs, 95)).toBeLessThan(BUDGET.palette)
 })
 
+test('archive 50 threads, then undo: each key < 16 ms', async () => {
+  const count = () =>
+    page.evaluate(() => document.querySelectorAll('.thread-list .row[id]').length > 0)
+  expect(await count()).toBe(true)
+  const first = () => page.locator('.row[data-focused]').getAttribute('id')
+  await clearSamples()
+  const archived: (string | null)[] = []
+  for (let i = 0; i < 50; i++) {
+    archived.push(await first())
+    await page.keyboard.press('e')
+  }
+  await expect(page.locator('.toast')).toContainText('Done')
+  const done = await samples('thread.done')
+  // Undo the last five; each archived row comes back focused, in place.
+  for (let i = 0; i < 5; i++) await page.keyboard.press('z')
+  expect(await first()).toBe(archived[45])
+  const undo = await samples('undo')
+  report.archive = summary(done)
+  report.undo = summary(undo)
+  expect(done.length).toBe(50)
+  expect(undo.length).toBe(5)
+  expect(new Set(archived).size).toBe(50)
+  expect(pct(done, 95)).toBeLessThan(BUDGET.keyAction)
+  expect(pct(undo, 95)).toBeLessThan(BUDGET.keyAction)
+})
+
 test('scrolling thousands of threads holds 60 fps', async () => {
   const frames = await page.evaluate(async () => {
     const list = document.querySelector<HTMLElement>('.thread-list')!

@@ -1,5 +1,5 @@
 {
-  "id": "8a60dd29-e873-4f28-afc5-f1520c23db55",
+  "id": "6cb6025c-83c4-4fdc-8861-085c7e908443",
   "prevId": "e0f36d40-1580-415a-847d-bb9fa3da0917",
   "version": "7",
   "dialect": "postgresql",
@@ -1330,119 +1330,6 @@
       "checkConstraints": {},
       "isRLSEnabled": true
     },
-    "public.split_rules": {
-      "name": "split_rules",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "auth.uid()"
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "target": {
-          "name": "target",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "match": {
-          "name": "match",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'all'"
-        },
-        "conditions": {
-          "name": "conditions",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "position": {
-          "name": "position",
-          "type": "double precision",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "split_rules_user": {
-          "name": "split_rules_user",
-          "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "position",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "split_rules_user_id_users_id_fk": {
-          "name": "split_rules_user_id_users_id_fk",
-          "tableFrom": "split_rules",
-          "tableTo": "users",
-          "schemaTo": "auth",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {
-        "split_rules_owner_read": {
-          "name": "split_rules_owner_read",
-          "as": "PERMISSIVE",
-          "for": "SELECT",
-          "to": [
-            "authenticated"
-          ],
-          "using": "(select auth.uid()) = user_id"
-        }
-      },
-      "checkConstraints": {},
-      "isRLSEnabled": true
-    },
     "public.thread_folders": {
       "name": "thread_folders",
       "schema": "",
@@ -1635,11 +1522,12 @@
           "notNull": true,
           "default": false
         },
-        "split": {
-          "name": "split",
-          "type": "text",
+        "muted": {
+          "name": "muted",
+          "type": "boolean",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true,
+          "default": false
         },
         "updated_at": {
           "name": "updated_at",
@@ -1650,6 +1538,22 @@
         }
       },
       "indexes": {
+        "threads_muted": {
+          "name": "threads_muted",
+          "columns": [
+            {
+              "expression": "account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "muted",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "threads_account_provider": {
           "name": "threads_account_provider",
           "columns": [

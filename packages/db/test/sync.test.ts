@@ -1,7 +1,14 @@
 import type { Rows } from '@zachmail/core'
 import type { ProviderMessage, SyncBatch } from '@zachmail/providers'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { applySyncBatch, readBootstrap, readDelta, updateAccount, type Db } from '../src/server'
+import {
+  applySyncBatch,
+  readBootstrap,
+  readContacts,
+  readDelta,
+  updateAccount,
+  type Db,
+} from '../src/server'
 import { USER, createTestDb, type TestDb } from './helpers'
 
 let t: TestDb
@@ -182,5 +189,29 @@ describe('sync store', () => {
     expect(new Set(threads.map((t) => t.id)).size).toBe(threads.length)
     expect(threads.length).toBeGreaterThanOrEqual(5)
     expect(chunks[0]!.accounts).toHaveLength(1)
+  })
+})
+
+describe('contacts', () => {
+  it('ranks people Zach writes to above people who write to him, without himself', async () => {
+    await apply({
+      folders: [
+        ...FOLDERS,
+        { providerId: 'SENT', name: 'Sent', kind: 'sent', unreadCount: 0, totalCount: 0 },
+      ],
+      messages: [
+        msg('c1', 'tc', {
+          from: { email: 'zach@x.com' },
+          to: [{ name: 'Bo Lee', email: 'Bo@y.com' }],
+          folderIds: ['SENT'],
+        }),
+        msg('c2', 'tc', { from: { name: 'Cy', email: 'cy@z.com' }, to: [{ email: 'zach@x.com' }] }),
+      ],
+    })
+    const contacts = await readContacts(db, USER)
+    const emails = contacts.map((c) => c.email)
+    expect(emails.indexOf('bo@y.com')).toBeLessThan(emails.indexOf('cy@z.com'))
+    expect(emails).not.toContain('zach@x.com')
+    expect(contacts.find((c) => c.email === 'bo@y.com')).toMatchObject({ name: 'Bo Lee' })
   })
 })
