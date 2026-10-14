@@ -107,7 +107,8 @@ describe('split rules', () => {
   })
 
   it('validates untrusted rule bodies', () => {
-    const { id: _id, ...body } = rule()
+    const body: Partial<SplitRuleRow> = rule()
+    delete body.id
     expect(parseSplitRule(RULE_ID.toUpperCase(), { ...body, name: ' Stripe ' })).toEqual(rule())
     const bad =
       (b: unknown, id = RULE_ID) =>
