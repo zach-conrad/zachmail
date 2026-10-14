@@ -39,4 +39,15 @@ export class Storage {
     if (!res.ok) throw new Error(`Storage download failed: ${res.status}`)
     return new Uint8Array(await res.arrayBuffer())
   }
+
+  /** Deletes objects; missing ones are ignored. */
+  async remove(paths: string[]): Promise<void> {
+    if (!paths.length) return
+    const res = await this.fetchImpl(`${this.config.url}/storage/v1/object/${this.config.bucket}`, {
+      method: 'DELETE',
+      headers: { ...this.headers(), 'content-type': 'application/json' },
+      body: JSON.stringify({ prefixes: paths }),
+    })
+    if (!res.ok) throw new Error(`Storage delete failed: ${res.status}`)
+  }
 }
