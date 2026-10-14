@@ -22,7 +22,7 @@ import {
 } from 'drizzle-orm/pg-core'
 import { authUid, authUsers, authenticatedRole } from 'drizzle-orm/supabase'
 
-/** Maintained by triggers (migration 0009_search_triggers): subject A, sender B, recipients C, body D. */
+/** Maintained by triggers (migration 0015_search_triggers): subject A, sender B, recipients C, body D. */
 const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
 
 const ownerId = () =>
