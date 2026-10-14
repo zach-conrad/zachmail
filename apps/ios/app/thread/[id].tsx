@@ -1,15 +1,16 @@
-import type { MessageRow } from '@zachmail/core'
+import type { MessageBody, MessageRow } from '@zachmail/core'
 import * as Haptics from 'expo-haptics'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { displayName, fullTime, htmlToText, messageTime } from '../../src/mail/format'
-import { accountById, inboxThreads, type Command } from '../../src/mail/store'
-import { mail, useMail } from '../../src/mail/useMail'
+import { displayName, fullTime, messageTime } from '../../src/mail/format'
+import type { Command } from '../../src/mail/store'
+import { fetchBodies, mail, useMail } from '../../src/mail/useMail'
 import type { Theme } from '../../src/theme/theme'
 import { useTheme } from '../../src/theme/useTheme'
 import { AccountDot } from '../../src/ui/AccountDot'
+import { BodyView } from '../../src/ui/BodyView'
 import { GlassSurface } from '../../src/ui/GlassSurface'
 import { Icon } from '../../src/ui/Icon'
 
@@ -22,45 +23,54 @@ function MessageCard({
   theme: t,
 }: {
   m: MessageRow
-  body: string
+  body: MessageBody | undefined
   open: boolean
   onToggle: () => void
   theme: Theme
 }) {
   const c = t.colors
   return (
-    <Pressable
-      onPress={onToggle}
-      style={[styles.card, { borderBottomColor: c.border }]}
-      accessibilityRole="button"
-      accessibilityState={{ expanded: open }}
-    >
-      <View style={styles.cardHead}>
+    <View style={[styles.card, { borderBottomColor: c.border }]}>
+      <Pressable
+        onPress={onToggle}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        style={styles.cardTap}
+      >
+        <View style={styles.cardHead}>
+          <Text
+            numberOfLines={1}
+            style={[
+              t.type.row,
+              styles.flex,
+              { color: c.text, fontWeight: m.unread ? '600' : '500' },
+            ]}
+          >
+            {displayName(m.from)}
+          </Text>
+          <Text style={[t.type.meta, { color: c.textFaint, fontVariant: ['tabular-nums'] }]}>
+            {open ? fullTime(m.date) : messageTime(m.date)}
+          </Text>
+        </View>
         <Text
           numberOfLines={1}
-          style={[t.type.row, styles.flex, { color: c.text, fontWeight: m.unread ? '600' : '500' }]}
+          style={
+            open ? [t.type.meta, { color: c.textFaint }] : [t.type.row, { color: c.textMuted }]
+          }
         >
-          {displayName(m.from)}
+          {open ? `to ${m.to.map((a) => displayName(a)).join(', ')}` : m.snippet}
         </Text>
-        <Text style={[t.type.meta, { color: c.textFaint, fontVariant: ['tabular-nums'] }]}>
-          {open ? fullTime(m.date) : messageTime(m.date)}
-        </Text>
-      </View>
-      {open ? (
-        <>
-          <Text style={[t.type.meta, { color: c.textFaint }]} numberOfLines={1}>
-            to {m.to.map((a) => displayName(a)).join(', ')}
+      </Pressable>
+      {open &&
+        (body ? (
+          <BodyView body={body} theme={t} baseUrl={process.env.EXPO_PUBLIC_API_URL} />
+        ) : (
+          // Not prefetched yet: the snippet now, the body as soon as it arrives.
+          <Text selectable style={[t.type.body, styles.body, { color: c.textMuted }]}>
+            {m.snippet}
           </Text>
-          <Text selectable style={[t.type.body, styles.body, { color: c.text }]}>
-            {body}
-          </Text>
-        </>
-      ) : (
-        <Text numberOfLines={1} style={[t.type.row, { color: c.textMuted }]}>
-          {m.snippet}
-        </Text>
-      )}
-    </Pressable>
+        ))}
+    </View>
   )
 }
 
@@ -71,9 +81,10 @@ export default function Thread() {
   const s = useMail()
   const router = useRouter()
   const insets = useSafeAreaInsets()
-  const thread = s.threads[id]
-  const messages = s.messages[id] ?? []
-  const account = thread && accountById(s, thread.accountId)
+  const detail = mail.thread(s, id)
+  const thread = detail?.thread
+  const messages = detail?.messages ?? []
+  const account = thread && mail.account(thread.accountId)
   const [expanded, setExpanded] = useState<Set<string>>(
     () =>
       new Set(messages.filter((m, i) => m.unread || i === messages.length - 1).map((m) => m.id)),
@@ -83,17 +94,16 @@ export default function Thread() {
   useEffect(() => {
     if (thread?.unread) mail.run({ kind: 'markRead', threadId: id })
   }, [id, thread?.unread])
+  useEffect(() => fetchBodies([id]), [id])
 
   if (!thread) return null
 
   /** Done/Trash auto-advance to the next inbox thread (design §3.1), else back to the list. */
   const triage = (kind: Extract<Command['kind'], 'done' | 'trash'>) => {
-    const list = inboxThreads(s)
-    const i = list.findIndex((x) => x.id === id)
-    const next = i >= 0 ? list[i + 1] : undefined
+    const next = mail.nextInInbox(s, id)
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
     mail.run({ kind, threadId: id })
-    if (next) router.replace({ pathname: '/thread/[id]', params: { id: next.id } })
+    if (next) router.replace({ pathname: '/thread/[id]', params: { id: next } })
     else router.back()
   }
 
@@ -202,7 +212,7 @@ export default function Thread() {
           <MessageCard
             key={m.id}
             m={m}
-            body={htmlToText(s.bodies[m.id]?.html ?? m.snippet)}
+            body={detail?.bodies[m.id]}
             open={expanded.has(m.id)}
             onToggle={() => toggle(m.id)}
             theme={t}
@@ -239,6 +249,7 @@ const styles = StyleSheet.create({
     gap: 4,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
+  cardTap: { gap: 4 },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   body: { marginTop: 8 },
   barWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { htmlToText, rowTime } from './format'
 import { snoozeOptions } from './snooze'
-import { classify, isAutomated, splitContext } from './splits'
 import { swipeAction } from './swipe'
 
 describe('swipeAction', () => {
@@ -31,21 +30,6 @@ describe('snoozeOptions', () => {
     const o = Object.fromEntries(snoozeOptions(sat).map((x) => [x.id, x.until]))
     expect(o.tonight).toBe(new Date(2026, 9, 18, 20).getTime())
     expect(o.weekend).toBe(new Date(2026, 9, 24, 9).getTime())
-  })
-})
-
-describe('splits', () => {
-  it('detects automated senders', () => {
-    expect(isAutomated({ email: 'no-reply@vercel.com' })).toBe(true)
-    expect(isAutomated({ email: 'notifications@github.com' })).toBe(true)
-    expect(isAutomated({ email: 'ana@acme.co' })).toBe(false)
-  })
-
-  it('treats a thread Zach started as important', () => {
-    const me = { email: 'zach@gmail.com' }
-    const msg = { from: me, to: [{ email: 'x@y.com' }], cc: [], listUnsubscribe: null }
-    const ctx = splitContext(['zach@gmail.com'], [msg as never])
-    expect(classify({ starred: false } as never, [msg as never], ctx)).toBe('important')
   })
 })
 

@@ -1,21 +1,29 @@
 /**
- * The iOS mail replica. Every action applies to local state synchronously and returns its inverse,
- * so the UI updates in the same frame and every triage verb gets Undo (design §3.1, architecture §1a).
- * For now it holds the demo fixture in memory; the expo-sqlite replica and core sync client replace
- * the storage behind this same interface. No React Native imports, so it's unit-tested directly.
+ * The iOS mail replica: the shared `SqlStore` (packages/local-store) on expo-sqlite, plus the
+ * local command layer. Every action is written to SQLite synchronously and returns its inverse,
+ * so the UI updates in the same frame and every triage verb gets Undo (design §3.1,
+ * architecture §1a). Reads are synchronous SQL; screens re-query when `version` changes.
+ * No React Native imports, so tests run it on sqlite-wasm.
  */
 import type {
   AccountRow,
   Address,
   FolderKind,
-  FolderRow,
   MessageBody,
   MessageRow,
   Rows,
   ThreadRow,
 } from '@zachmail/core'
-import { classify, splitContext, type SplitId } from './splits'
+import {
+  SqlStore,
+  type SqlDriver,
+  type SqlValue,
+  type ThreadDetail,
+  type ThreadListItem,
+} from '@zachmail/local-store'
+import type { SplitId } from './splits'
 
+export type { ThreadListItem }
 export type Scope = 'all' | string
 
 export interface Draft {
@@ -35,14 +43,9 @@ export interface Toast {
   undo?: () => void
 }
 
+/** What React subscribes to. `version` bumps on every replica write, so queries re-run. */
 export interface MailState {
-  accounts: AccountRow[]
-  folders: FolderRow[]
-  threads: Record<string, ThreadRow>
-  messages: Record<string, MessageRow[]>
-  bodies: Record<string, MessageBody>
-  /** ZachMail-only reminders: threadId → due time (null = someday). */
-  snoozes: Record<string, number | null>
+  version: number
   scope: Scope
   split: SplitId
   toast: Toast | null
@@ -69,34 +72,35 @@ const TOAST_LABEL: Partial<Record<Command['kind'], string>> = {
 export const UNDO_MS = 6_000
 export const UNDO_SEND_MS = 10_000
 
+// ZachMail-only state lives beside the synced tables; `SqlStore.reset()` never touches it.
+const IOS_SCHEMA = `CREATE TABLE IF NOT EXISTS ios_snoozes (thread_id TEXT PRIMARY KEY, until INTEGER);`
+
+// Same shape `SqlStore.listThreads` returns, for the iOS-only lists (Done, Reminders, Search).
+const ITEM = `json_object('id', t.id, 'accountId', t.account_id, 'subject', t.subject,
+  'snippet', t.snippet, 'participants', json(t.participants), 'lastMessageAt', t.last_message_at,
+  'messageCount', t.message_count, 'unread', json(iif(t.unread, 'true', 'false')),
+  'starred', json(iif(t.starred, 'true', 'false')),
+  'hasAttachments', json(iif(t.has_attachments, 'true', 'false')))`
+
 type Listener = () => void
 
 export class MailStore {
-  private state: MailState
+  readonly sql: SqlStore
+  private state: MailState = {
+    version: 0,
+    scope: 'all',
+    split: 'important',
+    toast: null,
+    pending: {},
+  }
   private listeners = new Set<Listener>()
   private toastTimer: ReturnType<typeof setTimeout> | undefined
   private sendTimers = new Map<number, ReturnType<typeof setTimeout>>()
   private seq = 0
-  private folderIndex = new Map<string, string>()
 
-  constructor(rows: Rows, bodies: Record<string, MessageBody> = {}) {
-    const messages: Record<string, MessageRow[]> = {}
-    for (const m of [...rows.messages].sort((a, b) => a.date - b.date))
-      (messages[m.threadId] ??= []).push(m)
-    for (const f of rows.folders)
-      if (f.kind !== 'custom') this.folderIndex.set(`${f.accountId}:${f.kind}`, f.id)
-    this.state = {
-      accounts: rows.accounts,
-      folders: rows.folders,
-      threads: Object.fromEntries(rows.threads.map((t) => [t.id, t])),
-      messages,
-      bodies,
-      snoozes: {},
-      scope: 'all',
-      split: 'important',
-      toast: null,
-      pending: {},
-    }
+  constructor(private db: SqlDriver) {
+    this.sql = new SqlStore(db)
+    db.exec(IOS_SCHEMA)
   }
 
   getState = (): MailState => this.state
@@ -111,8 +115,16 @@ export class MailStore {
     for (const fn of this.listeners) fn()
   }
 
-  folderId(accountId: string, kind: FolderKind): string | undefined {
-    return this.folderIndex.get(`${accountId}:${kind}`)
+  /** Call after anything writes the replica (sync, body fetches) so screens re-query. */
+  changed() {
+    this.set({ version: this.state.version + 1 })
+  }
+
+  /** Load rows the way a sync batch would (demo seeding, tests). */
+  seed(rows: Partial<Rows>, bodies: readonly MessageBody[] = [], seq = 0) {
+    this.sql.apply(rows, null, seq)
+    if (bodies.length) this.sql.putBodies(bodies)
+    this.changed()
   }
 
   setScope(scope: Scope) {
@@ -123,43 +135,121 @@ export class MailStore {
     this.set({ split })
   }
 
-  /** Apply a command locally; returns the inverse. Shows an Undo toast for list-removing verbs. */
-  run(cmd: Command): () => void {
-    const before = this.state.threads[cmd.threadId]
-    if (!before) return () => {}
-    const prevSnooze =
-      cmd.threadId in this.state.snoozes ? this.state.snoozes[cmd.threadId] : undefined
-    const prevMessages = this.state.messages[cmd.threadId]
-    const next = this.apply(before, cmd)
-    const snoozes = { ...this.state.snoozes }
-    if (cmd.kind === 'snooze') snoozes[cmd.threadId] = cmd.until
-    else if (cmd.kind === 'done' || cmd.kind === 'trash' || cmd.kind === 'undone')
-      delete snoozes[cmd.threadId]
+  // ── Reads (pass the snapshot so React Compiler re-runs them when it changes) ─────────────────
 
-    let messages = this.state.messages
-    if (cmd.kind === 'toggleRead' || cmd.kind === 'markRead') {
-      messages = {
-        ...messages,
-        [cmd.threadId]: (prevMessages ?? []).map((m) => ({
-          ...m,
-          unread: next.unread && m === prevMessages?.at(-1),
-        })),
-      }
+  accounts(_s?: MailState): AccountRow[] {
+    return this.sql.accounts()
+  }
+
+  account(id: string): AccountRow | undefined {
+    return this.sql.accounts().find((a) => a.id === id)
+  }
+
+  inbox(s: MailState, limit = 500): ThreadListItem[] {
+    return this.sql.listThreads({ split: s.split, accountId: scopeId(s) }, 0, limit)
+  }
+
+  /** Unread inbox threads per split, for the split switcher. */
+  splitCounts(s: MailState): Record<SplitId, number> {
+    const out: Record<SplitId, number> = {
+      important: 0,
+      other: 0,
+      newsletters: 0,
+      notifications: 0,
     }
-    this.set({ threads: { ...this.state.threads, [cmd.threadId]: next }, snoozes, messages })
+    const [where, params] = scoped(s, 'unread = 1 AND split IS NOT NULL')
+    for (const r of this.db.all<{ split: SplitId; n: number }>(
+      `SELECT split, count(*) AS n FROM threads t WHERE ${where} GROUP BY split`,
+      params,
+    ))
+      out[r.split] = r.n
+    return out
+  }
+
+  /** Done = archived: out of the inbox, not trash/spam/drafts, not waiting on a reminder. */
+  done(s: MailState, limit = 500): ThreadListItem[] {
+    const [where, params] = scoped(
+      s,
+      `NOT EXISTS (SELECT 1 FROM json_each(t.folder_ids) j JOIN folders f ON f.id = j.value
+         WHERE f.kind IN ('inbox', 'trash', 'spam', 'drafts'))
+       AND t.id NOT IN (SELECT thread_id FROM ios_snoozes)`,
+    )
+    return this.items(
+      `SELECT * FROM threads t WHERE ${where} ORDER BY last_message_at DESC, id DESC LIMIT ?`,
+      [...params, limit],
+    )
+  }
+
+  reminders(s: MailState): { thread: ThreadListItem; until: number | null }[] {
+    const [where, params] = scoped(s, '1')
+    return this.json<{ thread: ThreadListItem; until: number | null }[]>(
+      `SELECT json_group_array(json_object('thread', json(item), 'until', until)) AS j FROM (
+         SELECT ${ITEM} AS item, z.until FROM ios_snoozes z JOIN threads t ON t.id = z.thread_id
+         WHERE ${where} ORDER BY z.until IS NULL, z.until)`,
+      params,
+    )
+  }
+
+  /** Local search over subject, snippet and people (design §3.5); operators come with FTS. */
+  search(s: MailState, query: string, limit = 200): ThreadListItem[] {
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
+    if (!terms.length) return []
+    const like = terms
+      .map(() => `lower(t.subject || ' ' || t.snippet || ' ' || t.participants) LIKE ? ESCAPE '\\'`)
+      .join(' AND ')
+    const params = terms.map((x) => `%${x.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
+    return this.items(
+      `SELECT * FROM threads t WHERE ${like} ORDER BY last_message_at DESC LIMIT ?`,
+      [...params, limit],
+    )
+  }
+
+  thread(_s: MailState, id: string): ThreadDetail | null {
+    return this.sql.getThread(id)
+  }
+
+  /** Position-ordered inbox ids, for auto-advance after triage in the reader. */
+  nextInInbox(s: MailState, threadId: string): string | undefined {
+    const q = { split: s.split, accountId: scopeId(s) }
+    const i = this.sql.indexOfThread(q, threadId)
+    return i < 0 ? undefined : this.sql.listThreads(q, i + 1, 1)[0]?.id
+  }
+
+  folderId(accountId: string, kind: FolderKind): string | undefined {
+    return this.db.all<{ id: string }>(
+      `SELECT id FROM folders WHERE account_id = ? AND kind = ? LIMIT 1`,
+      [accountId, kind],
+    )[0]?.id
+  }
+
+  // ── Commands ──────────────────────────────────────────────────────────────────────────────
+
+  /** Apply a command to the replica; returns the inverse. Shows an Undo toast for list-removing verbs. */
+  run(cmd: Command): () => void {
+    const detail = this.sql.getThread(cmd.threadId)
+    if (!detail) return () => {}
+    const before = detail.thread
+    const prevSnooze = this.snoozeOf(cmd.threadId)
+    const next = this.apply(before, cmd)
+    let messages: MessageRow[] | undefined
+    if (cmd.kind === 'toggleRead' || cmd.kind === 'markRead') {
+      const last = detail.messages.at(-1)
+      messages = detail.messages.map((m) => ({ ...m, unread: next.unread && m === last }))
+    }
+    this.sql.apply({ threads: [next], ...(messages ? { messages } : {}) }, null, null)
+    if (cmd.kind === 'snooze') this.setSnooze(cmd.threadId, cmd.until)
+    else if (cmd.kind === 'done' || cmd.kind === 'trash' || cmd.kind === 'undone')
+      this.setSnooze(cmd.threadId, undefined)
+    this.changed()
 
     const undo = () => {
-      const s = { ...this.state.snoozes }
-      if (prevSnooze === undefined) delete s[cmd.threadId]
-      else s[cmd.threadId] = prevSnooze
-      const msgs = prevMessages
-        ? { ...this.state.messages, [cmd.threadId]: prevMessages }
-        : this.state.messages
-      this.set({
-        threads: { ...this.state.threads, [cmd.threadId]: before },
-        snoozes: s,
-        messages: msgs,
-      })
+      this.sql.apply(
+        { threads: [before], ...(messages ? { messages: detail.messages } : {}) },
+        null,
+        null,
+      )
+      this.setSnooze(cmd.threadId, prevSnooze)
+      this.changed()
     }
     const label = TOAST_LABEL[cmd.kind]
     if (label) this.showToast(label, undo)
@@ -177,10 +267,7 @@ export class MailStore {
       case 'undone':
         return { ...t, folderIds: [...without(inbox, trash), ...(inbox ? [inbox] : [])] }
       case 'trash':
-        return {
-          ...t,
-          folderIds: [...without(inbox), ...(trash && !t.folderIds.includes(trash) ? [trash] : [])],
-        }
+        return { ...t, folderIds: [...without(inbox, trash), ...(trash ? [trash] : [])] }
       case 'toggleRead':
         return { ...t, unread: !t.unread }
       case 'markRead':
@@ -190,23 +277,44 @@ export class MailStore {
     }
   }
 
-  /** Return due reminders to the inbox (design §3.6). Call on foreground and on a timer. */
+  /** undefined = not snoozed; null = someday. */
+  private snoozeOf(threadId: string): number | null | undefined {
+    const r = this.db.all<{ until: number | null }>(
+      `SELECT until FROM ios_snoozes WHERE thread_id = ?`,
+      [threadId],
+    )[0]
+    return r ? r.until : undefined
+  }
+
+  private setSnooze(threadId: string, until: number | null | undefined) {
+    if (until === undefined) this.db.run(`DELETE FROM ios_snoozes WHERE thread_id = ?`, [threadId])
+    else
+      this.db.run(`INSERT OR REPLACE INTO ios_snoozes (thread_id, until) VALUES (?, ?)`, [
+        threadId,
+        until,
+      ])
+  }
+
+  /** Return due reminders to the top of the inbox (design §3.6). Call on foreground and each minute. */
   wake(now: number) {
-    const due = Object.entries(this.state.snoozes).filter(
-      ([, until]) => until !== null && until <= now,
+    const due = this.db.all<{ thread_id: string }>(
+      `SELECT thread_id FROM ios_snoozes WHERE until IS NOT NULL AND until <= ?`,
+      [now],
     )
     if (!due.length) return
-    const threads = { ...this.state.threads }
-    const snoozes = { ...this.state.snoozes }
-    for (const [id] of due) {
-      const t = threads[id]
-      delete snoozes[id]
+    const threads: ThreadRow[] = []
+    for (const { thread_id } of due) {
+      this.setSnooze(thread_id, undefined)
+      const t = this.sql.getThread(thread_id)?.thread
       const inbox = t && this.folderId(t.accountId, 'inbox')
       if (t && inbox && !t.folderIds.includes(inbox))
-        threads[id] = { ...t, folderIds: [...t.folderIds, inbox], lastMessageAt: now }
+        threads.push({ ...t, folderIds: [...t.folderIds, inbox], lastMessageAt: now })
     }
-    this.set({ threads, snoozes })
+    if (threads.length) this.sql.apply({ threads }, null, null)
+    this.changed()
   }
+
+  // ── Toasts and sending ────────────────────────────────────────────────────────────────────
 
   showToast(label: string, undo?: () => void, ms = UNDO_MS) {
     clearTimeout(this.toastTimer)
@@ -231,7 +339,7 @@ export class MailStore {
 
   /**
    * Queue a send behind the undo window (design §3.4). `onUndo` gets the draft back so the composer
-   * can reopen it. The real client hands the draft to the outbox when the window closes.
+   * can reopen it. The outbox (Phase 2 ops pipeline) takes the draft when the window closes.
    */
   send(draft: Draft, onUndo: (d: Draft) => void): number {
     const id = ++this.seq
@@ -262,16 +370,16 @@ export class MailStore {
     return d
   }
 
-  /** Close the undo window: the sent message joins its thread (or starts one) locally. */
+  /** Close the undo window: the sent message joins its thread (or starts one) in the replica. */
   commitSend(id: number, now: number) {
     const d = this.cancelSend(id)
-    const acc = d && this.state.accounts.find((a) => a.id === d.accountId)
+    const acc = d && this.account(d.accountId)
     if (!d || !acc) return
-    const threadId = d.threadId ?? `local-${id}`
+    const threadId = d.threadId ?? `local-${now}-${id}`
     const from: Address = { name: acc.displayName ?? undefined, email: acc.email }
     const to = parseAddresses(d.to)
     const msg: MessageRow = {
-      id: `${threadId}-sent-${id}`,
+      id: `${threadId}-sent-${now}-${id}`,
       threadId,
       accountId: acc.id,
       from,
@@ -289,7 +397,7 @@ export class MailStore {
       bodyStatus: 'cached',
     }
     const sent = this.folderId(acc.id, 'sent')
-    const prev = this.state.threads[threadId]
+    const prev = this.sql.getThread(threadId)?.thread
     const thread: ThreadRow = prev
       ? {
           ...prev,
@@ -312,18 +420,30 @@ export class MailStore {
           hasAttachments: false,
           folderIds: sent ? [sent] : [],
         }
-    this.set({
-      threads: { ...this.state.threads, [threadId]: thread },
-      messages: {
-        ...this.state.messages,
-        [threadId]: [...(this.state.messages[threadId] ?? []), msg],
-      },
-      bodies: {
-        ...this.state.bodies,
-        [msg.id]: { messageId: msg.id, html: escapeHtml(d.body), hasRemoteImages: false },
-      },
-    })
+    this.sql.apply({ threads: [thread], messages: [msg] }, null, null)
+    this.sql.putBodies([{ messageId: msg.id, html: textToHtml(d.body), hasRemoteImages: false }])
+    this.changed()
   }
+
+  // ── Internals ─────────────────────────────────────────────────────────────────────────────
+
+  private items(sql: string, params: SqlValue[]): ThreadListItem[] {
+    return this.json<ThreadListItem[]>(
+      `SELECT json_group_array(${ITEM}) AS j FROM (${sql}) t`,
+      params,
+    )
+  }
+
+  private json<T>(sql: string, params: readonly SqlValue[] = []): T {
+    return JSON.parse(this.db.all<{ j: string | null }>(sql, params)[0]?.j ?? '[]') as T
+  }
+}
+
+const scopeId = (s: MailState) => (s.scope === 'all' ? null : s.scope)
+
+function scoped(s: MailState, where: string): [string, SqlValue[]] {
+  const id = scopeId(s)
+  return id ? [`(${where}) AND t.account_id = ?`, [id]] : [where, []]
 }
 
 export function parseAddresses(s: string): Address[] {
@@ -339,91 +459,5 @@ export function parseAddresses(s: string): Address[] {
     })
 }
 
-const escapeHtml = (s: string) =>
+export const textToHtml = (s: string) =>
   `<p>${s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')}</p>`
-
-// ── Selectors ────────────────────────────────────────────────────────────────────────────────────
-
-const byNewest = (a: ThreadRow, b: ThreadRow) => b.lastMessageAt - a.lastMessageAt
-
-function folderKinds(s: MailState): Map<string, FolderKind> {
-  return new Map(s.folders.map((f) => [f.id, f.kind]))
-}
-
-const inScope = (s: MailState, t: ThreadRow) => s.scope === 'all' || t.accountId === s.scope
-
-const splitCache = new WeakMap<MailState['threads'], Map<string, SplitId>>()
-
-/** Split per thread, computed once per threads snapshot. */
-export function threadSplits(s: MailState): Map<string, SplitId> {
-  let out = splitCache.get(s.threads)
-  if (out) return out
-  const ctx = splitContext(
-    s.accounts.map((a) => a.email),
-    Object.values(s.messages).flat(),
-  )
-  out = new Map(
-    Object.values(s.threads).map((t) => [t.id, classify(t, s.messages[t.id] ?? [], ctx)]),
-  )
-  splitCache.set(s.threads, out)
-  return out
-}
-
-function inboxAll(s: MailState): ThreadRow[] {
-  const kinds = folderKinds(s)
-  return Object.values(s.threads).filter(
-    (t) => inScope(s, t) && t.folderIds.some((f) => kinds.get(f) === 'inbox'),
-  )
-}
-
-export function inboxThreads(s: MailState, split: SplitId = s.split): ThreadRow[] {
-  const splitsOf = threadSplits(s)
-  return inboxAll(s)
-    .filter((t) => splitsOf.get(t.id) === split)
-    .sort(byNewest)
-}
-
-/** Unread inbox threads per split, for the split switcher. */
-export function splitCounts(s: MailState): Record<SplitId, number> {
-  const splitsOf = threadSplits(s)
-  const out: Record<SplitId, number> = { important: 0, other: 0, newsletters: 0, notifications: 0 }
-  for (const t of inboxAll(s)) if (t.unread) out[splitsOf.get(t.id)!]++
-  return out
-}
-
-export function doneThreads(s: MailState): ThreadRow[] {
-  const kinds = folderKinds(s)
-  const hidden = new Set<FolderKind>(['inbox', 'trash', 'spam', 'drafts'])
-  return Object.values(s.threads)
-    .filter(
-      (t) =>
-        inScope(s, t) &&
-        !(t.id in s.snoozes) &&
-        !t.folderIds.some((f) => hidden.has(kinds.get(f)!)),
-    )
-    .sort(byNewest)
-}
-
-export function reminderThreads(s: MailState): { thread: ThreadRow; until: number | null }[] {
-  return Object.entries(s.snoozes)
-    .map(([id, until]) => ({ thread: s.threads[id]!, until }))
-    .filter((r) => r.thread && inScope(s, r.thread))
-    .sort((a, b) => (a.until ?? Infinity) - (b.until ?? Infinity))
-}
-
-/** Local search over subject, snippet and participants (design §3.5; operators come with SQLite FTS). */
-export function searchThreads(s: MailState, query: string): ThreadRow[] {
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
-  if (!terms.length) return []
-  return Object.values(s.threads)
-    .filter((t) => {
-      const hay =
-        `${t.subject} ${t.snippet} ${t.participants.map((p) => `${p.name ?? ''} ${p.email}`).join(' ')}`.toLowerCase()
-      return terms.every((term) => hay.includes(term))
-    })
-    .sort(byNewest)
-}
-
-export function accountById(s: MailState, id: string): AccountRow | undefined {
-  return s.accounts.find((a) => a.id === id)
-}

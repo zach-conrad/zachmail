@@ -3,7 +3,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { displayName } from '../src/mail/format'
-import { accountById, type Draft } from '../src/mail/store'
+import type { Draft } from '../src/mail/store'
 import { mail, useMail } from '../src/mail/useMail'
 import { useTheme } from '../src/theme/useTheme'
 import { AccountDot } from '../src/ui/AccountDot'
@@ -20,12 +20,13 @@ function initialDraft(
 ): Draft {
   if (restore) return JSON.parse(restore) as Draft
   const s = mail.getState()
-  const thread = threadId ? s.threads[threadId] : undefined
-  const fallback = s.scope !== 'all' ? s.scope : s.accounts[0]!.id
+  const detail = threadId ? mail.thread(s, threadId) : null
+  const thread = detail?.thread
+  const fallback = s.scope !== 'all' ? s.scope : mail.accounts(s)[0]!.id
   if (!thread || mode === 'new')
     return { accountId: fallback, to: '', cc: '', subject: '', body: '' }
-  const acc = accountById(s, thread.accountId)!
-  const msgs = s.messages[thread.id] ?? []
+  const acc = mail.account(thread.accountId)!
+  const msgs = detail.messages
   const last = [...msgs].reverse().find((m) => m.from?.email !== acc.email) ?? msgs.at(-1)
   const base = thread.subject.replace(/^(re|fwd?):\s*/i, '')
   if (mode === 'forward')
@@ -65,7 +66,8 @@ export default function Compose() {
   )
   const [draft, setDraft] = useState(initial)
   const [showCc, setShowCc] = useState(draft.cc !== '')
-  const from = accountById(s, draft.accountId)
+  const accounts = mail.accounts(s)
+  const from = accounts.find((a) => a.id === draft.accountId)
   const c = t.colors
   const field = [t.type.body, styles.input, { color: c.text }]
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }))
@@ -79,8 +81,8 @@ export default function Compose() {
 
   // Tapping From cycles accounts; each shows its color (design §3.4).
   const cycleFrom = () => {
-    const i = s.accounts.findIndex((a) => a.id === draft.accountId)
-    set({ accountId: s.accounts[(i + 1) % s.accounts.length]!.id })
+    const i = accounts.findIndex((a) => a.id === draft.accountId)
+    set({ accountId: accounts[(i + 1) % accounts.length]!.id })
   }
 
   const send = () => {

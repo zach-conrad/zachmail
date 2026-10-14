@@ -1,15 +1,14 @@
 import { Stack } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { fullTime } from '../../../src/mail/format'
-import { reminderThreads } from '../../../src/mail/store'
-import { useMail } from '../../../src/mail/useMail'
+import { mail, useMail } from '../../../src/mail/useMail'
 import { EmptyState } from '../../../src/ui/EmptyState'
 import { ThreadList } from '../../../src/ui/ThreadList'
 
 export default function Reminders() {
   const s = useMail()
   const insets = useSafeAreaInsets()
-  const rows = reminderThreads(s)
+  const rows = mail.reminders(s)
   const due = new Map(rows.map((r) => [r.thread.id, r.until]))
   return (
     <>

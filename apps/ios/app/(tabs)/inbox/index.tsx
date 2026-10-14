@@ -2,8 +2,7 @@ import { Stack, useRouter } from 'expo-router'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { splits } from '../../../src/mail/splits'
-import { accountById, inboxThreads } from '../../../src/mail/store'
-import { useMail } from '../../../src/mail/useMail'
+import { mail, useMail } from '../../../src/mail/useMail'
 import { useTheme } from '../../../src/theme/useTheme'
 import { AccountDot } from '../../../src/ui/AccountDot'
 import { ComposeButton } from '../../../src/ui/ComposeButton'
@@ -17,9 +16,9 @@ export default function Inbox() {
   const s = useMail()
   const router = useRouter()
   const insets = useSafeAreaInsets()
-  const threads = inboxThreads(s)
+  const threads = mail.inbox(s)
   const split = splits.find((x) => x.id === s.split)!
-  const scoped = s.scope === 'all' ? undefined : accountById(s, s.scope)
+  const scoped = s.scope === 'all' ? undefined : mail.account(s.scope)
 
   const header = (
     <Pressable
@@ -48,7 +47,21 @@ export default function Inbox() {
 
   return (
     <View style={styles.flex}>
-      <Stack.Screen options={{ headerTransparent: true, title: '' }} />
+      <Stack.Screen
+        options={{
+          headerTransparent: true,
+          title: '',
+          // Glass bar button (design §6.3): the palette, the phone's ⌘K.
+          unstable_headerRightItems: () => [
+            {
+              type: 'button',
+              label: 'Commands',
+              icon: { type: 'sfSymbol', name: 'command' },
+              onPress: () => router.push('/palette'),
+            },
+          ],
+        }}
+      />
       <ThreadList
         threads={threads}
         header={header}

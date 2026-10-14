@@ -273,17 +273,26 @@ const seeds: Seed[] = [
   },
 ]
 
+/** Senders Gmail would mark important in this demo. */
+const IMPORTANT = new Set([ana.email, jordan.email, priya.email, mom.email])
+
+/** A few richer bodies so the reader's HTML path has something real to render. */
+const HTML: Record<string, string> = {
+  'Hey Zach, attached is the first pass of the Q4 plan. The hiring section still needs numbers from finance, but the roadmap and milestones are ready for a look.':
+    '<p>Hey Zach,</p><p>Attached is the first pass of the <b>Q4 plan</b>. The hiring section still needs numbers from finance, but these are ready for a look:</p><ul><li>Roadmap</li><li>Milestones</li><li>Budget assumptions</li></ul><p>Doc is also <a href="https://example.com/q4">here</a>.</p><p>Ana</p><blockquote>On Tue, Zach Conrad wrote:<br>Same doc is fine.</blockquote>',
+}
+
 const accountId = (s: Seed) => `acc-${s.account}`
 
 export interface DemoMailbox {
   rows: Rows
-  bodies: Record<string, MessageBody>
+  bodies: MessageBody[]
 }
 
 export function demoMailbox(now: number): DemoMailbox {
   const threads: ThreadRow[] = []
   const messages: MessageRow[] = []
-  const bodies: Record<string, MessageBody> = {}
+  const bodies: MessageBody[] = []
 
   seeds.forEach((s, i) => {
     const acc = accounts.find((a) => a.id === accountId(s))!
@@ -294,7 +303,7 @@ export function demoMailbox(now: number): DemoMailbox {
       const last = j === s.messages.length - 1
       const id = `${threadId}m${j + 1}`
       const text = m.text
-      bodies[id] = { messageId: id, html: `<p>${text}</p>`, hasRemoteImages: false }
+      bodies.push({ messageId: id, html: HTML[text] ?? `<p>${text}</p>`, hasRemoteImages: false })
       return {
         id,
         threadId,
@@ -320,6 +329,9 @@ export function demoMailbox(now: number): DemoMailbox {
     for (const m of msgs) if (m.from) people.set(m.from.email, m.from)
     const folderIds = s.done ? [] : [`${acc.id}:inbox`]
     if (msgs.some((m) => m.from?.email === acc.email)) folderIds.push(`${acc.id}:sent`)
+    // Gmail's own Important label, which the shared classifier reads (core classifySplit).
+    if (!s.done && msgs.some((m) => m.from && IMPORTANT.has(m.from.email)))
+      folderIds.push(`${acc.id}:important`)
     if (s.starred) folderIds.push(`${acc.id}:starred`)
     threads.push({
       id: threadId,

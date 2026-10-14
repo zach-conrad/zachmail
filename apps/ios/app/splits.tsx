@@ -2,7 +2,7 @@ import { useRouter } from 'expo-router'
 import type { ReactNode } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { splits, type SplitId } from '../src/mail/splits'
-import { splitCounts, type Scope } from '../src/mail/store'
+import type { Scope } from '../src/mail/store'
 import { mail, useMail } from '../src/mail/useMail'
 import type { Theme } from '../src/theme/theme'
 import { useTheme } from '../src/theme/useTheme'
@@ -50,7 +50,7 @@ export default function SplitSwitcher() {
   const t = useTheme()
   const s = useMail()
   const router = useRouter()
-  const counts = splitCounts(s)
+  const counts = mail.splitCounts(s)
   const c = t.colors
 
   const pickSplit = (id: SplitId) => {
@@ -83,7 +83,7 @@ export default function SplitSwitcher() {
         onPress={() => pickScope('all')}
         leading={<Icon name="tray.2" size={16} color={c.textMuted} />}
       />
-      {s.accounts.map((a) => (
+      {mail.accounts(s).map((a) => (
         <Row
           theme={t}
           key={a.id}

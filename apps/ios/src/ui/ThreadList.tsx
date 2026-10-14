@@ -1,5 +1,5 @@
 import { FlashList, type FlashListRef } from '@shopify/flash-list'
-import type { ThreadRow as Thread } from '@zachmail/core'
+import type { ThreadListItem as Thread } from '@zachmail/local-store'
 import * as Haptics from 'expo-haptics'
 import { Link, useRouter } from 'expo-router'
 import { useRef, type ReactElement } from 'react'
@@ -34,8 +34,9 @@ export function ThreadList({ threads, metaFor, header, empty, bottomInset = 0 }:
   const now = useNow()
   const reduceMotion = useReducedMotion()
   const listRef = useRef<FlashListRef<Thread>>(null)
-  const myEmails = new Set(s.accounts.map((a) => a.email.toLowerCase()))
-  const accounts = new Map(s.accounts.map((a) => [a.id, a]))
+  const all = mail.accounts(s)
+  const myEmails = new Set(all.map((a) => a.email.toLowerCase()))
+  const accounts = new Map(all.map((a) => [a.id, a]))
 
   const run = (cmd: Command) => {
     if (cmd.kind === 'done' || cmd.kind === 'trash' || cmd.kind === 'snooze') {

@@ -65,6 +65,15 @@ export default function RootLayout() {
               headerShown: false,
             }}
           />
+          <Stack.Screen
+            name="palette"
+            options={{
+              presentation: 'formSheet',
+              sheetAllowedDetents: [0.6, 1],
+              sheetGrabberVisible: true,
+              headerShown: false,
+            }}
+          />
         </Stack>
         <UndoToast />
         <StatusBar style="auto" />

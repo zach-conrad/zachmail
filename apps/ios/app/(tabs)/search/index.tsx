@@ -1,8 +1,7 @@
 import { Stack } from 'expo-router'
 import { useState } from 'react'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { searchThreads } from '../../../src/mail/store'
-import { useMail } from '../../../src/mail/useMail'
+import { mail, useMail } from '../../../src/mail/useMail'
 import { EmptyState } from '../../../src/ui/EmptyState'
 import { ThreadList } from '../../../src/ui/ThreadList'
 
@@ -26,7 +25,7 @@ export default function Search() {
         }}
       />
       <ThreadList
-        threads={searchThreads(s, q)}
+        threads={mail.search(s, q)}
         empty={q ? <EmptyState title="No matches." /> : undefined}
         bottomInset={insets.bottom + 80}
       />
