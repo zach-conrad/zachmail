@@ -400,3 +400,20 @@ export async function readBootstrap(
     return seq
   })
 }
+
+/** Accounts that should be syncing but haven't finished a sync in `olderThanMinutes`. */
+export async function staleSyncAccounts(db: Queryable, olderThanMinutes: number) {
+  return db.query<{
+    id: string
+    userId: string
+    email: string
+    status: string
+    lastSyncedAt: Date | null
+  }>(
+    `SELECT id, user_id AS "userId", email, status, last_synced_at AS "lastSyncedAt" FROM accounts
+     WHERE status IN ('active', 'backfilling', 'error')
+       AND coalesce(last_synced_at, created_at) < now() - make_interval(mins => $1)
+     ORDER BY last_synced_at NULLS FIRST`,
+    [olderThanMinutes],
+  )
+}

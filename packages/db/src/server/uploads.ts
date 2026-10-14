@@ -36,3 +36,33 @@ export async function loadUploads(
   )
   return ids.flatMap((id) => rows.filter((r) => r.id === id))
 }
+
+/**
+ * Uploads older than `olderThanHours` that no open send and no live draft points at. Sent mail
+ * keeps its copy at the provider, so these are safe to delete from storage.
+ */
+export async function orphanedUploads(
+  db: Queryable,
+  olderThanHours: number,
+  limit = 100,
+): Promise<{ id: string; storageKey: string }[]> {
+  return db.query(
+    `SELECT u.id, u.storage_key AS "storageKey" FROM uploads u
+     WHERE u.created_at < now() - make_interval(hours => $1)
+       AND NOT EXISTS (
+         SELECT 1 FROM outbox o
+         WHERE o.kind = 'send' AND o.state IN ('pending', 'in_flight')
+           AND o.payload->'attachments' ? u.id::text)
+       AND NOT EXISTS (
+         SELECT 1 FROM drafts d
+         WHERE NOT d.deleted AND d.payload->'attachments' ? u.id::text)
+     ORDER BY u.created_at
+     LIMIT $2`,
+    [olderThanHours, limit],
+  )
+}
+
+export async function deleteUploads(db: Queryable, ids: string[]) {
+  if (!ids.length) return
+  await db.query(`DELETE FROM uploads WHERE id = ANY($1::uuid[])`, [ids])
+}
