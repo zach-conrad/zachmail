@@ -204,3 +204,64 @@ describe('GmailProvider.fetchBody', () => {
     ])
   })
 })
+
+describe('GmailProvider.apply', () => {
+  const recorder = (missing: string[] = []) => {
+    const calls: { path: string; body: unknown }[] = []
+    const fetchImpl: FetchLike = async (input, init) => {
+      const path = new URL(input).pathname.replace('/gmail/v1/users/me', '')
+      calls.push({ path, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (missing.some((id) => path.startsWith(`/threads/${id}/`)))
+        return new Response('{}', { status: 404 })
+      return new Response('{}', { status: 200 })
+    }
+    const gmail = new GmailProvider({
+      fetch: fetchImpl,
+      tokens: { getAccessToken: async () => 't' },
+    })
+    return { gmail, calls }
+  }
+
+  it('maps flags to labels and uses modify', async () => {
+    const { gmail, calls } = recorder()
+    await gmail.apply(['t1'], { add: ['STARRED'], remove: ['INBOX'], unread: false, starred: true })
+    expect(calls).toEqual([
+      {
+        path: '/threads/t1/modify',
+        body: { addLabelIds: ['STARRED'], removeLabelIds: ['INBOX', 'UNREAD'] },
+      },
+    ])
+  })
+
+  it('uses the trash endpoints and skips threads that are gone', async () => {
+    const { gmail, calls } = recorder(['gone'])
+    await gmail.apply(['t1', 'gone'], { add: ['TRASH'], remove: ['INBOX'] })
+    expect(calls.map((c) => c.path)).toEqual([
+      '/threads/t1/modify',
+      '/threads/gone/modify',
+      '/threads/t1/trash',
+    ])
+    calls.length = 0
+    await gmail.apply(['t1'], { add: ['INBOX'], remove: ['TRASH', 'SPAM'] })
+    expect(calls).toEqual([
+      { path: '/threads/t1/untrash', body: {} },
+      { path: '/threads/t1/modify', body: { addLabelIds: ['INBOX'], removeLabelIds: ['SPAM'] } },
+    ])
+  })
+
+  it('reports client errors as permanent and server errors as retriable', async () => {
+    for (const [status, retriable] of [
+      [400, false],
+      [503, true],
+    ] as const) {
+      const gmail = new GmailProvider({
+        fetch: async () => new Response('{}', { status }),
+        tokens: { getAccessToken: async () => 't' },
+        maxRetries: 0,
+      })
+      await expect(gmail.apply(['t1'], { add: ['INBOX'], remove: [] })).rejects.toMatchObject({
+        retriable,
+      })
+    }
+  })
+})

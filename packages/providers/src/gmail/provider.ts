@@ -2,6 +2,7 @@ import type {
   BackfillPage,
   IncrementalResult,
   MailProvider,
+  ProviderChange,
   ProviderMessage,
   RawBody,
   SyncBatch,
@@ -24,6 +25,8 @@ export interface GmailProviderOptions {
   fetch?: FetchLike
   /** Parallel Gmail requests per sync (Gmail allows ~250 quota units/s per user). */
   concurrency?: number
+  /** Retries of rate-limited / 5xx requests before giving up (default 4). */
+  maxRetries?: number
 }
 
 export class GmailProvider implements MailProvider {
@@ -31,7 +34,7 @@ export class GmailProvider implements MailProvider {
   private concurrency: number
 
   constructor(private opts: GmailProviderOptions) {
-    this.api = new GmailApi(opts.tokens, opts.fetch)
+    this.api = new GmailApi(opts.tokens, opts.fetch, opts.maxRetries)
     this.concurrency = opts.concurrency ?? 8
   }
 
@@ -172,6 +175,46 @@ export class GmailProvider implements MailProvider {
       `/messages/${providerMessageId}/attachments/${providerAttachmentId}`,
     )
     return decodeBase64Url(a.data)
+  }
+
+  async apply(providerThreadIds: string[], change: ProviderChange): Promise<void> {
+    const add = new Set(change.add)
+    const remove = new Set(change.remove)
+    if (change.unread !== undefined) (change.unread ? add : remove).add('UNREAD')
+    if (change.starred !== undefined) (change.starred ? add : remove).add('STARRED')
+    // Trash has its own endpoints; modify can't move messages in or out of it.
+    const trash = add.delete('TRASH')
+    const untrash = remove.delete('TRASH')
+    for (const id of add) remove.delete(id)
+
+    await mapLimit(providerThreadIds, this.concurrency, async (id) => {
+      try {
+        if (untrash) await this.api.post(`/threads/${id}/untrash`, {})
+        if (add.size || remove.size)
+          await this.api.post(`/threads/${id}/modify`, {
+            addLabelIds: [...add],
+            removeLabelIds: [...remove],
+          })
+        if (trash) await this.api.post(`/threads/${id}/trash`, {})
+      } catch (err) {
+        notFoundAs(undefined)(err)
+      }
+    })
+  }
+
+  async fetchThreads(providerThreadIds: string[]): Promise<SyncBatch> {
+    const threads = await mapLimit(providerThreadIds, this.concurrency, (id) =>
+      this.api
+        .get<GmailThread>(`/threads/${id}`, {
+          format: 'metadata',
+          metadataHeaders: METADATA_HEADERS,
+        })
+        .catch(notFoundAs(null)),
+    )
+    return {
+      messages: threads.flatMap((t) => t?.messages ?? []).map(normalizeMessage),
+      deletedMessageIds: [],
+    }
   }
 }
 

@@ -1,4 +1,4 @@
-import { readDelta, saveCredentials, type Db } from '@zachmail/db/server'
+import { acceptOps, readDelta, readOpStatuses, saveCredentials, type Db } from '@zachmail/db/server'
 import { USER, createTestDb, type TestDb } from '@zachmail/db/testing'
 import { randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -6,6 +6,7 @@ import {
   ProviderFactory,
   createHandlers,
   enqueueInitialSync,
+  enqueueOutboxFlush,
   getMessageBody,
   type EngineConfig,
   type JobLike,
@@ -36,7 +37,14 @@ const gmailMsg = (id: string, threadId: string, labels: string[], date: number) 
 
 /** Fake Google: token endpoint plus the Gmail calls a sync makes. */
 function fakeGoogle() {
-  const state = { history: [] as unknown[], historyId: '100', refreshes: 0, watchCalls: 0 }
+  const state = {
+    history: [] as unknown[],
+    historyId: '100',
+    refreshes: 0,
+    watchCalls: 0,
+    writes: [] as string[],
+    failWrites: 0,
+  }
   const now = Date.now()
   const threads: Record<string, ReturnType<typeof gmailMsg>[]> = {
     t1: [gmailMsg('m1', 't1', ['INBOX', 'UNREAD'], now - 3_600_000)],
@@ -46,7 +54,7 @@ function fakeGoogle() {
     ],
   }
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
-  const fetchImpl = async (input: string) => {
+  const fetchImpl = async (input: string, init?: RequestInit) => {
     const url = new URL(input)
     if (url.host === 'oauth2.googleapis.com') {
       state.refreshes++
@@ -66,6 +74,12 @@ function fakeGoogle() {
       return url.searchParams.get('pageToken')
         ? json({ threads: [{ id: 't2' }] })
         : json({ threads: [{ id: 't1' }], nextPageToken: 'p2' })
+    }
+    const w = path.match(/^\/threads\/(\w+)\/(modify|trash|untrash)$/)
+    if (w) {
+      if (state.failWrites) return json({ error: { code: state.failWrites } }, state.failWrites)
+      state.writes.push(`${w[2]} ${w[1]} ${init?.body ?? ''}`)
+      return json({ id: w[1] })
     }
     const t = path.match(/^\/threads\/(\w+)$/)
     if (t) return json({ id: t[1], messages: threads[t[1]!] })
@@ -187,6 +201,68 @@ describe('engine', () => {
     expect(r!.fetched).toBe(false)
     expect(r!.body.hasRemoteImages).toBe(true)
     expect(r!.body.html).toContain('data-zm-src="/api/img?u=https%3A%2F%2Ft.example%2Fp.gif&amp;s=')
+  })
+
+  it('applies triage ops at Gmail in order and reconciles with a sync', async () => {
+    const [t1] = await db.query<{ id: string }>(
+      `SELECT id FROM threads WHERE provider_thread_id = 't1'`,
+    )
+    const op = (n: number, kind: 'archive' | 'inbox' | 'read') => ({
+      id: `00000000-0000-4000-8000-00000000000${n}`,
+      at: n,
+      op: { kind, threadIds: [t1!.id] },
+    })
+    const r = await acceptOps(db, USER, [op(1, 'archive'), op(2, 'inbox'), op(3, 'read')])
+    expect(r.accounts).toEqual([accountId])
+    await enqueueOutboxFlush(db, USER, accountId)
+    const ran = await drain()
+    expect(ran.filter((k) => k !== 'bodies.prefetch')).toEqual(['outbox.flush', 'account.sync'])
+    expect(google.state.writes).toEqual([
+      'modify t1 {"addLabelIds":[],"removeLabelIds":["INBOX"]}',
+      'modify t1 {"addLabelIds":["INBOX"],"removeLabelIds":[]}',
+      'modify t1 {"addLabelIds":[],"removeLabelIds":["UNREAD"]}',
+    ])
+    const ops = await readOpStatuses(db, USER, [op(1, 'read').id, op(3, 'read').id])
+    expect(ops.map((o) => o.state)).toEqual(['done', 'done'])
+  })
+
+  it('retries transient failures, then restores Gmail state on a permanent one', async () => {
+    const [t2] = await db.query<{ id: string }>(
+      `SELECT id FROM threads WHERE provider_thread_id = 't2'`,
+    )
+    const id = '00000000-0000-4000-8000-000000000009'
+    await acceptOps(db, USER, [{ id, at: 9, op: { kind: 'archive', threadIds: [t2!.id] } }])
+    const inInbox = async () =>
+      (
+        await db.query(
+          `SELECT 1 FROM thread_folders tf JOIN folders f ON f.id = tf.folder_id
+           WHERE tf.thread_id = $1 AND f.kind = 'inbox'`,
+          [t2!.id],
+        )
+      ).length > 0
+    expect(await inInbox()).toBe(false)
+
+    const flush = () =>
+      handlers['outbox.flush']!({ kind: 'outbox.flush', userId: USER, payload: { accountId } })
+    google.state.failWrites = 503
+    // Fail fast instead of backing off inside the Gmail client.
+    const fast = new ProviderFactory(db, config, google.fetchImpl as never, { maxRetries: 0 })
+    const h = createHandlers({ db, providers: fast, config })
+    await h['outbox.flush']!({ kind: 'outbox.flush', userId: USER, payload: { accountId } })
+    const [row] = await db.query<{ state: string; attempts: number }>(
+      `SELECT state, attempts FROM outbox WHERE op_id = $1`,
+      [id],
+    )
+    expect(row).toMatchObject({ state: 'pending', attempts: 1 })
+
+    google.state.failWrites = 400
+    await db.query(`UPDATE outbox SET not_before = now() WHERE op_id = $1`, [id])
+    await flush()
+    const [status] = await readOpStatuses(db, USER, [id])
+    expect(status).toMatchObject({ state: 'failed' })
+    expect(status!.error).toContain('400')
+    expect(await inInbox()).toBe(true)
+    google.state.failWrites = 0
   })
 
   it('parks the account when the refresh token is revoked', async () => {

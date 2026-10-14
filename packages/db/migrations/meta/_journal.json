@@ -29,6 +29,13 @@
       "when": 1791906700023,
       "tag": "0003_realtime_nudge",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791942578105,
+      "tag": "0004_outbox",
+      "breakpoints": true
     }
   ]
 }
