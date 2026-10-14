@@ -21,6 +21,7 @@ const env: Env = {
   OAUTH_STATE_SECRET: 'state-secret',
   IMAGE_PROXY_SECRET: 'img-secret',
   TOKEN_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
+  SUPABASE_SERVICE_ROLE_KEY: 'service-key',
 }
 
 const b64 = (s: string) => Buffer.from(s).toString('base64url')
@@ -46,6 +47,8 @@ const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
       threadId: 'pt1',
       payload: { mimeType: 'text/plain', body: { data: b64('hi <there>') } },
     })
+  if (url.pathname.startsWith('/storage/v1/object/upload/sign/'))
+    return json({ url: `${url.pathname.replace('/storage/v1', '')}?token=t` })
   if (url.host === '93.184.216.34')
     return new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } })
   return json({}, 404)
@@ -283,6 +286,30 @@ describe('sync endpoints', () => {
     expect((await authed(`/api/send/${id}`, { method: 'DELETE' })).status).toBe(200)
     expect((await authed(`/api/send/${id}`, { method: 'DELETE' })).status).toBe(409)
     expect((await authed('/api/send/nope', { method: 'DELETE' })).status).toBe(400)
+  })
+
+  it('signs attachment uploads into a per-user path', async () => {
+    const res = await authed('/api/uploads', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filename: 'Q4 plan (final).pdf', mime: 'application/pdf', size: 10 }),
+    })
+    expect(res.status).toBe(201)
+    const { id, uploadUrl } = (await res.json()) as { id: string; uploadUrl: string }
+    expect(uploadUrl).toBe(
+      `${SUPABASE_URL}/storage/v1/object/upload/sign/attachments/${USER}/${id}/Q4_plan_final_.pdf?token=t`,
+    )
+    const [row] = await db.query<{ filename: string }>(
+      `SELECT filename FROM uploads WHERE id = $1`,
+      [id],
+    )
+    expect(row!.filename).toBe('Q4 plan (final).pdf')
+    const tooBig = await authed('/api/uploads', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filename: 'a.bin', mime: 'application/octet-stream', size: 1e9 }),
+    })
+    expect(tooBig.status).toBe(400)
   })
 
   it('saves and deletes drafts', async () => {

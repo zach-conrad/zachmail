@@ -6,6 +6,7 @@ import {
   deleteDraft,
   enqueueJob,
   finishOutbox,
+  loadUploads,
   mutedThreadsInInbox,
   nudge,
   releaseOutbox,
@@ -15,10 +16,11 @@ import {
   type SendPayload,
   type TriagePayload,
 } from '@zachmail/db/server'
-import { ProviderAuthError, ProviderError, type MailProvider } from '@zachmail/providers'
+import { ProviderAuthError, ProviderError, mapLimit, type MailProvider } from '@zachmail/providers'
 import { buildMime, replyReferences } from '@zachmail/mime'
 import type { AccountRecord } from './accounts'
 import { enqueueDraftSync } from './drafts'
+import type { Storage } from './storage'
 
 export const OUTBOX_JOB = 'outbox.flush'
 const MAX_ATTEMPTS = 6
@@ -63,6 +65,7 @@ export async function flushOutbox(
   account: AccountRecord,
   provider: MailProvider,
   enqueueSync: () => Promise<void>,
+  storage?: Storage,
 ) {
   let applied = 0
   try {
@@ -70,7 +73,7 @@ export async function flushOutbox(
       const item = await claimOutbox(db, account.id)
       if (!item) break
       try {
-        await execute(db, item, provider)
+        await execute(db, item, provider, storage)
         await finishOutbox(db, item, { state: 'done' })
         applied++
       } catch (err) {
@@ -99,8 +102,8 @@ export async function flushOutbox(
   }
 }
 
-async function execute(db: Db, item: OutboxItem, provider: MailProvider) {
-  if (item.kind === 'send') return send(db, item, provider)
+async function execute(db: Db, item: OutboxItem, provider: MailProvider, storage?: Storage) {
+  if (item.kind === 'send') return send(db, item, provider, storage)
   const p = item.payload as unknown as TriagePayload
   const threads = await providerThreadIds(db, p.threadIds)
   if (!threads.length) return
@@ -118,9 +121,12 @@ async function execute(db: Db, item: OutboxItem, provider: MailProvider) {
   })
 }
 
-async function send(db: Db, item: OutboxItem, provider: MailProvider) {
+async function send(db: Db, item: OutboxItem, provider: MailProvider, storage?: Storage) {
   const p = item.payload as unknown as SendPayload
-  const { raw, providerThreadId } = await buildOutgoing(db, item.accountId, p, item.opId)
+  const { raw, providerThreadId } = await buildOutgoing(db, item, p, {
+    opId: item.opId,
+    storage,
+  })
   await provider.send(raw, providerThreadId ? { providerThreadId } : {})
   if (p.draftId && (await deleteDraft(db, item.userId, p.draftId)))
     await enqueueDraftSync(db, item.userId, p.draftId)
@@ -130,7 +136,14 @@ async function send(db: Db, item: OutboxItem, provider: MailProvider) {
  * MIME for an outgoing message from our account, threaded under the message it answers.
  * `opId` gives sends a stable Message-ID, so one that went out is recognisable when it syncs.
  */
-export async function buildOutgoing(db: Db, accountId: string, p: SendPayload, opId?: string) {
+export async function buildOutgoing(
+  db: Db,
+  owner: { userId: string; accountId: string },
+  p: SendPayload,
+  opts: { opId?: string; storage?: Storage } = {},
+) {
+  const { accountId } = owner
+  const { opId } = opts
   const [account] = await db.query<{ email: string; display_name: string | null }>(
     `SELECT email, display_name FROM accounts WHERE id = $1`,
     [accountId],
@@ -164,10 +177,23 @@ export async function buildOutgoing(db: Db, accountId: string, p: SendPayload, o
       html: p.html,
       ...(opId ? { messageId: `<${opId}@${domain}>` } : {}),
       ...threading,
+      attachments: await loadAttachments(db, owner.userId, p.attachments ?? [], opts.storage),
     },
     { includeBcc: true },
   )
   return { raw, providerThreadId: parent?.provider_thread_id }
+}
+
+async function loadAttachments(db: Db, userId: string, ids: string[], storage?: Storage) {
+  if (!ids.length) return []
+  if (!storage) throw new ProviderError('Attachments need Supabase Storage configured', false)
+  const files = await loadUploads(db, userId, ids)
+  if (files.length !== ids.length) throw new ProviderError('An attachment was deleted', false)
+  return mapLimit(files, 4, async (f) => ({
+    filename: f.filename,
+    mime: f.mime,
+    content: await storage.download(f.storageKey),
+  }))
 }
 
 const providerThreadIds = async (db: Db, ids: string[]) =>

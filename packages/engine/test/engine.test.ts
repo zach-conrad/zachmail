@@ -6,6 +6,7 @@ import {
   readOpStatuses,
   saveCredentials,
   saveDraft,
+  createUpload,
   type Db,
 } from '@zachmail/db/server'
 import { USER, createTestDb, type TestDb } from '@zachmail/db/testing'
@@ -13,6 +14,7 @@ import { randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   ProviderFactory,
+  Storage,
   createHandlers,
   enqueueInitialSync,
   enqueueDraftSync,
@@ -373,6 +375,37 @@ describe('engine', () => {
     await drain()
     expect(google.state.draftCalls.at(-1)).toBe('DELETE /drafts/gd1')
     expect(await db.query(`SELECT 1 FROM drafts WHERE id = $1`, [draftId])).toEqual([])
+  })
+
+  it('attaches uploaded files from Storage when sending', async () => {
+    const uploadId = '00000000-0000-4000-8000-0000000000b1'
+    await createUpload(db, USER, uploadId, `${USER}/${uploadId}/notes.txt`, {
+      filename: 'notes.txt',
+      mime: 'text/plain',
+      size: 5,
+    })
+    const fetched: string[] = []
+    const storage = new Storage(
+      { url: 'https://proj.supabase.co', serviceKey: 'sk', bucket: 'attachments' },
+      async (input) => {
+        fetched.push(input)
+        return new Response('hello')
+      },
+    )
+    const h = createHandlers({ db, providers, config, storage })
+    const id = '00000000-0000-4000-8000-0000000000b2'
+    const fields = { accountId, to: [{ email: 'ana@x.com' }], subject: 'File', html: '<p>see</p>' }
+    await acceptSend(db, USER, { ...fields, id, undoMs: 0, attachments: [uploadId] })
+    await h['outbox.flush']!({ kind: 'outbox.flush', userId: USER, payload: { accountId } })
+    expect(fetched).toEqual([
+      `https://proj.supabase.co/storage/v1/object/attachments/${USER}/${uploadId}/notes.txt`,
+    ])
+    const raw = google.state.sent.at(-1)!.raw
+    expect(raw).toMatch(/Content-Disposition: attachment; filename="?notes\.txt"?/)
+    expect(raw).toContain(Buffer.from('hello').toString('base64'))
+    await expect(
+      acceptSend(db, USER, { ...fields, id: uploadId, attachments: [id] }),
+    ).rejects.toThrow(/attachment/)
   })
 
   it('parks the account when the refresh token is revoked', async () => {

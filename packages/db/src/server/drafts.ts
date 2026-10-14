@@ -27,6 +27,7 @@ export async function saveDraft(
     subject: req.subject,
     html: req.html,
     replyToMessageId: req.replyToMessageId ?? null,
+    attachments: req.attachments ?? [],
   }
   const [row] = await db.query<{ version: number }>(
     `INSERT INTO drafts (id, user_id, account_id, payload)
