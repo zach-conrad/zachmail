@@ -169,6 +169,14 @@ button {
 .main {
   min-height: 0;
   display: grid;
+  background: var(--bg);
+}
+
+/* macOS app: the header shows the native window material behind it (design §5.6); the
+   list and reader stay solid. */
+html[data-shell='macos'],
+html[data-shell='macos'] body {
+  background: transparent;
 }
 
 /* Inbox: list 40% / reader 60% on wide windows (design §6.1), push view when narrow. */

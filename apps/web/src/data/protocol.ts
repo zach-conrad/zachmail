@@ -1,7 +1,8 @@
 import type { StoreApi } from '@zachmail/local-store'
 
 /** Store reads the UI may call over the worker boundary (writes stay inside the worker). */
-export type ReadMethod = 'accounts' | 'countThreads' | 'listThreads' | 'indexOfThread' | 'getThread'
+export type ReadMethod =
+  'accounts' | 'countThreads' | 'listThreads' | 'indexOfThread' | 'getThread' | 'unread'
 
 export interface DataApi extends Pick<StoreApi, ReadMethod> {
   /** Fetch and cache the bodies a thread view needs; resolves once they are stored. */

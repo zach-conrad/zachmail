@@ -72,6 +72,7 @@ async function init(config: InitConfig) {
   api = {
     accounts: () => store.accounts(),
     countThreads: (q) => store.countThreads(q),
+    unread: (q, since, limit) => store.unread(q, since, limit),
     listThreads: (q, offset, limit) => store.listThreads(q, offset, limit),
     indexOfThread: (q, id) => store.indexOfThread(q, id),
     getThread: (id) => store.getThread(id),

@@ -52,6 +52,8 @@ export interface StoreApi extends SyncSink {
   apply(upserts: Partial<Rows>, deletes: Partial<Deletes> | null, seq: number | null): void
   accounts(): AccountRow[]
   countThreads(q: ListQuery): number
+  /** Unread threads in a view, and the newest few that arrived after `since` (epoch ms). */
+  unread(q: ListQuery, since: number, limit: number): { count: number; fresh: ThreadListItem[] }
   listThreads(q: ListQuery, offset: number, limit: number): ThreadListItem[]
   /** Position of a thread in a list, or -1 when it is not in it. */
   indexOfThread(q: ListQuery, threadId: string): number
@@ -208,6 +210,25 @@ export class SqlStore implements StoreApi {
       `SELECT count(*) AS n FROM threads WHERE ${where}`,
       params,
     )[0]!.n
+  }
+
+  unread(q: ListQuery, since: number, limit: number) {
+    const [where, params] = listWhere(q)
+    const count = this.db.all<{ n: number }>(
+      `SELECT count(*) AS n FROM threads WHERE ${where} AND unread = 1`,
+      params,
+    )[0]!.n
+    const fresh = this.json<ThreadListItem[]>(
+      `SELECT json_group_array(json_object('id', id, 'accountId', account_id,
+         'subject', subject, 'snippet', snippet, 'participants', json(participants),
+         'lastMessageAt', last_message_at, 'messageCount', message_count,
+         'unread', json('true'), 'starred', json(iif(starred, 'true', 'false')),
+         'hasAttachments', json(iif(has_attachments, 'true', 'false')))) AS j
+       FROM (SELECT * FROM threads WHERE ${where} AND unread = 1 AND last_message_at > ?
+             ORDER BY last_message_at DESC, id DESC LIMIT ?)`,
+      [...params, since, limit],
+    )
+    return { count, fresh }
   }
 
   listThreads(q: ListQuery, offset: number, limit: number): ThreadListItem[] {

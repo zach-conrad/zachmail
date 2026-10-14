@@ -4,6 +4,7 @@ import { useAuth } from '../auth/session'
 import { demoMode, supabase } from '../lib/supabase'
 import { DataClient } from './client'
 import { ThreadCache } from './threadCache'
+import { useDesktopUnread } from './useDesktopUnread'
 
 interface Data {
   client: DataClient
@@ -102,6 +103,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }),
     [base, accounts],
   )
+
+  useDesktopUnread(client, value.ownEmails)
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>
 }

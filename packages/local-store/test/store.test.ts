@@ -152,6 +152,17 @@ describe('SqlStore', () => {
     expect(d.bodies.latest?.html).toBe('<p>hi</p>')
   })
 
+  it('counts unread threads and lists the ones newer than a cursor', () => {
+    store.apply(
+      { threads: [thread('a', 10), { ...thread('b', 20), unread: false }, thread('c', 30)] },
+      null,
+      1,
+    )
+    const r = store.unread({ split: 'other' }, 15, 5)
+    expect(r.count).toBe(2)
+    expect(r.fresh.map((t) => t.id)).toEqual(['c'])
+  })
+
   it('reset clears synced data and the cursor', () => {
     store.apply({ threads: [thread('t', 1)] }, null, 5)
     store.reset()
