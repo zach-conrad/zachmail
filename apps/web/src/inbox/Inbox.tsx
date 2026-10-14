@@ -22,6 +22,7 @@ import { ThreadList } from './ThreadList'
 import { ThreadView } from './ThreadView'
 
 const PREFETCH_TOP = 50
+const SEARCH_PREFETCH_DELAY_MS = 300
 
 const TIMED: CommandId[] = [
   'thread.done',
@@ -131,9 +132,19 @@ export function Inbox({ view, active, empty, onExit, highlight }: Props) {
     )
     void client.api.ensureBodies(ids)
   }, [client, model, version])
+  // While a search is being typed every keystroke moves focus to a new top result; warming
+  // each would take the worker from the next keystroke, so wait for a pause.
+  const typing = 'search' in view ? viewKey : null
   useEffect(() => {
-    if (keepKey) threads.prefetch(keepKey.split(' '))
-  }, [threads, keepKey])
+    if (!keepKey) return
+    const ids = keepKey.split(' ')
+    if (typing === null) {
+      threads.prefetch(ids)
+      return
+    }
+    const t = setTimeout(() => threads.prefetch(ids), SEARCH_PREFETCH_DELAY_MS)
+    return () => clearTimeout(t)
+  }, [threads, keepKey, typing])
 
   useLayoutEffect(() => {
     endInteraction('nav.next')

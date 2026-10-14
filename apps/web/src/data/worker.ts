@@ -90,6 +90,13 @@ async function init(config: InitConfig) {
   }
 
   const inflight = new Set<string>()
+  // Opening search re-warms only if it has been a while: the read itself costs a keystroke.
+  let warmedAt = 0
+  const warm = (deep = false) => {
+    if (performance.now() - warmedAt < WARM_FOR_MS) return
+    search.warm(deep)
+    warmedAt = performance.now()
+  }
   api = {
     accounts: () => store.accounts(),
     countThreads: (q) => (isSearchQuery(q) ? search.countThreads(q) : store.countThreads(q)),
@@ -106,7 +113,7 @@ async function init(config: InitConfig) {
       post({ type: 'changed' })
       return { cursor: r.nextCursor, found: r.threads.length, source: r.source }
     },
-    warmSearch: () => search.warm(),
+    warmSearch: () => warm(),
     folders: () => store.folders(),
     getThread: (id) => store.getThread(id),
     async ensureBodies(threadIds) {
@@ -185,6 +192,8 @@ async function init(config: InitConfig) {
       setStatus({ syncing: true })
       await client.pull()
       setStatus({ syncing: false, error: lastError })
+      // Idle after the first sync: have search's indexes in memory before it is opened.
+      if (!warmedAt) warm(true)
       drain()
     },
   }
@@ -192,6 +201,7 @@ async function init(config: InitConfig) {
 }
 
 const BODY_SLICE = 10
+const WARM_FOR_MS = 60_000
 
 /** Lets messages that arrived meanwhile run before continuing. */
 const yieldToQueue = () => new Promise<void>((r) => setTimeout(r))

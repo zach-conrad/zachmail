@@ -38,6 +38,10 @@ CREATE INDEX IF NOT EXISTS threads_recent ON threads (last_message_at DESC, id D
 CREATE INDEX IF NOT EXISTS threads_search ON threads (
   id, account_id, last_message_at, folder_ids, unread, starred, has_attachments
 );
+-- Flag filters (is:unread, is:starred, has:attachment) per message, without the table.
+CREATE INDEX IF NOT EXISTS messages_flags ON messages (
+  thread_id, unread, (data ->> '$.starred'), (data ->> '$.hasAttachments'), date
+);
 CREATE TEMP TABLE IF NOT EXISTS search_hits (id TEXT PRIMARY KEY) WITHOUT ROWID;
 -- Plain text of cached bodies (HTML stripped in JS), so re-synced messages keep it indexed.
 CREATE TABLE IF NOT EXISTS search_bodies (message_id TEXT PRIMARY KEY, text TEXT NOT NULL);
@@ -119,13 +123,19 @@ export class SearchIndex {
   }
 
   /**
-   * Reads the indexes matching walks into the page cache. A first query otherwise pays for
+   * Reads the indexes matching walks, and the thread rows results are built from, into the
+   * page cache. A first query otherwise pays for
    * them from storage (tens of ms in a browser), which lands on the first keystrokes.
    */
-  warm(): void {
+  warm(deep = false): void {
+    // The full-text index too when idle: a first prefix otherwise reads its pages from storage.
+    if (deep) this.db.all(`SELECT sum(length(block)) FROM messages_fts_data`)
     this.db.all(`SELECT count(*) FROM messages INDEXED BY messages_thread WHERE thread_id > ''`)
     this.db.all(`SELECT count(*) FROM threads INDEXED BY threads_search WHERE id > ''`)
     this.db.all(`SELECT count(*) FROM threads INDEXED BY threads_recent WHERE last_message_at > 0`)
+    this.db.all(`SELECT count(*) FROM messages INDEXED BY messages_flags WHERE thread_id > ''`)
+    // The rows a results page is built from.
+    this.db.all(`SELECT sum(length(participants)) FROM threads`)
   }
 
   countThreads(q: SearchListQuery): number {
@@ -210,9 +220,11 @@ export class SearchIndex {
    * when the query or anything in the database changes.
    */
   private hits(q: SearchListQuery): number {
-    const key = `${q.tzOffset ?? ''}|${q.search}`
-    if (this.cached?.key === key && this.cached.stamp === this.stamp()) return this.cached.count
+    // Keyed by the SQL, not the text: a keystroke that doesn't change what is asked (a space,
+    // a word just begun) costs nothing.
     const w = this.where(q)
+    const key = JSON.stringify(w)
+    if (this.cached?.key === key && this.cached.stamp === this.stamp()) return this.cached.count
     this.db.run('DELETE FROM search_hits')
     if (w)
       this.db.run(
@@ -316,15 +328,18 @@ function planWhere(plan: SearchPlan, params: SqlValue[]): string {
     ...(plan.before !== undefined ? [plan.before] : []),
   ]
 
-  // Flags need the rows, so they are checked only within threads whose own flag (any of its
-  // messages) already says they can match.
+  // A thread's flag says whether any of its messages has it, which answers is:unread alone.
+  // Per message (with text or dates, or is:read) they are checked only within threads whose
+  // own flag says they can match.
   const flags: string[] = []
   const flagParams: SqlValue[] = []
+  let perMessage = m.length > 0
   const flag = (col: string, thread: string, v: boolean | undefined) => {
     if (v === undefined) return
     flags.push(`${col} = ?`)
     flagParams.push(+v)
     if (v) w.push(`t.${thread} = 1`)
+    else perMessage = true
   }
   flag('m.unread', 'unread', plan.unread)
   flag(`(m.data ->> '$.starred')`, 'starred', plan.starred)
@@ -336,9 +351,10 @@ function planWhere(plan: SearchPlan, params: SqlValue[]): string {
     )
     params.push(...indexed())
   }
-  if (flags.length) {
+  if (flags.length && perMessage) {
     w.push(
-      `EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND ${[...flags, ...m].join(' AND ')})`,
+      `EXISTS (SELECT 1 FROM messages m INDEXED BY messages_flags
+        WHERE m.thread_id = t.id AND ${[...flags, ...m].join(' AND ')})`,
     )
     params.push(...flagParams, ...indexed())
   }
