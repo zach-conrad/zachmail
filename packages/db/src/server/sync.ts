@@ -1,14 +1,14 @@
-import type { Deletes, Rows, SyncDelta } from '@zachmail/core'
+import type { Deletes, OpStatusRow, Rows, SyncDelta } from '@zachmail/core'
 import { emptyDeletes, emptyRows } from '@zachmail/core'
 import type { SyncBatch } from '@zachmail/providers'
 import type { Db, Queryable } from './sql'
 
 type Entity = keyof Deletes
 
-async function recordChanges(
+export async function recordChanges(
   tx: Queryable,
   userId: string,
-  entity: Entity,
+  entity: Entity | 'op',
   ids: string[],
   op: 'upsert' | 'delete',
 ) {
@@ -184,7 +184,7 @@ export async function applySyncBatch(
   })
 }
 
-async function recomputeThreads(tx: Queryable, userId: string, threadIds: string[]) {
+export async function recomputeThreads(tx: Queryable, userId: string, threadIds: string[]) {
   await tx.query(
     `WITH agg AS (
        SELECT m.thread_id,
@@ -292,7 +292,11 @@ export async function readDelta(
     )
     const more = window.length > limit
     const upTo = more ? window[limit - 1]!.seq : (window.at(-1)?.seq ?? since)
-    const latest = await tx.query<{ entity: Entity; entity_id: string; op: 'upsert' | 'delete' }>(
+    const latest = await tx.query<{
+      entity: Entity | 'op'
+      entity_id: string
+      op: 'upsert' | 'delete'
+    }>(
       `SELECT DISTINCT ON (entity, entity_id) entity, entity_id, op FROM changes
        WHERE user_id = $1 AND seq > $2 AND seq <= $3 ORDER BY entity, entity_id, seq DESC`,
       [userId, since, upTo],
@@ -300,8 +304,11 @@ export async function readDelta(
 
     const want: Record<Entity, string[]> = { account: [], folder: [], thread: [], message: [] }
     const deletes = emptyDeletes()
-    for (const c of latest)
-      (c.op === 'delete' ? deletes[c.entity] : want[c.entity]).push(c.entity_id)
+    const opIds: string[] = []
+    for (const c of latest) {
+      if (c.entity === 'op') opIds.push(c.entity_id)
+      else (c.op === 'delete' ? deletes[c.entity] : want[c.entity]).push(c.entity_id)
+    }
 
     const upserts = emptyRows()
     const load = async <K extends keyof Rows>(
@@ -325,8 +332,26 @@ export async function readDelta(
     await load('threads', SELECT_THREAD, 't', want.thread)
     await load('messages', SELECT_MESSAGE, 'm', want.message)
 
-    return { seq: upTo, more, upserts, deletes }
+    const ops = opIds.length ? await readOpStatuses(tx, userId, opIds) : []
+
+    return { seq: upTo, more, upserts, deletes, ops }
   })
+}
+
+/** One status per op, folded over its per-account outbox rows. */
+export async function readOpStatuses(
+  db: Queryable,
+  userId: string,
+  opIds: string[],
+): Promise<OpStatusRow[]> {
+  return db.query<OpStatusRow>(
+    `SELECT op_id::text AS id,
+       CASE WHEN bool_or(state = 'failed') THEN 'failed'
+            WHEN bool_and(state = 'done') THEN 'done' ELSE 'pending' END AS state,
+       max(last_error) FILTER (WHERE state = 'failed') AS error
+     FROM outbox WHERE user_id = $1 AND op_id = ANY($2::uuid[]) GROUP BY op_id`,
+    [userId, opIds],
+  )
 }
 
 const entityOf = (k: keyof Rows): Entity =>

@@ -3,6 +3,7 @@ import { ProviderAuthError, mapLimit } from '@zachmail/providers'
 import { getAccount, type AccountRecord, type ProviderFactory } from './accounts'
 import { getMessageBody } from './bodies'
 import type { EngineConfig } from './config'
+import { OUTBOX_JOB, enqueueOutboxFlush, flushOutbox } from './outbox'
 
 export interface JobLike {
   kind: string
@@ -17,6 +18,7 @@ export const JOB = {
   sync: 'account.sync',
   watch: 'gmail.watch',
   prefetch: 'bodies.prefetch',
+  outbox: OUTBOX_JOB,
 } as const
 
 const RECENT_DAYS = 90
@@ -142,14 +144,15 @@ export function createHandlers(deps: {
           accountId: account.id,
           batch: r.batch,
         })
+        const recovered = account.status === 'needs_reauth' || account.status === 'error'
         await updateAccount(db, account.id, {
           syncState: r.next,
           lastSyncedAt: new Date(),
           lastError: null,
-          ...(account.status === 'needs_reauth' || account.status === 'error'
-            ? { status: 'active' }
-            : {}),
+          ...(recovered ? { status: 'active' } : {}),
         })
+        // Ops parked while the account was unreachable can go now.
+        if (recovered) await enqueueOutboxFlush(db, account.userId, account.id)
         if (changed) {
           await enqueueJob(db, {
             userId: account.userId,
@@ -178,6 +181,15 @@ export function createHandlers(deps: {
           dedupeKey: `watch:${account.id}`,
           runAt: new Date(Date.now() + DAY),
         })
+      })
+    },
+
+    async [JOB.outbox](job) {
+      await withAccount(job, async (account) => {
+        if (account.status === 'needs_reauth') return
+        await flushOutbox(db, account, providers.forAccount(account), () =>
+          enqueueSync(db, account.userId, account.id),
+        )
       })
     },
 
