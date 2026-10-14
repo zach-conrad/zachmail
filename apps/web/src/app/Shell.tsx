@@ -11,6 +11,7 @@ import {
 import { Composer } from '../compose/Composer'
 import { newDraft } from '../compose/draft'
 import { Inbox } from '../inbox/Inbox'
+import { SearchView } from '../search/SearchView'
 import { endInteraction } from '../lib/perf'
 import { keymap, splitTabs, type CommandId, type FolderRow, type SplitKey } from '@zachmail/core'
 import { useData } from '../data/DataProvider'
@@ -35,6 +36,8 @@ export function Shell({ split, openThread }: { split: SplitKey; openThread: stri
   const tabs = useMemo(() => splitTabs(splitRules ?? []), [splitRules])
   const [folders, setFolders] = useState<FolderRow[]>([])
   const [overlay, setOverlay] = useState<Overlay>(null)
+  // Search replaces the list while open (design §3.5); null when not searching.
+  const [search, setSearch] = useState<string | null>(null)
   // What the views underneath can run, captured before the overlay deactivates them.
   const [available, setAvailable] = useState<CommandId[]>([])
   const open = (o: Exclude<Overlay, null>) => {
@@ -73,7 +76,11 @@ export function Shell({ split, openThread }: { split: SplitKey; openThread: stri
     ...(overlay === 'rules'
       ? {}
       : { 'nav.nextSplit': () => cycle(1), 'nav.prevSplit': () => cycle(-1) }),
-    'go.inbox': () => goSplit('important'),
+    'go.inbox': () => {
+      setSearch(null)
+      goSplit('important')
+    },
+    'nav.search': () => setSearch(''),
     'app.palette': () => open('palette'),
     'app.shortcuts': () => open('shortcuts'),
     'compose.new': () => {
@@ -85,6 +92,7 @@ export function Shell({ split, openThread }: { split: SplitKey; openThread: stri
     ...(overlay ? { 'nav.back': () => setOverlay(null) } : {}),
   })
 
+  const view = useMemo(() => ({ split }), [split])
   const extra = useMemo<PaletteItem[]>(
     () =>
       tabs
@@ -103,12 +111,21 @@ export function Shell({ split, openThread }: { split: SplitKey; openThread: stri
     <div className="shell">
       <AppHeader split={split} tabs={tabs} onPalette={() => open('palette')} />
       <main className="main">
-        <Inbox key={split} split={split} active={!overlay && !sheet} openThread={openThread} />
+        {search !== null ? (
+          <SearchView initial={search} active={!overlay && !sheet} onExit={() => setSearch(null)} />
+        ) : (
+          <Inbox key={split} view={view} active={!overlay && !sheet} openThread={openThread} />
+        )}
       </main>
       {sheet && <Composer key={sheet.id} initial={sheet} />}
       <UndoToast />
       {overlay === 'palette' && (
-        <CommandPalette available={available} extra={extra} onClose={() => setOverlay(null)} />
+        <CommandPalette
+          available={available}
+          extra={extra}
+          onSearch={(q) => setSearch(q)}
+          onClose={() => setOverlay(null)}
+        />
       )}
       {overlay === 'rules' && (
         <SplitRulesEditor

@@ -3,6 +3,7 @@ import {
   WAKE_JOB,
   applySyncBatch,
   enqueueJob,
+  markMirrorComplete,
   nudge,
   recomputeSplits,
   updateAccount,
@@ -173,6 +174,8 @@ export function createHandlers(deps: {
             dedupeKey: `backfill:${account.id}:older:start`,
             runAt: new Date(Date.now() + 60_000),
           })
+        } else {
+          await markMirrorComplete(db, account.id)
         }
       })
     },

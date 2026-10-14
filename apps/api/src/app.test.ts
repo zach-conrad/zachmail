@@ -473,6 +473,22 @@ describe('sync endpoints', () => {
     expect((await authed('/api/sync?since=-1')).status).toBe(400)
   })
 
+  it('searches the mirror and validates its parameters', async () => {
+    const r = (await (await authed('/api/search?q=from%3Aana%20hel')).json()) as {
+      threads: { subject: string }[]
+      messages: unknown[]
+      highlight: string[]
+    }
+    expect(r.threads.map((t) => t.subject)).toEqual(['Hello'])
+    expect(r.messages).toHaveLength(1)
+    expect(r.highlight).toEqual(['ana', 'hel'])
+    const none = (await (await authed('/api/search?q=')).json()) as { threads: unknown[] }
+    expect(none.threads).toEqual([])
+    expect((await authed('/api/search?q=x&cursor=junk')).status).toBe(400)
+    expect((await authed('/api/search?q=x&tz=9999')).status).toBe(400)
+    expect((await authed('/api/search?q=x&limit=abc')).status).toBe(400)
+  })
+
   it('streams the bootstrap as NDJSON, gzipped when accepted', async () => {
     const parse = (text: string) =>
       text

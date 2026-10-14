@@ -11,6 +11,7 @@ import { composerRoutes } from './routes/composer'
 import { imageRoutes } from './routes/images'
 import { notificationRoutes } from './routes/notifications'
 import { opsRoutes } from './routes/ops'
+import { searchRoutes } from './routes/search'
 import { splitRuleRoutes } from './routes/splitRules'
 import { syncRoutes } from './routes/sync'
 import { webhookRoutes } from './routes/webhooks'
@@ -44,6 +45,7 @@ export function createApp(env: Env, overrides: Partial<Deps> = {}) {
   authed.route('/', accountRoutes(env, deps))
   authed.route('/', syncRoutes(deps))
   authed.route('/', opsRoutes(deps))
+  authed.route('/', searchRoutes(deps))
   authed.route('/', splitRuleRoutes(deps))
   authed.route('/', aiRoutes(deps))
   authed.route('/', composerRoutes(deps))

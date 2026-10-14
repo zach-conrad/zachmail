@@ -151,7 +151,7 @@ export class SqlStore implements StoreApi {
   private resplitIds: string[] = []
 
   constructor(private db: SqlDriver) {
-    db.exec('PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY; PRAGMA cache_size = -32000;')
+    db.exec('PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY; PRAGMA cache_size = -64000;')
     db.exec(SCHEMA)
     const v = db.all<{ value: string }>(`SELECT value FROM meta WHERE key = 'schema'`)[0]
     if (v && Number(v.value) !== SCHEMA_VERSION) {

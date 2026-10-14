@@ -39,11 +39,14 @@ function remember(id: string) {
 export function CommandPalette({
   available,
   extra,
+  onSearch,
   onClose,
 }: {
   /** Commands the views under the palette handle. */
   available: readonly CommandId[]
   extra: PaletteItem[]
+  /** Free text falls through to a mail search (design §3.3). */
+  onSearch?: (query: string) => void
   onClose: () => void
 }) {
   const [items] = useState<PaletteItem[]>(() => [
@@ -69,12 +72,21 @@ export function CommandPalette({
       }
       return [...items].sort((a, b) => rank(a.id) - rank(b.id))
     }
-    return items
+    const matched = items
       .map((item) => ({ item, score: fuzzyScore(query, item.label) }))
       .filter((r) => r.score >= 0)
       .sort((a, b) => b.score - a.score)
       .map((r) => r.item)
-  }, [items, query])
+    if (!onSearch) return matched
+    const searchItem: PaletteItem = {
+      id: 'search',
+      label: `Search mail for “${query.trim()}”`,
+      keys: '/',
+      run: () => onSearch(query.trim()),
+    }
+    // No command matches: Enter searches. Otherwise searching is the last choice.
+    return matched.length ? [...matched, searchItem] : [searchItem]
+  }, [items, query, onSearch])
 
   const run = (item: PaletteItem | undefined) => {
     if (!item) return

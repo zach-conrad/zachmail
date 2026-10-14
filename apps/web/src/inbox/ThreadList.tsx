@@ -1,3 +1,4 @@
+import { highlightRanges } from '@zachmail/core'
 import { accountColor, tokens } from '@zachmail/tokens'
 import type { ThreadListItem } from '@zachmail/local-store'
 import {
@@ -8,6 +9,7 @@ import {
   useState,
   useSyncExternalStore,
   type MouseEvent,
+  type ReactNode,
 } from 'react'
 import { useData } from '../data/DataProvider'
 import type { ListModel } from '../data/listModel'
@@ -21,10 +23,12 @@ interface Props {
   focus: number
   selected: ReadonlySet<string>
   onActivate: (index: number, e: MouseEvent) => void
+  /** Search tokens to mark in subjects and snippets. */
+  highlight?: readonly string[]
 }
 
 /** Virtualized thread list: fixed-height rows, only what is on screen plus overscan. */
-export function ThreadList({ model, focus, selected, onActivate }: Props) {
+export function ThreadList({ model, focus, selected, onActivate, highlight }: Props) {
   useSyncExternalStore(model.subscribe, model.getVersion)
   const ref = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
@@ -67,6 +71,7 @@ export function ThreadList({ model, focus, selected, onActivate }: Props) {
         focused={i === focus}
         selected={!!item && selected.has(item.id)}
         onActivate={onActivate}
+        highlight={highlight}
       />,
     )
   }
@@ -94,12 +99,14 @@ const Row = memo(function Row({
   focused,
   selected,
   onActivate,
+  highlight,
 }: {
   index: number
   item: ThreadListItem | undefined
   focused: boolean
   selected: boolean
   onActivate: Props['onActivate']
+  highlight: Props['highlight']
 }) {
   const { accounts, ownEmails } = useData()
   const style = { transform: `translateY(${index * ROW}px)` }
@@ -137,8 +144,12 @@ const Row = memo(function Row({
         {item.messageCount > 1 && <span className="row-count">{item.messageCount}</span>}
       </span>
       <span className="row-text">
-        <span className="row-subject">{item.subject || '(no subject)'}</span>
-        <span className="row-snippet">{item.snippet}</span>
+        <span className="row-subject">
+          <Marked text={item.subject || '(no subject)'} tokens={highlight} />
+        </span>
+        <span className="row-snippet">
+          <Marked text={item.snippet} tokens={highlight} />
+        </span>
       </span>
       <span className="row-icons" aria-hidden>
         {item.hasAttachments && '📎'}
@@ -150,3 +161,18 @@ const Row = memo(function Row({
     </div>
   )
 })
+
+/** Text with search matches wrapped in <mark>. */
+function Marked({ text, tokens }: { text: string; tokens: readonly string[] | undefined }) {
+  const ranges = tokens?.length ? highlightRanges(text, tokens) : []
+  if (!ranges.length) return text
+  const out: ReactNode[] = []
+  let at = 0
+  for (const [s, e] of ranges) {
+    if (s > at) out.push(text.slice(at, s))
+    out.push(<mark key={s}>{text.slice(s, e)}</mark>)
+    at = e
+  }
+  out.push(text.slice(at))
+  return out
+}
