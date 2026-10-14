@@ -250,8 +250,18 @@ export function planQuery(q: ParsedQuery, ctx: SearchContext): SearchPlan | null
           if (c.negated) continue
           return null
         }
-        plan.match.push({ field: c.field, alts, prefix: !c.phrase && !me, negated: c.negated })
-        if (!c.negated && !me) plan.highlight.push(...alts.flat())
+        const prefix = !c.phrase && !me
+        // A word just begun after other terms would only empty the list for a keystroke; it
+        // counts once it is long enough to be a prefix.
+        const typing = prefix && !c.negated && c === q.clauses.at(-1) && q.clauses.length > 1
+        if (
+          typing &&
+          alts.length === 1 &&
+          alts[0]!.length === 1 &&
+          alts[0]![0]!.length < MIN_PREFIX
+        )
+          continue
+        plan.match.push({ field: c.field, alts, prefix, negated: c.negated })
         break
       }
       case 'in': {
@@ -315,7 +325,7 @@ export function planQuery(q: ParsedQuery, ctx: SearchContext): SearchPlan | null
     const hidden = foldersOfKind(['trash', 'spam'])
     if (hidden.length) plan.folders.push({ ids: hidden, negated: true })
   }
-  plan.highlight = [...new Set(plan.highlight)]
+  plan.highlight = highlightTokens(q)
   return plan
 }
 
@@ -339,6 +349,13 @@ export const isSearchable = (q: ParsedQuery) => q.clauses.length > 0
 const PG_WEIGHT: Record<TextField, string> = { any: '', subject: 'A', from: 'B', to: 'C' }
 
 /**
+ * A one- or two-letter prefix matches much of a mailbox and costs a scan of it, for results
+ * nobody wants; it matches only that word until a third letter is typed.
+ */
+const MIN_PREFIX = 3
+const isPrefix = (t: MatchTerm, last: string) => t.prefix && last.length >= MIN_PREFIX
+
+/**
  * Postgres tsquery text for the match terms, against a tsvector built from the same
  * `tokenize` rules with weights A subject, B sender, C recipients, D body. Empty when there is
  * no full-text condition. Tokens are letters and digits only, so quoting cannot be broken.
@@ -350,7 +367,7 @@ export function toTsQuery(terms: MatchTerm[]): string {
       const alt = (tokens: string[]) =>
         tokens
           .map((tok, i) => {
-            const star = t.prefix && i === tokens.length - 1 ? '*' : ''
+            const star = i === tokens.length - 1 && isPrefix(t, tok) ? '*' : ''
             return star || w ? `'${tok}':${star}${w}` : `'${tok}'`
           })
           .join(' <-> ')
@@ -370,7 +387,8 @@ const FTS5_COLUMN: Record<TextField, string | null> = {
 
 /** One FTS5 MATCH expression for a term (negation is applied by the caller with NOT IN). */
 export function toFts5(term: MatchTerm): string {
-  const alt = (tokens: string[]) => `"${tokens.join(' ')}"${term.prefix ? '*' : ''}`
+  const alt = (tokens: string[]) =>
+    `"${tokens.join(' ')}"${isPrefix(term, tokens.at(-1)!) ? '*' : ''}`
   const expr = term.alts.map(alt).join(' OR ')
   const col = FTS5_COLUMN[term.field]
   if (!col) return term.alts.length > 1 ? `(${expr})` : expr
@@ -423,6 +441,15 @@ export function toGmailQuery(q: ParsedQuery, opts: { before?: number } = {}): st
 }
 
 // ---- Highlighting ------------------------------------------------------------------------
+
+/** Tokens of the positive text conditions (not `from:me`), for highlighting results. */
+export function highlightTokens(q: ParsedQuery): string[] {
+  const out = new Set<string>()
+  for (const c of q.clauses)
+    if (c.kind === 'match' && !c.negated && c.value.toLowerCase() !== 'me')
+      for (const t of tokenize(c.value)) out.add(t)
+  return [...out]
+}
 
 /**
  * [start, end) ranges of words in `text` that start with one of `tokens` (as produced by

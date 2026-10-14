@@ -1,5 +1,6 @@
 import { ResyncRequired, type SyncTransport } from './client'
 import type { OpsRequest, OpsResponse } from './ops'
+import type { SearchResponse } from '../search/protocol'
 import type { BootstrapLine, MessageBody, SyncDelta } from './protocol'
 
 export interface HttpTransportOptions {
@@ -8,6 +9,13 @@ export interface HttpTransportOptions {
   /** Current Supabase access token (re-read per request so refreshes apply). */
   token: () => string | null | Promise<string | null>
   fetch?: typeof fetch
+}
+
+export interface SearchParams {
+  q: string
+  cursor?: string | null
+  limit?: number
+  tzOffset?: number
 }
 
 export class HttpError extends Error {
@@ -23,6 +31,7 @@ export class HttpError extends Error {
 export function httpTransport(opts: HttpTransportOptions): SyncTransport & {
   body(messageId: string, signal?: AbortSignal): Promise<MessageBody>
   ops(req: OpsRequest, signal?: AbortSignal): Promise<OpsResponse>
+  search(params: SearchParams, signal?: AbortSignal): Promise<SearchResponse>
 } {
   const f = opts.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
   const base = opts.baseUrl ?? ''
@@ -55,6 +64,13 @@ export function httpTransport(opts: HttpTransportOptions): SyncTransport & {
     },
     async ops(req, signal) {
       return (await (await get('/api/ops', signal, req)).json()) as OpsResponse
+    },
+    async search(params, signal) {
+      const qs = new URLSearchParams({ q: params.q })
+      if (params.cursor) qs.set('cursor', params.cursor)
+      if (params.limit) qs.set('limit', String(params.limit))
+      if (params.tzOffset !== undefined) qs.set('tz', String(params.tzOffset))
+      return (await (await get(`/api/search?${qs}`, signal)).json()) as SearchResponse
     },
   }
 }

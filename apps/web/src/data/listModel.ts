@@ -1,7 +1,10 @@
-import type { ListQuery, ThreadListItem } from '@zachmail/local-store'
+import type { ThreadListItem } from '@zachmail/local-store'
 import type { DataClient } from './client'
+import type { ViewQuery } from './protocol'
 
 const PAGE = 100
+/** After a query change, how long neighbouring pages wait (the next keystroke comes first). */
+const SETTLE_MS = 200
 
 export interface Removed {
   index: number
@@ -21,13 +24,37 @@ export class ListModel {
   private gen = 0
   private refreshing = false
   private dirty = false
+  private settleUntil = 0
+  private visible: [number, number] = [0, 0]
+  private settleTimer: ReturnType<typeof setTimeout> | undefined
   private listeners = new Set<() => void>()
 
   constructor(
     private data: DataClient,
-    readonly query: ListQuery,
+    private view: ViewQuery,
   ) {
     void this.refresh()
+  }
+
+  get query(): ViewQuery {
+    return this.view
+  }
+
+  /**
+   * Shows a different query (search as you type). The current rows stay on screen until the
+   * new ones arrive, so the list never flashes empty between keystrokes. False if unchanged.
+   */
+  setQuery(view: ViewQuery): boolean {
+    if (JSON.stringify(view) === JSON.stringify(this.view)) return false
+    this.view = view
+    // One page per keystroke; the pages around it once typing pauses.
+    this.window = [0, 0]
+    this.settleUntil = performance.now() + SETTLE_MS
+    clearTimeout(this.settleTimer)
+    this.settleTimer = setTimeout(() => this.ensure(...this.visible), SETTLE_MS)
+    this.invalidateInflight()
+    void this.refresh()
+    return true
   }
 
   get(i: number): ThreadListItem | undefined {
@@ -36,8 +63,10 @@ export class ListModel {
 
   /** Rows [start, end) are about to render; load their pages (and one either side). */
   ensure(start: number, end: number) {
-    const first = Math.max(0, Math.floor(start / PAGE) - 1)
-    const last = Math.floor(Math.max(start, end - 1) / PAGE) + 1
+    this.visible = [start, end]
+    const pad = performance.now() < this.settleUntil ? 0 : 1
+    const first = Math.max(0, Math.floor(start / PAGE) - pad)
+    const last = Math.floor(Math.max(start, end - 1) / PAGE) + pad
     this.window = [first, last]
     for (let p = first; p <= last; p++) {
       if (this.count !== null && p * PAGE >= this.count) break

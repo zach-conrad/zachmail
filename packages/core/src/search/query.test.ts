@@ -158,6 +158,14 @@ describe('compilers', () => {
     )
   })
 
+  it('one or two letters are a word, not a prefix; trailing after other terms they wait', () => {
+    expect(planQuery(p('de'), ctx)!.match.map(toFts5)).toEqual(['"de"'])
+    expect(toTsQuery(planQuery(p('de'), ctx)!.match)).toBe(`'de'`)
+    expect(planQuery(p('design re'), ctx)!.match.map(toFts5)).toEqual(['"design"*'])
+    expect(planQuery(p('design rev'), ctx)!.match.map(toFts5)).toEqual(['"design"*', '"rev"*'])
+    expect(planQuery(p('re design'), ctx)!.match.map(toFts5)).toEqual(['"re"', '"design"*'])
+  })
+
   it('Gmail q= with the mirror horizon', () => {
     expect(
       toGmailQuery(p('from:"Ana R" in:done -is:starred account:work larger:5M after:2026/10/01'), {

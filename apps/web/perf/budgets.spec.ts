@@ -7,6 +7,7 @@ const BUDGET = {
   keyAction: 16,
   openPrefetched: 50,
   palette: 16,
+  searchKey: 50,
   droppedFrames: 0.05,
 }
 
@@ -94,6 +95,28 @@ test('command palette opens < 16 ms', async () => {
   }
   report.palette = summary(xs)
   expect(pct(xs, 95)).toBeLessThan(BUDGET.palette)
+})
+
+test('search as you type: results per keystroke < 50 ms', async () => {
+  const xs: number[] = []
+  for (const query of ['design review', 'from:ana plan', 'is:unread contract']) {
+    await page.keyboard.press('/')
+    const input = page.getByRole('textbox', { name: 'Search mail' })
+    await expect(input).toBeFocused()
+    await clearSamples()
+    for (const ch of query) {
+      await page.keyboard.type(ch)
+      // Let each keystroke's results land before the next, as a typist's pace allows.
+      await page.waitForTimeout(60)
+    }
+    xs.push(...(await samples('search.type')))
+    await expect(page.locator('.thread-list .row[id]').first()).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(input).toBeHidden()
+  }
+  report.search = summary(xs)
+  expect(xs.length).toBeGreaterThan(20)
+  expect(pct(xs, 95)).toBeLessThan(BUDGET.searchKey)
 })
 
 test('archive 50 threads, then undo: each key < 16 ms', async () => {

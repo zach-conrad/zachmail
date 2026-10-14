@@ -1,6 +1,7 @@
 import { useNavigate } from '@tanstack/react-router'
 import { useLayoutEffect, useMemo, useState } from 'react'
 import { Inbox } from '../inbox/Inbox'
+import { SearchView } from '../search/SearchView'
 import { endInteraction } from '../lib/perf'
 import { keymap, type CommandId } from '@zachmail/core'
 import { canRun, useCommands } from '../lib/useCommands'
@@ -15,6 +16,8 @@ type Overlay = 'palette' | 'shortcuts' | null
 export function Shell({ split }: { split: SplitId }) {
   const navigate = useNavigate()
   const [overlay, setOverlay] = useState<Overlay>(null)
+  // Search replaces the list while open (design §3.5); null when not searching.
+  const [search, setSearch] = useState<string | null>(null)
   // What the views underneath can run, captured before the overlay deactivates them.
   const [available, setAvailable] = useState<CommandId[]>([])
   const open = (o: Exclude<Overlay, null>) => {
@@ -36,12 +39,17 @@ export function Shell({ split }: { split: SplitId }) {
   useCommands({
     'nav.nextSplit': () => cycle(1),
     'nav.prevSplit': () => cycle(-1),
-    'go.inbox': () => goSplit('important'),
+    'go.inbox': () => {
+      setSearch(null)
+      goSplit('important')
+    },
+    'nav.search': () => setSearch(''),
     'app.palette': () => open('palette'),
     'app.shortcuts': () => open('shortcuts'),
     ...(overlay ? { 'nav.back': () => setOverlay(null) } : {}),
   })
 
+  const view = useMemo(() => ({ split }), [split])
   const extra = useMemo<PaletteItem[]>(
     () =>
       SPLITS.filter((s) => s.id !== split).map((s) => ({
@@ -58,11 +66,20 @@ export function Shell({ split }: { split: SplitId }) {
     <div className="shell">
       <AppHeader split={split} onPalette={() => open('palette')} />
       <main className="main">
-        <Inbox key={split} split={split} active={!overlay} />
+        {search !== null ? (
+          <SearchView initial={search} active={!overlay} onExit={() => setSearch(null)} />
+        ) : (
+          <Inbox key={split} view={view} active={!overlay} />
+        )}
       </main>
       <UndoToast />
       {overlay === 'palette' && (
-        <CommandPalette available={available} extra={extra} onClose={() => setOverlay(null)} />
+        <CommandPalette
+          available={available}
+          extra={extra}
+          onSearch={(q) => setSearch(q)}
+          onClose={() => setOverlay(null)}
+        />
       )}
       {overlay === 'shortcuts' && (
         <CheatSheet available={available} onClose={() => setOverlay(null)} />
