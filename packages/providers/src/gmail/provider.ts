@@ -213,6 +213,29 @@ export class GmailProvider implements MailProvider {
     return { providerMessageId: r.id, providerThreadId: r.threadId }
   }
 
+  async saveDraft(
+    raw: Uint8Array,
+    opts: { providerDraftId?: string | null; providerThreadId?: string },
+  ): Promise<string> {
+    const body = {
+      message: { raw: Buffer.from(raw).toString('base64url'), threadId: opts.providerThreadId },
+    }
+    if (opts.providerDraftId) {
+      const updated = await this.api
+        .put<{ id: string }>(`/drafts/${opts.providerDraftId}`, {
+          id: opts.providerDraftId,
+          ...body,
+        })
+        .catch(notFoundAs(null))
+      if (updated) return updated.id
+    }
+    return (await this.api.post<{ id: string }>('/drafts', body)).id
+  }
+
+  async deleteDraft(providerDraftId: string): Promise<void> {
+    await this.api.delete(`/drafts/${providerDraftId}`).catch(notFoundAs(undefined))
+  }
+
   async fetchThreads(providerThreadIds: string[]): Promise<SyncBatch> {
     const threads = await mapLimit(providerThreadIds, this.concurrency, (id) =>
       this.api

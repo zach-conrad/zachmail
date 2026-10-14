@@ -1,5 +1,5 @@
 {
-  "id": "6ef61499-20cd-4a81-8b67-4f294ffed984",
+  "id": "6cb6025c-83c4-4fdc-8861-085c7e908443",
   "prevId": "e0f36d40-1580-415a-847d-bb9fa3da0917",
   "version": "7",
   "dialect": "postgresql",
@@ -1033,12 +1033,6 @@
           "notNull": true,
           "default": "'none'"
         },
-        "search": {
-          "name": "search",
-          "type": "tsvector",
-          "primaryKey": false,
-          "notNull": false
-        },
         "updated_at": {
           "name": "updated_at",
           "type": "timestamp with time zone",
@@ -1088,21 +1082,6 @@
           "isUnique": false,
           "concurrently": false,
           "method": "btree",
-          "with": {}
-        },
-        "messages_search": {
-          "name": "messages_search",
-          "columns": [
-            {
-              "expression": "search",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "gin",
           "with": {}
         }
       },
@@ -1543,6 +1522,13 @@
           "notNull": true,
           "default": false
         },
+        "muted": {
+          "name": "muted",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "updated_at": {
           "name": "updated_at",
           "type": "timestamp with time zone",
@@ -1552,6 +1538,22 @@
         }
       },
       "indexes": {
+        "threads_muted": {
+          "name": "threads_muted",
+          "columns": [
+            {
+              "expression": "account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "muted",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "threads_account_provider": {
           "name": "threads_account_provider",
           "columns": [

@@ -107,6 +107,16 @@ export interface MailProvider {
   apply(providerThreadIds: string[], change: ProviderChange): Promise<void>
   /** Sends a complete RFC 5322 message (Bcc header included), threaded when given a thread. */
   send(raw: Uint8Array, opts?: { providerThreadId?: string }): Promise<SentRef>
+  /**
+   * Creates or replaces a provider draft and returns its id. A `providerDraftId` that no
+   * longer exists makes a new draft.
+   */
+  saveDraft(
+    raw: Uint8Array,
+    opts: { providerDraftId?: string | null; providerThreadId?: string },
+  ): Promise<string>
+  /** Deletes a provider draft; one that is already gone is fine. */
+  deleteDraft(providerDraftId: string): Promise<void>
   /** Current metadata of whole threads, used to restore the mirror after a failed write. */
   fetchThreads(providerThreadIds: string[]): Promise<SyncBatch>
   /** Threads matching a query in the provider's own syntax, newest first. */

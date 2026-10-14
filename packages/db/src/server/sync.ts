@@ -279,7 +279,7 @@ const SELECT_FOLDER = `SELECT f.id, f.account_id AS "accountId", f.provider_id A
 
 export const SELECT_THREAD = `SELECT t.id, t.account_id AS "accountId", t.subject, t.snippet, t.participants,
   ${ms('t.last_message_at')} AS "lastMessageAt", t.message_count AS "messageCount", t.unread, t.starred,
-  t.has_attachments AS "hasAttachments",
+  t.has_attachments AS "hasAttachments", t.muted,
   COALESCE((SELECT array_agg(tf.folder_id::text) FROM thread_folders tf WHERE tf.thread_id = t.id), '{}') AS "folderIds"
   FROM threads t`
 

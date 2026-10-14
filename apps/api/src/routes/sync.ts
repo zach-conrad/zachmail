@@ -1,5 +1,5 @@
 import type { BootstrapLine } from '@zachmail/core'
-import { readBootstrap, readDelta } from '@zachmail/db/server'
+import { readBootstrap, readContacts, readDelta } from '@zachmail/db/server'
 import { getMessageBody } from '@zachmail/engine'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
@@ -60,6 +60,13 @@ export function syncRoutes(deps: Deps) {
     if (!r) throw new HTTPException(404, { message: 'Not found' })
     c.header('cache-control', 'private, max-age=86400')
     return c.json(r.body)
+  })
+
+  /** Autocomplete source; clients cache the whole list and match locally. */
+  app.get('/contacts', async (c) => {
+    const contacts = await readContacts(deps.db(), c.get('user').id)
+    c.header('cache-control', 'private, max-age=300')
+    return c.json({ contacts })
   })
 
   return app

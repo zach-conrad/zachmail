@@ -97,17 +97,21 @@ export async function acceptOps(db: Db, userId: string, ops: OpEnvelope[]): Prom
             effect.starred ?? null,
           ],
         )
+        const muted =
+          effect.muted === undefined
+            ? []
+            : await tx.query(
+                `UPDATE threads SET muted = $2, updated_at = now()
+                 WHERE id = ANY($1::uuid[]) AND muted <> $2 RETURNING id`,
+                [threadIds, effect.muted],
+              )
         if (changed.length) {
-          await recordChanges(
-            tx,
-            userId,
-            'message',
-            changed.map((m) => m.id),
-            'upsert',
-          )
+          const messageIds = changed.map((m) => m.id)
+          await recordChanges(tx, userId, 'message', messageIds, 'upsert')
           await recomputeThreads(tx, userId, threadIds)
-          await recordChanges(tx, userId, 'thread', threadIds, 'upsert')
         }
+        if (changed.length || muted.length)
+          await recordChanges(tx, userId, 'thread', threadIds, 'upsert')
       }
       await recordChanges(tx, userId, 'op', [id], 'upsert')
       result.accepted.push(id)
@@ -205,6 +209,18 @@ export async function releaseOutbox(db: Queryable, item: OutboxItem) {
   )
 }
 
+/** Muted threads that new mail put back in the inbox; the caller archives them again. */
+export async function mutedThreadsInInbox(db: Queryable, accountId: string): Promise<string[]> {
+  const rows = await db.query<{ id: string }>(
+    `SELECT t.id FROM threads t
+     JOIN thread_folders tf ON tf.thread_id = t.id
+     JOIN folders f ON f.id = tf.folder_id AND f.kind = 'inbox'
+     WHERE t.account_id = $1 AND t.muted`,
+    [accountId],
+  )
+  return rows.map((r) => r.id)
+}
+
 /** Accounts whose outbox has work nobody picked up (a lost job, a crashed worker). */
 export async function stalledOutboxAccounts(db: Queryable) {
   return db.query<{ userId: string; accountId: string }>(
@@ -223,6 +239,8 @@ export interface SendPayload {
   subject: string
   html: string
   replyToMessageId: string | null
+  /** Send payloads only: the draft to delete once sent. */
+  draftId?: string | null
 }
 
 export class SendRejectedError extends Error {
@@ -254,6 +272,7 @@ export async function acceptSend(db: Db, userId: string, req: SendRequest): Prom
       subject: req.subject,
       html: req.html,
       replyToMessageId: req.replyToMessageId ?? null,
+      draftId: req.draftId ?? null,
     }
     const notBefore = Math.max(Date.now() + (req.undoMs ?? DEFAULT_UNDO_MS), req.sendAt ?? 0)
     const inserted = await tx.query<{ at: number }>(

@@ -22,7 +22,7 @@ import {
 } from 'drizzle-orm/pg-core'
 import { authUid, authUsers, authenticatedRole } from 'drizzle-orm/supabase'
 
-/** Maintained by triggers (migration 0005_search): subject A, sender B, recipients C, body D. */
+/** Maintained by triggers (migration 0008_search_triggers): subject A, sender B, recipients C, body D. */
 const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
 
 const ownerId = () =>
@@ -184,9 +184,14 @@ export const threads = pgTable(
     unread: boolean('unread').notNull().default(false),
     starred: boolean('starred').notNull().default(false),
     hasAttachments: boolean('has_attachments').notNull().default(false),
+    /** ZachMail-only state: new replies get archived (Gmail's API has no mute). */
+    muted: boolean('muted').notNull().default(false),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    index('threads_muted')
+      .on(t.accountId)
+      .where(sql`muted`),
     uniqueIndex('threads_account_provider').on(t.accountId, t.providerThreadId),
     index('threads_user_recent').on(t.userId, t.lastMessageAt.desc()),
     ownRowsReadOnly('threads'),
@@ -324,6 +329,29 @@ export const outbox = pgTable(
       .where(sql`state in ('pending', 'in_flight')`),
     ownRowsReadOnly('outbox'),
   ],
+).enableRLS()
+
+/**
+ * Composer drafts, keyed by the client's id. The worker mirrors each to a provider draft
+ * (`synced_version` trails `version` until it has); deleted drafts linger until the provider
+ * copy is gone too.
+ */
+export const drafts = pgTable(
+  'drafts',
+  {
+    id: uuid('id').primaryKey(),
+    userId: ownerId(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    version: integer('version').notNull().default(1),
+    syncedVersion: integer('synced_version').notNull().default(0),
+    providerDraftId: text('provider_draft_id'),
+    deleted: boolean('deleted').notNull().default(false),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [ownRowsReadOnly('drafts')],
 ).enableRLS()
 
 /** Single-row allowlist checked by the auth hook: only these emails can ever get a session. */
