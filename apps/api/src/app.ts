@@ -7,6 +7,7 @@ import { aiRoutes } from './routes/ai'
 import { accountRoutes, oauthCallbackRoute } from './routes/accounts'
 import { composerRoutes } from './routes/composer'
 import { imageRoutes } from './routes/images'
+import { notificationRoutes } from './routes/notifications'
 import { opsRoutes } from './routes/ops'
 import { splitRuleRoutes } from './routes/splitRules'
 import { syncRoutes } from './routes/sync'
@@ -39,6 +40,7 @@ export function createApp(env: Env, overrides: Partial<Deps> = {}) {
   authed.route('/', splitRuleRoutes(deps))
   authed.route('/', aiRoutes(deps))
   authed.route('/', composerRoutes(deps))
+  authed.route('/', notificationRoutes(env, deps))
   api.route('/', authed)
 
   app.route('/api', api)

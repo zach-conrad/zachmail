@@ -79,6 +79,7 @@ export const keymap = [
   { id: 'app.shortcuts', label: 'Keyboard shortcuts', group: 'app', keys: ['?'] },
   { id: 'app.settings', label: 'Settings', group: 'app', keys: ['mod+,'] },
   { id: 'app.splitRules', label: 'Edit splits and rules', group: 'app', keys: [] },
+  { id: 'app.notifications', label: 'Notification settings', group: 'app', keys: [] },
   { id: 'app.toggleSidebar', label: 'Toggle sidebar', group: 'app', keys: ['mod+\\'] },
 ] as const satisfies readonly KeyBinding[]
 

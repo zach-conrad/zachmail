@@ -28,14 +28,16 @@ const ids = (rows: { id: string }[]) => rows.map((r) => r.id)
  * Writes one provider batch into the mirror and the change log in a single transaction:
  * folders, threads, messages, attachments, then recomputed thread aggregates and folder
  * membership. Unchanged rows produce no change entries, so re-syncing is cheap and quiet.
+ * `inserted` lists messages new to the mirror (what notifications look at).
  */
 export async function applySyncBatch(
   db: Db,
   args: { userId: string; accountId: string; batch: SyncBatch },
-): Promise<{ changed: number }> {
+): Promise<{ changed: number; inserted: string[] }> {
   const { userId, accountId, batch } = args
   return db.transaction(async (tx) => {
     let changed = 0
+    let inserted: string[] = []
     const affectedThreads = new Set<string>()
 
     if (batch.folders) {
@@ -136,6 +138,7 @@ export async function applySyncBatch(
       // Their threads are already in affectedThreads, so the changes get logged below.
       await unsnoozeOnReply(tx, insertedIds)
       await attachSentReminders(tx, accountId, insertedIds)
+      inserted = insertedIds
       const atts = batch.messages.flatMap((m) =>
         m.attachments.map((a) => ({
           provider_message_id: m.providerMessageId,
@@ -186,7 +189,7 @@ export async function applySyncBatch(
       changed += threadIds.length
     }
 
-    return { changed }
+    return { changed, inserted }
   })
 }
 

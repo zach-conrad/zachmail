@@ -59,6 +59,7 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm size
    | `OAUTH_STATE_SECRET`, `IMAGE_PROXY_SECRET`           | random strings (`openssl rand -hex 32`)           |
    | `SUPABASE_SERVICE_ROLE_KEY`                          | service role key (signs attachment uploads)       |
    | `ANTHROPIC_API_KEY` (optional)                       | Claude API key; AI writing help is off without it |
+   | `VAPID_PUBLIC_KEY`                                   | Web Push public key (see step 4)                  |
 
 4. **Fly.io**: `fly apps create zachmail-worker`, then `fly secrets set` `DATABASE_URL`
    (session mode, port 5432), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GMAIL_PUBSUB_TOPIC`
@@ -66,3 +67,6 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm size
    `SUPABASE_SERVICE_ROLE_KEY` for attachments, and `ANTHROPIC_API_KEY` to turn on AI triage
    (category, one-line summary and needs-reply on new inbox threads). Set the repo variable `FLY_ENABLED=true`
    and secret `FLY_API_TOKEN` so pushes to `main` deploy it.
+   For notifications, generate Web Push keys once (`npx web-push generate-vapid-keys`) and
+   set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` (`mailto:` you) on the
+   worker; the public key also goes to Vercel. Then ⌘K → _Notification settings_ → Turn on.
