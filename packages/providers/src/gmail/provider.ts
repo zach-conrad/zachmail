@@ -3,6 +3,7 @@ import type {
   IncrementalResult,
   MailProvider,
   ProviderChange,
+  SentRef,
   ProviderMessage,
   RawBody,
   SyncBatch,
@@ -200,6 +201,15 @@ export class GmailProvider implements MailProvider {
         notFoundAs(undefined)(err)
       }
     })
+  }
+
+  async send(raw: Uint8Array, opts: { providerThreadId?: string } = {}): Promise<SentRef> {
+    const r = await this.api.post<{ id: string; threadId: string }>(
+      '/messages/send',
+      { raw: Buffer.from(raw).toString('base64url'), threadId: opts.providerThreadId },
+      { idempotent: false },
+    )
+    return { providerMessageId: r.id, providerThreadId: r.threadId }
   }
 
   async fetchThreads(providerThreadIds: string[]): Promise<SyncBatch> {

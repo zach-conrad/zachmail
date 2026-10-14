@@ -265,3 +265,30 @@ describe('GmailProvider.apply', () => {
     }
   })
 })
+
+describe('GmailProvider.send', () => {
+  it('posts the raw message on the thread and never retries a server error', async () => {
+    let calls = 0
+    let sent: { raw: string; threadId?: string } | undefined
+    const make = (status: number) =>
+      new GmailProvider({
+        tokens: { getAccessToken: async () => 't' },
+        fetch: async (_input, init) => {
+          calls++
+          sent = JSON.parse(String(init?.body))
+          return new Response(JSON.stringify({ id: 'm9', threadId: 't9' }), { status })
+        },
+      })
+    const raw = new TextEncoder().encode('Subject: hi\r\n\r\nbody\r\n')
+    expect(await make(200).send(raw, { providerThreadId: 't9' })).toEqual({
+      providerMessageId: 'm9',
+      providerThreadId: 't9',
+    })
+    expect(Buffer.from(sent!.raw, 'base64url').toString()).toBe('Subject: hi\r\n\r\nbody\r\n')
+    expect(sent!.threadId).toBe('t9')
+
+    calls = 0
+    await expect(make(500).send(raw)).rejects.toMatchObject({ retriable: false })
+    expect(calls).toBe(1)
+  })
+})

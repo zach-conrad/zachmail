@@ -259,6 +259,32 @@ describe('sync endpoints', () => {
     expect(anon.status).toBe(401)
   })
 
+  it('queues a send behind the undo window and undoes it', async () => {
+    const accountId = (await db.query<{ id: string }>(`SELECT id FROM accounts LIMIT 1`))[0]!.id
+    const id = '00000000-0000-4000-8000-0000000000f2'
+    const send = (body: unknown) =>
+      authed('/api/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    const msg = { id, accountId, to: [{ email: 'ana@x.com' }], subject: 'Hi', html: '<p>Hi</p>' }
+    const res = await send(msg)
+    expect(res.status).toBe(202)
+    const { sendAt } = (await res.json()) as { sendAt: number }
+    expect(sendAt).toBeGreaterThan(Date.now() + 5_000)
+    expect(await (await send(msg)).json()).toEqual({ id, sendAt })
+
+    expect((await send({ ...msg, to: [{ email: 'not an email' }] })).status).toBe(400)
+    expect(
+      (await send({ ...msg, id: '00000000-0000-4000-8000-0000000000f3', accountId: id })).status,
+    ).toBe(422)
+
+    expect((await authed(`/api/send/${id}`, { method: 'DELETE' })).status).toBe(200)
+    expect((await authed(`/api/send/${id}`, { method: 'DELETE' })).status).toBe(409)
+    expect((await authed('/api/send/nope', { method: 'DELETE' })).status).toBe(400)
+  })
+
   it('returns compacted deltas', async () => {
     const delta = (await (await authed('/api/sync?since=0')).json()) as {
       seq: number
