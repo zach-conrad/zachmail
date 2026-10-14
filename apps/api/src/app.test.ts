@@ -285,6 +285,27 @@ describe('sync endpoints', () => {
     expect((await authed('/api/send/nope', { method: 'DELETE' })).status).toBe(400)
   })
 
+  it('saves and deletes drafts', async () => {
+    const accountId = (await db.query<{ id: string }>(`SELECT id FROM accounts LIMIT 1`))[0]!.id
+    const id = '00000000-0000-4000-8000-0000000000f4'
+    const put = (body: unknown) =>
+      authed(`/api/drafts/${id}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    const draft = { accountId, subject: '', html: '<p>wip</p>' }
+    expect(await (await put(draft)).json()).toEqual({ id, version: 1 })
+    expect(await (await put(draft)).json()).toEqual({ id, version: 2 })
+    expect(await jobCount('draft.sync')).toBe(1)
+    expect((await put({ ...draft, accountId: id })).status).toBe(422)
+    expect((await authed(`/api/drafts/${id}`, { method: 'DELETE' })).status).toBe(204)
+    expect(
+      (await authed('/api/drafts/00000000-0000-4000-8000-0000000000f5', { method: 'DELETE' }))
+        .status,
+    ).toBe(404)
+  })
+
   it('lists contacts from the mirror', async () => {
     const res = await authed('/api/contacts')
     const { contacts } = (await res.json()) as { contacts: { email: string }[] }

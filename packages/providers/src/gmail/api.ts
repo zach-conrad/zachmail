@@ -44,6 +44,14 @@ export class GmailApi {
     return this.request<T>('POST', path, {}, body, opts.idempotent ?? true)
   }
 
+  async put<T>(path: string, body: unknown) {
+    return this.request<T>('PUT', path, {}, body)
+  }
+
+  async delete(path: string) {
+    await this.request<unknown>('DELETE', path, {})
+  }
+
   private async request<T>(
     method: string,
     path: string,
@@ -69,7 +77,10 @@ export class GmailApi {
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
       })
-      if (res.ok) return (await res.json()) as T
+      if (res.ok) {
+        const text = await res.text()
+        return (text ? JSON.parse(text) : undefined) as T
+      }
 
       if (res.status === 401 && !forced) {
         forced = true

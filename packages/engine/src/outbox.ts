@@ -3,6 +3,7 @@ import {
   acceptOps,
   applySyncBatch,
   claimOutbox,
+  deleteDraft,
   enqueueJob,
   finishOutbox,
   mutedThreadsInInbox,
@@ -17,6 +18,7 @@ import {
 import { ProviderAuthError, ProviderError, type MailProvider } from '@zachmail/providers'
 import { buildMime, replyReferences } from '@zachmail/mime'
 import type { AccountRecord } from './accounts'
+import { enqueueDraftSync } from './drafts'
 
 export const OUTBOX_JOB = 'outbox.flush'
 const MAX_ATTEMPTS = 6
@@ -118,9 +120,20 @@ async function execute(db: Db, item: OutboxItem, provider: MailProvider) {
 
 async function send(db: Db, item: OutboxItem, provider: MailProvider) {
   const p = item.payload as unknown as SendPayload
+  const { raw, providerThreadId } = await buildOutgoing(db, item.accountId, p, item.opId)
+  await provider.send(raw, providerThreadId ? { providerThreadId } : {})
+  if (p.draftId && (await deleteDraft(db, item.userId, p.draftId)))
+    await enqueueDraftSync(db, item.userId, p.draftId)
+}
+
+/**
+ * MIME for an outgoing message from our account, threaded under the message it answers.
+ * `opId` gives sends a stable Message-ID, so one that went out is recognisable when it syncs.
+ */
+export async function buildOutgoing(db: Db, accountId: string, p: SendPayload, opId?: string) {
   const [account] = await db.query<{ email: string; display_name: string | null }>(
     `SELECT email, display_name FROM accounts WHERE id = $1`,
-    [item.accountId],
+    [accountId],
   )
   if (!account) throw new ProviderError('The account was removed', false)
   const [parent] = p.replyToMessageId
@@ -137,6 +150,7 @@ async function send(db: Db, item: OutboxItem, provider: MailProvider) {
   const threading = parent
     ? replyReferences({ rfc822MessageId: parent.rfc822_message_id, references: parent.references })
     : { references: [] }
+  const domain = account.email.split('@')[1] ?? 'zachmail.local'
   const { raw } = buildMime(
     {
       from: {
@@ -148,13 +162,12 @@ async function send(db: Db, item: OutboxItem, provider: MailProvider) {
       bcc: p.bcc,
       subject: p.subject,
       html: p.html,
-      // Stable per op, so a message that did go out can be recognised when it syncs back.
-      messageId: `<${item.opId}@${account.email.split('@')[1] ?? 'zachmail.local'}>`,
+      ...(opId ? { messageId: `<${opId}@${domain}>` } : {}),
       ...threading,
     },
     { includeBcc: true },
   )
-  await provider.send(raw, parent ? { providerThreadId: parent.provider_thread_id } : {})
+  return { raw, providerThreadId: parent?.provider_thread_id }
 }
 
 const providerThreadIds = async (db: Db, ids: string[]) =>
