@@ -180,10 +180,10 @@ export const threads = pgTable(
     unread: boolean('unread').notNull().default(false),
     starred: boolean('starred').notNull().default(false),
     hasAttachments: boolean('has_attachments').notNull().default(false),
-    /** ZachMail-only state: new replies get archived (Gmail's API has no mute). */
-    muted: boolean('muted').notNull().default(false),
     /** ZachMail-only: archived at the provider until then, then back to the inbox. */
     snoozedUntil: timestamp('snoozed_until', { withTimezone: true }),
+    /** ZachMail-only state: new replies get archived (Gmail's API has no mute). */
+    muted: boolean('muted').notNull().default(false),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -328,6 +328,44 @@ export const outbox = pgTable(
       .where(sql`state in ('pending', 'in_flight')`),
     ownRowsReadOnly('outbox'),
   ],
+).enableRLS()
+
+/**
+ * Composer drafts, keyed by the client's id. The worker mirrors each to a provider draft
+ * (`synced_version` trails `version` until it has); deleted drafts linger until the provider
+ * copy is gone too.
+ */
+export const drafts = pgTable(
+  'drafts',
+  {
+    id: uuid('id').primaryKey(),
+    userId: ownerId(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    version: integer('version').notNull().default(1),
+    syncedVersion: integer('synced_version').notNull().default(0),
+    providerDraftId: text('provider_draft_id'),
+    deleted: boolean('deleted').notNull().default(false),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [ownRowsReadOnly('drafts')],
+).enableRLS()
+
+/** Files uploaded (straight to Storage) for outgoing mail; referenced by sends and drafts. */
+export const uploads = pgTable(
+  'uploads',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: ownerId(),
+    storageKey: text('storage_key').notNull(),
+    filename: text('filename').notNull(),
+    mime: text('mime').notNull(),
+    size: integer('size').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [ownRowsReadOnly('uploads')],
 ).enableRLS()
 
 export const reminderConditionEnum = pgEnum('reminder_condition', ['always', 'if_no_reply'])

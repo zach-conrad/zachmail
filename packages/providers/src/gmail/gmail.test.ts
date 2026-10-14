@@ -292,3 +292,54 @@ describe('GmailProvider.send', () => {
     expect(calls).toBe(1)
   })
 })
+
+describe('GmailProvider drafts', () => {
+  it('creates, updates, recreates a vanished draft, and deletes', async () => {
+    const calls: string[] = []
+    const gmail = new GmailProvider({
+      tokens: { getAccessToken: async () => 't' },
+      fetch: async (input, init) => {
+        const path = new URL(input).pathname.replace('/gmail/v1/users/me', '')
+        calls.push(`${init?.method} ${path}`)
+        if (path === '/drafts/gone') return new Response('{}', { status: 404 })
+        if (init?.method === 'DELETE') return new Response(null, { status: 204 })
+        return new Response(JSON.stringify({ id: path === '/drafts' ? 'd-new' : 'd1' }))
+      },
+    })
+    const raw = new TextEncoder().encode('Subject: x\r\n\r\n')
+    expect(await gmail.saveDraft(raw, { providerThreadId: 't1' })).toBe('d-new')
+    expect(await gmail.saveDraft(raw, { providerDraftId: 'd1' })).toBe('d1')
+    expect(await gmail.saveDraft(raw, { providerDraftId: 'gone' })).toBe('d-new')
+    await gmail.deleteDraft('d1')
+    await gmail.deleteDraft('gone')
+    expect(calls).toEqual([
+      'POST /drafts',
+      'PUT /drafts/d1',
+      'PUT /drafts/gone',
+      'POST /drafts',
+      'DELETE /drafts/d1',
+      'DELETE /drafts/gone',
+    ])
+  })
+})
+
+describe('GmailProvider large messages', () => {
+  it('sends big messages as a media upload', async () => {
+    const seen: { url: string; type?: string; size: number }[] = []
+    const gmail = new GmailProvider({
+      tokens: { getAccessToken: async () => 't' },
+      fetch: async (input, init) => {
+        const headers = init?.headers as Record<string, string>
+        const body = init?.body as Uint8Array
+        seen.push({ url: input, type: headers['content-type'], size: body.byteLength })
+        return new Response(JSON.stringify({ id: 'm', threadId: 't' }))
+      },
+    })
+    await gmail.send(new Uint8Array(5 * 1024 * 1024))
+    expect(seen[0]).toEqual({
+      url: 'https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send?uploadType=media',
+      type: 'message/rfc822',
+      size: 5 * 1024 * 1024,
+    })
+  })
+})
