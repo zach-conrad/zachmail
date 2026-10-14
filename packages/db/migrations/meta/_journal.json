@@ -57,6 +57,13 @@
       "when": 1791960488107,
       "tag": "0007_uploads",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791961610546,
+      "tag": "0008_snooze_reminders",
+      "breakpoints": true
     }
   ]
 }

@@ -62,7 +62,46 @@ describe('ops', () => {
 
   it('ignores kinds the account has no folder for', () => {
     const none: FolderOfKind = () => undefined
-    expect(opEffect({ kind: 'archive', threadIds: [T1] }, none)).toEqual({ add: [], remove: [] })
+    expect(opEffect({ kind: 'archive', threadIds: [T1] }, none)).toEqual({
+      add: [],
+      remove: [],
+      snoozedUntil: null,
+    })
+  })
+
+  it('snoozes out of the inbox and wakes back into it, unread', () => {
+    const snoozed = run({ kind: 'snooze', threadIds: [T1], until: 5000 }, thread({ unread: false }))
+    expect(snoozed).toMatchObject({ folderIds: [], snoozedUntil: 5000, unread: false })
+    const woke = run({ kind: 'unsnooze', threadIds: [T1] }, snoozed)
+    expect(woke).toMatchObject({
+      folderIds: [F.inbox],
+      unread: true,
+      snoozedUntil: null,
+      reminder: null,
+    })
+    // Undo of a snooze, or marking it done, ends the snooze without marking it unread.
+    expect(invertOp({ kind: 'snooze', threadIds: [T1], until: 5000 }).kind).toBe('inbox')
+    expect(run({ kind: 'inbox', threadIds: [T1] }, snoozed)).toMatchObject({
+      folderIds: [F.inbox],
+      unread: false,
+      snoozedUntil: null,
+    })
+    expect(run({ kind: 'archive', threadIds: [T1] }, snoozed).snoozedUntil).toBeNull()
+  })
+
+  it('sets and clears reminders without touching folders', () => {
+    const op: MailOp = { kind: 'remind', threadIds: [T1], at: 9000, condition: 'if_no_reply' }
+    const t = run(op)
+    expect(t).toMatchObject({
+      folderIds: [F.inbox],
+      reminder: { at: 9000, condition: 'if_no_reply' },
+    })
+    expect(run(op, t)).toBe(t)
+    expect(run({ kind: 'unremind', threadIds: [T1] }, t).reminder).toBeNull()
+    expect(invertOp(op)).toEqual({ kind: 'unremind', threadIds: [T1] })
+    // Rows from servers that predate snooze have neither field; nothing changes for them.
+    const plain = thread()
+    expect(run({ kind: 'unremind', threadIds: [T1] }, plain)).toBe(plain)
   })
 
   it('inverts ops', () => {
@@ -85,6 +124,26 @@ describe('ops', () => {
       ops: [{ id: T1, at: 1, op: { kind: 'label', threadIds: [T1], add: [L1], remove: [] } }],
     }
     expect(parseOpsRequest(label).ops[0]!.op).toMatchObject({ add: [L1] })
+    const env = (op: Record<string, unknown>) => ({ ops: [{ id: T1, at: 1, op }] })
+    expect(parseOpsRequest(env({ kind: 'snooze', threadIds: [T1], until: 2 })).ops[0]!.op).toEqual({
+      kind: 'snooze',
+      threadIds: [T1],
+      until: 2,
+    })
+    expect(
+      parseOpsRequest(env({ kind: 'remind', threadIds: [T1], at: 2, condition: 'always' })).ops[0]!
+        .op,
+    ).toEqual({ kind: 'remind', threadIds: [T1], at: 2, condition: 'always' })
+    expect(parseOpsRequest(env({ kind: 'unsnooze', threadIds: [T1] })).ops[0]!.op.kind).toBe(
+      'unsnooze',
+    )
+    expect(() => parseOpsRequest(env({ kind: 'snooze', threadIds: [T1] }))).toThrow(/until/)
+    expect(() =>
+      parseOpsRequest(env({ kind: 'snooze', threadIds: [T1], until: Date.now() * 2 })),
+    ).toThrow(/5 years/)
+    expect(() =>
+      parseOpsRequest(env({ kind: 'remind', threadIds: [T1], at: 2, condition: 'maybe' })),
+    ).toThrow(/condition/)
     expect(() => parseOpsRequest({})).toThrow(InvalidOpsError)
     expect(() => parseOpsRequest({ ops: [{ id: 'x', at: 1, op: ok.ops[0]!.op }] })).toThrow(/id/)
     expect(() =>
