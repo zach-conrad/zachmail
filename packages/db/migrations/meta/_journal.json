@@ -36,6 +36,20 @@
       "when": 1791942578105,
       "tag": "0004_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791960397757,
+      "tag": "0005_search",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791960398921,
+      "tag": "0006_search_triggers",
+      "breakpoints": true
     }
   ]
 }

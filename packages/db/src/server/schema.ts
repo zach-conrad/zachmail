@@ -7,6 +7,7 @@ import { sql } from 'drizzle-orm'
 import {
   bigserial,
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -20,6 +21,9 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 import { authUid, authUsers, authenticatedRole } from 'drizzle-orm/supabase'
+
+/** Maintained by triggers (migration 0005_search): subject A, sender B, recipients C, body D. */
+const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
 
 const ownerId = () =>
   uuid('user_id')
@@ -239,11 +243,13 @@ export const messages = pgTable(
     bodyStatus: text('body_status', { enum: ['none', 'cached'] })
       .notNull()
       .default('none'),
+    search: tsvector('search'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex('messages_account_provider').on(t.accountId, t.providerMessageId),
     index('messages_thread_date').on(t.threadId, t.date),
+    index('messages_search').using('gin', t.search),
     ownRowsReadOnly('messages'),
   ],
 ).enableRLS()

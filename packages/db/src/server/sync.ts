@@ -267,13 +267,13 @@ const SELECT_ACCOUNT = `SELECT a.id, a.provider, a.email, a.display_name AS "dis
 const SELECT_FOLDER = `SELECT f.id, f.account_id AS "accountId", f.provider_id AS "providerId", f.name, f.kind,
   f.unread_count AS "unreadCount", f.total_count AS "totalCount" FROM folders f`
 
-const SELECT_THREAD = `SELECT t.id, t.account_id AS "accountId", t.subject, t.snippet, t.participants,
+export const SELECT_THREAD = `SELECT t.id, t.account_id AS "accountId", t.subject, t.snippet, t.participants,
   ${ms('t.last_message_at')} AS "lastMessageAt", t.message_count AS "messageCount", t.unread, t.starred,
   t.has_attachments AS "hasAttachments",
   COALESCE((SELECT array_agg(tf.folder_id::text) FROM thread_folders tf WHERE tf.thread_id = t.id), '{}') AS "folderIds"
   FROM threads t`
 
-const SELECT_MESSAGE = `SELECT m.id, m.thread_id AS "threadId", m.account_id AS "accountId", m."from", m."to", m.cc,
+export const SELECT_MESSAGE = `SELECT m.id, m.thread_id AS "threadId", m.account_id AS "accountId", m."from", m."to", m.cc,
   m.reply_to AS "replyTo", m.subject, m.snippet, ${ms('m.date')} AS date, m.unread, m.starred,
   m.has_attachments AS "hasAttachments", m.list_unsubscribe AS "listUnsubscribe",
   m.rfc822_message_id AS "rfc822MessageId", m.body_status AS "bodyStatus" FROM messages m`
