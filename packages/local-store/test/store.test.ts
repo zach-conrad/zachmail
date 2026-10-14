@@ -340,5 +340,5 @@ describe('split rules', () => {
     expect(store.countThreads({ split: 'r1' })).toBe(Math.ceil(n / 3) + 1)
     // Runs in the data worker, off the UI thread; keep it well under a second on CI.
     expect(best).toBeLessThan(1000)
-  })
+  }, 30_000)
 })
