@@ -1,0 +1,161 @@
+import type { FolderRow, MessageRow, ThreadRow } from '@zachmail/core'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { openSqliteWasm } from '../src/sqlite-wasm'
+import { SqlStore } from '../src/store'
+
+const account = {
+  id: 'a1',
+  provider: 'gmail' as const,
+  email: 'zach@example.com',
+  displayName: 'Zach',
+  shortName: null,
+  color: 0,
+  status: 'ok',
+  lastSyncedAt: null,
+  lastError: null,
+}
+const folder = (id: string, kind: FolderRow['kind']): FolderRow => ({
+  id,
+  accountId: 'a1',
+  providerId: id,
+  name: id,
+  kind,
+  unreadCount: 0,
+  totalCount: 0,
+})
+const thread = (id: string, at: number, folderIds = ['inbox']): ThreadRow => ({
+  id,
+  accountId: 'a1',
+  subject: `Subject ${id}`,
+  snippet: 'snip',
+  participants: [{ name: 'Ana', email: 'ana@example.com' }],
+  lastMessageAt: at,
+  messageCount: 1,
+  unread: true,
+  starred: false,
+  hasAttachments: false,
+  folderIds,
+})
+const message = (id: string, threadId: string, date: number, extra: Partial<MessageRow> = {}) =>
+  ({
+    id,
+    threadId,
+    accountId: 'a1',
+    from: { name: 'Ana', email: 'ana@example.com' },
+    to: [],
+    cc: [],
+    replyTo: [],
+    subject: 's',
+    snippet: 's',
+    date,
+    unread: false,
+    starred: false,
+    hasAttachments: false,
+    listUnsubscribe: null,
+    rfc822MessageId: null,
+    bodyStatus: 'none',
+    ...extra,
+  }) satisfies MessageRow
+
+let store: SqlStore
+
+beforeEach(async () => {
+  store = new SqlStore((await openSqliteWasm()).driver)
+  store.apply(
+    { accounts: [account], folders: [folder('inbox', 'inbox'), folder('imp', 'important')] },
+    null,
+    null,
+  )
+})
+
+describe('SqlStore', () => {
+  it('applies rows, records seq and lists threads newest first', () => {
+    expect(store.getSeq()).toBeNull()
+    store.apply(
+      {
+        threads: [thread('t1', 1, ['inbox', 'imp']), thread('t2', 2, ['inbox', 'imp'])],
+        messages: [message('m1', 't1', 1), message('m2', 't2', 2)],
+      },
+      null,
+      7,
+    )
+    expect(store.getSeq()).toBe(7)
+    const q = { split: 'important' as const }
+    expect(store.countThreads(q)).toBe(2)
+    expect(store.listThreads(q, 0, 10).map((t) => t.id)).toEqual(['t2', 't1'])
+    expect(store.indexOfThread(q, 't1')).toBe(1)
+    expect(store.indexOfThread({ split: 'other' }, 't1')).toBe(-1)
+  })
+
+  it('classifies splits from folders, List-Unsubscribe and automated senders', () => {
+    store.apply(
+      {
+        threads: [
+          thread('imp', 4, ['inbox', 'imp']),
+          thread('oth', 3),
+          thread('news', 2),
+          thread('note', 1),
+          thread('done', 0, []),
+        ],
+        messages: [
+          message('m1', 'imp', 4),
+          message('m2', 'oth', 3),
+          message('m3', 'news', 2, { listUnsubscribe: '<mailto:u@x.com>' }),
+          message('m4', 'note', 1, { from: { email: 'notifications@github.com' } }),
+          message('m5', 'done', 0),
+        ],
+      },
+      null,
+      1,
+    )
+    const ids = (split: 'important' | 'other' | 'newsletters' | 'notifications') =>
+      store.listThreads({ split }, 0, 10).map((t) => t.id)
+    expect(ids('important')).toEqual(['imp'])
+    expect(ids('other')).toEqual(['oth'])
+    expect(ids('newsletters')).toEqual(['news'])
+    expect(ids('notifications')).toEqual(['note'])
+  })
+
+  it('reclassifies when a message arrives later and removes deleted threads', () => {
+    store.apply({ threads: [thread('t', 1)] }, null, 1)
+    expect(store.countThreads({ split: 'other' })).toBe(1)
+    store.apply({ messages: [message('m', 't', 1, { listUnsubscribe: 'x' })] }, null, 2)
+    expect(store.countThreads({ split: 'newsletters' })).toBe(1)
+    store.apply({}, { thread: ['t'] }, 3)
+    expect(store.countThreads({ split: 'newsletters' })).toBe(0)
+    expect(store.getThread('t')).toBeNull()
+  })
+
+  it('returns thread detail with cached bodies and reports missing ones', () => {
+    store.apply(
+      {
+        threads: [thread('t', 3)],
+        messages: [
+          message('old', 't', 1),
+          message('unread', 't', 2, { unread: true }),
+          message('latest', 't', 3),
+        ],
+      },
+      null,
+      1,
+    )
+    expect(
+      store
+        .bodiesMissing(['t'])
+        .map((m) => m.messageId)
+        .sort(),
+    ).toEqual(['latest', 'unread'])
+    store.putBodies([{ messageId: 'latest', html: '<p>hi</p>', hasRemoteImages: false }])
+    expect(store.bodiesMissing(['t'])).toEqual([{ messageId: 'unread', threadId: 't' }])
+    const d = store.getThread('t')!
+    expect(d.messages.map((m) => m.id)).toEqual(['old', 'unread', 'latest'])
+    expect(d.bodies.latest?.html).toBe('<p>hi</p>')
+  })
+
+  it('reset clears synced data and the cursor', () => {
+    store.apply({ threads: [thread('t', 1)] }, null, 5)
+    store.reset()
+    expect(store.getSeq()).toBeNull()
+    expect(store.countThreads({ split: 'other' })).toBe(0)
+  })
+})

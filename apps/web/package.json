@@ -9,8 +9,10 @@
     "preview": "vite preview",
     "typecheck": "tsc -p .",
     "lint": "eslint .",
-    "test": "vitest run --passWithNoTests",
-    "size": "size-limit"
+    "test": "vitest run --passWithNoTests --dir src",
+    "size": "size-limit",
+    "perf:build": "VITE_DEMO=1 vite build --outDir dist-perf",
+    "perf": "playwright test -c perf/playwright.config.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.3",
@@ -19,12 +21,14 @@
     "react-dom": "^19.3.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.0",
     "@size-limit/file": "^14.2.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "@zachmail/config": "workspace:*",
     "@zachmail/core": "workspace:*",
+    "@zachmail/local-store": "workspace:*",
     "@zachmail/tokens": "workspace:*",
     "eslint-plugin-react-hooks": "^7.1.1",
     "size-limit": "^14.2.0",

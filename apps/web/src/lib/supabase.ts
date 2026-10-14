@@ -9,4 +9,5 @@ export const supabase: SupabaseClient | null =
     ? createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true } })
     : null
 
-export const demoMode = !supabase && import.meta.env.DEV
+/** Demo mode serves a generated mailbox: dev without Supabase, or a VITE_DEMO=1 build (perf CI). */
+export const demoMode = !supabase && (import.meta.env.DEV || import.meta.env.VITE_DEMO === '1')

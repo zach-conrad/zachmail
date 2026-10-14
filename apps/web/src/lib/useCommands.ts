@@ -1,5 +1,6 @@
 import { KeySequenceMatcher, chordFromEvent, keymap, type CommandId } from '@zachmail/core'
 import { useEffect, useEffectEvent } from 'react'
+import { beginInteraction } from './perf'
 import { isApple, isTypingTarget } from './platform'
 
 export type CommandHandlers = Partial<Record<CommandId, () => void>>
@@ -9,10 +10,12 @@ export type CommandHandlers = Partial<Record<CommandId, () => void>>
  * keydown event, so the UI can update in the same frame.
  */
 export function useCommands(handlers: CommandHandlers) {
-  const dispatch = useEffectEvent((id: CommandId) => {
+  const dispatch = useEffectEvent((id: CommandId, t0: number) => {
     const handler = handlers[id]
-    handler?.()
-    return !!handler
+    if (!handler) return false
+    beginInteraction(id, t0)
+    handler()
+    return true
   })
 
   useEffect(() => {
@@ -23,7 +26,7 @@ export function useCommands(handlers: CommandHandlers) {
       const hasMod = chord.includes('mod+')
       if (isTypingTarget(e.target) && !hasMod && e.key !== 'Escape') return
       const id = matcher.press(chord)
-      if (id && dispatch(id)) {
+      if (id && dispatch(id, e.timeStamp)) {
         e.preventDefault()
       } else if (matcher.isPending) {
         e.preventDefault()

@@ -1,13 +1,18 @@
 import { useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useLayoutEffect, useState } from 'react'
+import { Inbox } from '../inbox/Inbox'
+import { endInteraction } from '../lib/perf'
 import { useCommands } from '../lib/useCommands'
-import { InboxZero } from '../inbox/InboxZero'
 import { AppHeader } from './AppHeader'
 import { SPLITS, type SplitId } from './splits'
 
 export function Shell({ split }: { split: SplitId }) {
   const navigate = useNavigate()
   const [paletteOpen, setPaletteOpen] = useState(false)
+
+  useLayoutEffect(() => {
+    if (paletteOpen) endInteraction('app.palette')
+  }, [paletteOpen])
 
   const cycle = (dir: 1 | -1) => {
     const i = SPLITS.findIndex((s) => s.id === split)
@@ -20,16 +25,14 @@ export function Shell({ split }: { split: SplitId }) {
     'nav.prevSplit': () => cycle(-1),
     'go.inbox': () => void navigate({ to: '/inbox/$split', params: { split: 'important' } }),
     'app.palette': () => setPaletteOpen((o) => !o),
-    'nav.back': () => setPaletteOpen(false),
+    ...(paletteOpen ? { 'nav.back': () => setPaletteOpen(false) } : {}),
   })
 
   return (
     <div className="shell">
       <AppHeader split={split} onPalette={() => setPaletteOpen(true)} />
-      <main className="panes">
-        <div className="list-pane">
-          <InboxZero hero={split === 'important'} />
-        </div>
+      <main className="main">
+        <Inbox key={split} split={split} active={!paletteOpen} />
       </main>
       {paletteOpen && (
         <div className="palette-backdrop" onClick={() => setPaletteOpen(false)}>

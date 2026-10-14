@@ -1,2 +1,5 @@
 export * from './keymap'
 export * from './sync/protocol'
+export * from './sync/split'
+export * from './sync/client'
+export * from './sync/http'
