@@ -46,6 +46,15 @@ describe('ops', () => {
     expect(run({ kind: 'read', threadIds: [T1] }).unread).toBe(false)
   })
 
+  it('mutes by archiving and flagging, and unmutes back into the inbox', () => {
+    const muted = run({ kind: 'mute', threadIds: [T1] })
+    expect(muted).toMatchObject({ folderIds: [], muted: true })
+    expect(run(invertOp({ kind: 'mute', threadIds: [T1] }), muted)).toMatchObject({
+      folderIds: [F.inbox],
+      muted: false,
+    })
+  })
+
   it('returns the same object when nothing changes', () => {
     const t = thread({ unread: false })
     expect(run({ kind: 'read', threadIds: [T1] }, t)).toBe(t)

@@ -1,5 +1,5 @@
 {
-  "id": "4993ee6a-e626-437a-8c22-b18889907673",
+  "id": "6cb6025c-83c4-4fdc-8861-085c7e908443",
   "prevId": "e0f36d40-1580-415a-847d-bb9fa3da0917",
   "version": "7",
   "dialect": "postgresql",
@@ -1330,182 +1330,6 @@
       "checkConstraints": {},
       "isRLSEnabled": true
     },
-    "public.reminders": {
-      "name": "reminders",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "auth.uid()"
-        },
-        "account_id": {
-          "name": "account_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "thread_id": {
-          "name": "thread_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "sent_message_id": {
-          "name": "sent_message_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "op_id": {
-          "name": "op_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "remind_at": {
-          "name": "remind_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "condition": {
-          "name": "condition",
-          "type": "reminder_condition",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'if_no_reply'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "reminders_thread": {
-          "name": "reminders_thread",
-          "columns": [
-            {
-              "expression": "thread_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "reminders_due": {
-          "name": "reminders_due",
-          "columns": [
-            {
-              "expression": "remind_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "reminders_sent_message": {
-          "name": "reminders_sent_message",
-          "columns": [
-            {
-              "expression": "account_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "sent_message_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "thread_id is null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "reminders_user_id_users_id_fk": {
-          "name": "reminders_user_id_users_id_fk",
-          "tableFrom": "reminders",
-          "tableTo": "users",
-          "schemaTo": "auth",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "reminders_account_id_accounts_id_fk": {
-          "name": "reminders_account_id_accounts_id_fk",
-          "tableFrom": "reminders",
-          "tableTo": "accounts",
-          "columnsFrom": [
-            "account_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "reminders_thread_id_threads_id_fk": {
-          "name": "reminders_thread_id_threads_id_fk",
-          "tableFrom": "reminders",
-          "tableTo": "threads",
-          "columnsFrom": [
-            "thread_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {
-        "reminders_owner_read": {
-          "name": "reminders_owner_read",
-          "as": "PERMISSIVE",
-          "for": "SELECT",
-          "to": [
-            "authenticated"
-          ],
-          "using": "(select auth.uid()) = user_id"
-        }
-      },
-      "checkConstraints": {},
-      "isRLSEnabled": true
-    },
     "public.thread_folders": {
       "name": "thread_folders",
       "schema": "",
@@ -1698,11 +1522,12 @@
           "notNull": true,
           "default": false
         },
-        "snoozed_until": {
-          "name": "snoozed_until",
-          "type": "timestamp with time zone",
+        "muted": {
+          "name": "muted",
+          "type": "boolean",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true,
+          "default": false
         },
         "updated_at": {
           "name": "updated_at",
@@ -1713,6 +1538,22 @@
         }
       },
       "indexes": {
+        "threads_muted": {
+          "name": "threads_muted",
+          "columns": [
+            {
+              "expression": "account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "muted",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "threads_account_provider": {
           "name": "threads_account_provider",
           "columns": [
@@ -1751,22 +1592,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "threads_snoozed": {
-          "name": "threads_snoozed",
-          "columns": [
-            {
-              "expression": "snoozed_until",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "snoozed_until is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1853,14 +1678,6 @@
         "gmail",
         "graph",
         "imap"
-      ]
-    },
-    "public.reminder_condition": {
-      "name": "reminder_condition",
-      "schema": "public",
-      "values": [
-        "always",
-        "if_no_reply"
       ]
     }
   },

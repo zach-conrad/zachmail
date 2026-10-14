@@ -180,11 +180,16 @@ export const threads = pgTable(
     unread: boolean('unread').notNull().default(false),
     starred: boolean('starred').notNull().default(false),
     hasAttachments: boolean('has_attachments').notNull().default(false),
+    /** ZachMail-only state: new replies get archived (Gmail's API has no mute). */
+    muted: boolean('muted').notNull().default(false),
     /** ZachMail-only: archived at the provider until then, then back to the inbox. */
     snoozedUntil: timestamp('snoozed_until', { withTimezone: true }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    index('threads_muted')
+      .on(t.accountId)
+      .where(sql`muted`),
     uniqueIndex('threads_account_provider').on(t.accountId, t.providerThreadId),
     index('threads_user_recent').on(t.userId, t.lastMessageAt.desc()),
     index('threads_snoozed')

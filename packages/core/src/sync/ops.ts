@@ -7,7 +7,17 @@
 import type { FolderKind, Reminder, ReminderCondition, ThreadRow } from './protocol'
 
 export type SimpleOpKind =
-  'archive' | 'inbox' | 'trash' | 'spam' | 'read' | 'unread' | 'star' | 'unstar'
+  | 'archive'
+  | 'inbox'
+  | 'trash'
+  | 'spam'
+  | 'read'
+  | 'unread'
+  | 'star'
+  | 'unstar'
+  /** Archive, and keep archiving the thread when new replies arrive. */
+  | 'mute'
+  | 'unmute'
 
 export type MailOp =
   | { kind: SimpleOpKind; threadIds: string[] }
@@ -40,7 +50,7 @@ export interface OpsResponse {
 }
 
 /**
- * Arrives in sync deltas as `upserts.ops`. Drop the matching pending op on `done`; on `failed`
+ * Arrives in sync deltas as `SyncDelta.ops`. Drop the matching pending op on `done`; on `failed`
  * drop it and show `error` (the server has already restored the provider's state).
  */
 export interface OpStatusRow {
@@ -55,6 +65,7 @@ export interface OpEffect {
   remove: string[]
   unread?: boolean
   starred?: boolean
+  muted?: boolean
   /** undefined leaves it alone; null clears it. */
   snoozedUntil?: number | null
   reminder?: Reminder | null
@@ -76,6 +87,8 @@ const SIMPLE_KINDS: readonly SimpleOpKind[] = [
   'unread',
   'star',
   'unstar',
+  'mute',
+  'unmute',
 ]
 
 /** The effect of `op` on threads of one account, given that account's folders by kind. */
@@ -100,6 +113,11 @@ export function opEffect(op: MailOp, folderOf: FolderOfKind): OpEffect {
       return { add: ids('starred'), remove: [], starred: true }
     case 'unstar':
       return { add: [], remove: ids('starred'), starred: false }
+    case 'mute':
+      return { add: [], remove: ids('inbox'), muted: true }
+    case 'unmute':
+      // Back to the inbox too, so unmute is an exact undo of mute.
+      return { add: ids('inbox'), remove: [], muted: false }
     case 'label':
       return { add: op.add, remove: op.remove }
     case 'snooze':
@@ -124,6 +142,7 @@ export function applyEffect(thread: ThreadRow, effect: OpEffect): ThreadRow {
   const folderIds = [...folders]
   const unread = effect.unread ?? thread.unread
   const starred = effect.starred ?? thread.starred
+  const muted = effect.muted ?? thread.muted ?? false
   const snoozedUntil =
     effect.snoozedUntil !== undefined ? effect.snoozedUntil : (thread.snoozedUntil ?? null)
   const reminder = effect.reminder !== undefined ? effect.reminder : (thread.reminder ?? null)
@@ -133,11 +152,12 @@ export function applyEffect(thread: ThreadRow, effect: OpEffect): ThreadRow {
     sameFolders &&
     unread === thread.unread &&
     starred === thread.starred &&
+    muted === (thread.muted ?? false) &&
     snoozedUntil === (thread.snoozedUntil ?? null) &&
     sameReminder(reminder, thread.reminder ?? null)
   )
     return thread
-  return { ...thread, folderIds, unread, starred, snoozedUntil, reminder }
+  return { ...thread, folderIds, unread, starred, muted, snoozedUntil, reminder }
 }
 
 /**
@@ -165,6 +185,10 @@ export function invertOp(op: MailOp): MailOp {
       return { kind: 'unstar', threadIds }
     case 'unstar':
       return { kind: 'star', threadIds }
+    case 'mute':
+      return { kind: 'unmute', threadIds }
+    case 'unmute':
+      return { kind: 'mute', threadIds }
     case 'label':
       return { kind: 'label', threadIds, add: op.remove, remove: op.add }
     case 'remind':

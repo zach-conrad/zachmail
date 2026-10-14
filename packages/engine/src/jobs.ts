@@ -10,7 +10,7 @@ import { ProviderAuthError, mapLimit } from '@zachmail/providers'
 import { getAccount, type AccountRecord, type ProviderFactory } from './accounts'
 import { getMessageBody } from './bodies'
 import type { EngineConfig } from './config'
-import { OUTBOX_JOB, enqueueOutboxFlush, flushOutbox } from './outbox'
+import { OUTBOX_JOB, enqueueOutboxFlush, flushOutbox, rearchiveMuted } from './outbox'
 import { runWakeups } from './snooze'
 
 export interface JobLike {
@@ -163,6 +163,7 @@ export function createHandlers(deps: {
         // Ops parked while the account was unreachable can go now.
         if (recovered) await enqueueOutboxFlush(db, account.userId, account.id)
         if (changed) {
+          await rearchiveMuted(db, account.userId, account.id)
           await enqueueJob(db, {
             userId: account.userId,
             kind: JOB.prefetch,

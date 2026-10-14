@@ -146,7 +146,7 @@ export async function acceptOpsIn(
   return result
 }
 
-/** Writes an effect's snooze and reminder parts; returns the threads that changed. */
+/** Writes an effect's ZachMail-only parts (mute, snooze, reminder); returns the threads that changed. */
 async function applyZachmailState(
   tx: Queryable,
   userId: string,
@@ -156,6 +156,14 @@ async function applyZachmailState(
   effect: OpEffect,
 ): Promise<string[]> {
   const changed: string[] = []
+  if (effect.muted !== undefined) {
+    const rows = await tx.query<{ id: string }>(
+      `UPDATE threads SET muted = $2, updated_at = now()
+       WHERE id = ANY($1::uuid[]) AND muted <> $2 RETURNING id`,
+      [threadIds, effect.muted],
+    )
+    changed.push(...rows.map((r) => r.id))
+  }
   if (effect.snoozedUntil !== undefined) {
     const rows = await tx.query<{ id: string }>(
       `UPDATE threads SET snoozed_until = to_timestamp($2::float8 / 1000), updated_at = now()
@@ -272,6 +280,18 @@ export async function releaseOutbox(db: Queryable, item: OutboxItem) {
      WHERE id = $1`,
     [item.id],
   )
+}
+
+/** Muted threads that new mail put back in the inbox; the caller archives them again. */
+export async function mutedThreadsInInbox(db: Queryable, accountId: string): Promise<string[]> {
+  const rows = await db.query<{ id: string }>(
+    `SELECT t.id FROM threads t
+     JOIN thread_folders tf ON tf.thread_id = t.id
+     JOIN folders f ON f.id = tf.folder_id AND f.kind = 'inbox'
+     WHERE t.account_id = $1 AND t.muted`,
+    [accountId],
+  )
+  return rows.map((r) => r.id)
 }
 
 /** Accounts whose outbox has work nobody picked up (a lost job, a crashed worker). */

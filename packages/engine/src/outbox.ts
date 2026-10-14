@@ -1,8 +1,11 @@
+import { randomUUID } from 'node:crypto'
 import {
+  acceptOps,
   applySyncBatch,
   claimOutbox,
   enqueueJob,
   finishOutbox,
+  mutedThreadsInInbox,
   nudge,
   releaseOutbox,
   stalledOutboxAccounts,
@@ -32,6 +35,16 @@ export const enqueueOutboxFlush = (db: Db, userId: string, accountId: string, ru
     dedupeKey: runAt ? `outbox:${accountId}:${runAt.getTime()}` : `outbox:${accountId}`,
     runAt,
   })
+
+/** New mail on a muted thread lands in the inbox at the provider; archive it again. */
+export async function rearchiveMuted(db: Db, userId: string, accountId: string) {
+  const threadIds = await mutedThreadsInInbox(db, accountId)
+  if (!threadIds.length) return
+  const r = await acceptOps(db, userId, [
+    { id: randomUUID(), at: Date.now(), op: { kind: 'archive', threadIds } },
+  ])
+  if (r.accounts.length) await enqueueOutboxFlush(db, userId, accountId)
+}
 
 /** Re-enqueues flushes nobody is running (lost jobs, crashed workers). Worker calls this. */
 export async function sweepOutbox(db: Db) {

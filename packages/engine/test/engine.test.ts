@@ -104,6 +104,8 @@ function fakeGoogle() {
     if (path === '/history') return json({ historyId: '200', history: state.history })
     if (path === '/messages/m4' && url.searchParams.get('format') === 'metadata')
       return json(gmailMsg('m4', 't1', ['INBOX', 'UNREAD'], now))
+    if (path === '/messages/m5' && url.searchParams.get('format') === 'metadata')
+      return json(gmailMsg('m5', 't1', ['INBOX', 'UNREAD'], now + 1000))
     const full = path.match(/^\/messages\/(\w+)$/)
     if (full && url.searchParams.get('format') === 'full')
       return json({
@@ -321,6 +323,7 @@ describe('engine', () => {
       `SELECT id FROM threads WHERE provider_thread_id = 't2'`,
     )
     const id = '00000000-0000-4000-8000-0000000000f1'
+    google.state.history = [] // the fake doesn't reflect writes; later syncs see no news
     await acceptOps(db, USER, [
       { id, at: 1, op: { kind: 'snooze', threadIds: [t2!.id], until: Date.now() + 3_600_000 } },
     ])
@@ -339,6 +342,36 @@ describe('engine', () => {
       unread: true,
       snoozedUntil: null,
     })
+  })
+
+  it('keeps muted threads out of the inbox when replies arrive', async () => {
+    const [t1] = await db.query<{ id: string }>(
+      `SELECT id FROM threads WHERE provider_thread_id = 't1'`,
+    )
+    await acceptOps(db, USER, [
+      {
+        id: '00000000-0000-4000-8000-0000000000d1',
+        at: 1,
+        op: { kind: 'mute', threadIds: [t1!.id] },
+      },
+    ])
+    await enqueueOutboxFlush(db, USER, accountId)
+    await drain()
+    google.state.writes = []
+
+    google.state.history = [{ id: '300', messagesAdded: [{ message: { id: 'm5' } }] }]
+    await handlers['account.sync']!({ kind: 'account.sync', userId: USER, payload: { accountId } })
+    google.state.history = [] // the fake doesn't reflect writes; later syncs see no news
+    const inInbox = await db.query(
+      `SELECT 1 FROM thread_folders tf JOIN folders f ON f.id = tf.folder_id
+       WHERE tf.thread_id = $1 AND f.kind = 'inbox'`,
+      [t1!.id],
+    )
+    expect(inInbox).toEqual([])
+    await drain()
+    expect(google.state.writes).toEqual(['modify t1 {"addLabelIds":[],"removeLabelIds":["INBOX"]}'])
+    const delta = await readDelta(db, USER, 0)
+    expect(delta.upserts.threads.find((t) => t.id === t1!.id)).toMatchObject({ muted: true })
   })
 
   it('parks the account when the refresh token is revoked', async () => {

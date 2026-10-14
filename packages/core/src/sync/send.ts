@@ -106,3 +106,14 @@ export function parseSendRequest(body: unknown): SendRequest {
     ...(b.remindAt !== undefined ? { remindAt: b.remindAt as number } : {}),
   }
 }
+
+/**
+ * GET /api/contacts: people Zach has written to (weighted) or heard from, best first. Small
+ * enough for clients to cache whole and autocomplete locally.
+ */
+export interface ContactRow {
+  email: string
+  name: string | null
+  score: number
+  lastAt: number
+}
