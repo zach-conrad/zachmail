@@ -35,6 +35,7 @@ export const keymap = [
   { id: 'go.sent', label: 'Go to Sent', group: 'navigation', keys: ['g s'] },
   { id: 'go.drafts', label: 'Go to Drafts', group: 'navigation', keys: ['g d'] },
   { id: 'go.reminders', label: 'Go to Reminders', group: 'navigation', keys: ['g h'] },
+  { id: 'go.followUps', label: 'Go to Follow-ups', group: 'navigation', keys: ['g f'] },
   { id: 'go.starred', label: 'Go to Starred', group: 'navigation', keys: ['g *'] },
   { id: 'go.trash', label: 'Go to Trash', group: 'navigation', keys: ['g t'] },
   { id: 'go.spam', label: 'Go to Spam', group: 'navigation', keys: ['g !'] },
@@ -57,6 +58,10 @@ export const keymap = [
   { id: 'compose.reply', label: 'Reply', group: 'compose', keys: ['r'] },
   { id: 'compose.replyAll', label: 'Reply all', group: 'compose', keys: ['a'] },
   { id: 'compose.forward', label: 'Forward', group: 'compose', keys: ['f'] },
+  { id: 'compose.snippets', label: 'Insert snippet', group: 'compose', keys: ['mod+;'] },
+  { id: 'compose.instantIntro', label: 'Instant intro', group: 'compose', keys: ['mod+shift+i'] },
+  { id: 'nudge.dismiss', label: 'Dismiss follow-up', group: 'triage', keys: [] },
+  { id: 'app.snippets', label: 'Edit snippets', group: 'app', keys: [] },
   // Selection
   { id: 'select.toggle', label: 'Select', group: 'selection', keys: ['x'] },
   {

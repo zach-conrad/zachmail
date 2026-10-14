@@ -2,6 +2,8 @@
  * Wire format between the API and every client replica (web, macOS, iOS). Times are epoch
  * milliseconds so clients can sort and compare without parsing.
  */
+import type { NudgeDismissalRow } from '../compose/nudges'
+import type { SnippetRow } from '../compose/snippets'
 import type { OpStatusRow } from './ops'
 
 export interface Address {
@@ -74,6 +76,8 @@ export interface Rows {
   folders: FolderRow[]
   threads: ThreadRow[]
   messages: MessageRow[]
+  snippets: SnippetRow[]
+  nudgeDismissals: NudgeDismissalRow[]
 }
 
 export interface Deletes {
@@ -81,6 +85,8 @@ export interface Deletes {
   folder: string[]
   thread: string[]
   message: string[]
+  snippet: string[]
+  nudgeDismissal: string[]
 }
 
 /** GET /api/sync?since=<seq>. Apply upserts then deletes; repeat while `more`. */
@@ -106,5 +112,19 @@ export interface MessageBody {
   hasRemoteImages: boolean
 }
 
-export const emptyRows = (): Rows => ({ accounts: [], folders: [], threads: [], messages: [] })
-export const emptyDeletes = (): Deletes => ({ account: [], folder: [], thread: [], message: [] })
+export const emptyRows = (): Rows => ({
+  accounts: [],
+  folders: [],
+  threads: [],
+  messages: [],
+  snippets: [],
+  nudgeDismissals: [],
+})
+export const emptyDeletes = (): Deletes => ({
+  account: [],
+  folder: [],
+  thread: [],
+  message: [],
+  snippet: [],
+  nudgeDismissal: [],
+})

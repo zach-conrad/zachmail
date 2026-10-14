@@ -4,6 +4,7 @@ import { requireUser, type AuthVariables } from './auth'
 import { buildDeps, type Deps } from './deps'
 import type { Env } from './env'
 import { accountRoutes, oauthCallbackRoute } from './routes/accounts'
+import { composerRoutes } from './routes/composer'
 import { imageRoutes } from './routes/images'
 import { opsRoutes } from './routes/ops'
 import { syncRoutes } from './routes/sync'
@@ -33,6 +34,7 @@ export function createApp(env: Env, overrides: Partial<Deps> = {}) {
   authed.route('/', accountRoutes(env, deps))
   authed.route('/', syncRoutes(deps))
   authed.route('/', opsRoutes(deps))
+  authed.route('/', composerRoutes(deps))
   api.route('/', authed)
 
   app.route('/api', api)

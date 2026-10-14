@@ -339,6 +339,32 @@ describe('sync endpoints', () => {
     expect(contacts.map((c) => c.email)).toContain('ana@x.com')
   })
 
+  it('saves snippets and dismisses follow-up nudges', async () => {
+    const id = '00000000-0000-4000-8000-0000000000e1'
+    const json = (method: string, body: unknown) => ({
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const snippet = { name: 'Call', shortcut: 'Call', html: '<p>Hi {first_name}</p>' }
+    expect(await (await authed(`/api/snippets/${id}`, json('PUT', snippet))).json()).toEqual({ id })
+    expect(
+      (await authed('/api/snippets/00000000-0000-4000-8000-0000000000e2', json('PUT', snippet)))
+        .status,
+    ).toBe(409)
+    expect((await authed(`/api/snippets/${id}`, json('PUT', { name: '' }))).status).toBe(400)
+    expect((await authed(`/api/snippets/${id}`, { method: 'DELETE' })).status).toBe(204)
+
+    const threadId = (await db.query<{ id: string }>(`SELECT id FROM threads LIMIT 1`))[0]!.id
+    const res = await authed('/api/nudges/dismiss', json('POST', { threadIds: [threadId] }))
+    const { dismissed } = (await res.json()) as { dismissed: { id: string }[] }
+    expect(dismissed.map((d) => d.id)).toEqual([threadId])
+    expect((await authed('/api/nudges/dismiss', json('POST', { threadIds: [] }))).status).toBe(400)
+    expect(
+      (await authed('/api/nudges/restore', json('POST', { threadIds: [threadId] }))).status,
+    ).toBe(204)
+  })
+
   it('returns compacted deltas', async () => {
     const delta = (await (await authed('/api/sync?since=0')).json()) as {
       seq: number
