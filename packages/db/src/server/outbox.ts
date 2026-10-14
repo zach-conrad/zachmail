@@ -1,5 +1,6 @@
 import {
   DEFAULT_UNDO_MS,
+  MAX_ATTACHMENT_BYTES,
   opEffect,
   type Address,
   type FolderKind,
@@ -9,6 +10,7 @@ import {
 } from '@zachmail/core'
 import type { Db, Queryable } from './sql'
 import { recomputeThreads, recordChanges } from './sync'
+import { loadUploads } from './uploads'
 
 /** Payload of a triage outbox row: thread and folder ids from our mirror. */
 export interface TriagePayload extends OpEffect {
@@ -239,6 +241,8 @@ export interface SendPayload {
   subject: string
   html: string
   replyToMessageId: string | null
+  /** Upload ids. */
+  attachments?: string[]
   /** Send payloads only: the draft to delete once sent. */
   draftId?: string | null
 }
@@ -265,6 +269,11 @@ export async function acceptSend(db: Db, userId: string, req: SendRequest): Prom
       ])
       if (!parent) throw new SendRejectedError('The message being answered is gone')
     }
+    const files = await loadUploads(tx, userId, req.attachments ?? [])
+    if (files.length !== (req.attachments ?? []).length)
+      throw new SendRejectedError('An attachment is missing; upload it again')
+    if (files.reduce((n, f) => n + f.size, 0) > MAX_ATTACHMENT_BYTES)
+      throw new SendRejectedError('Attachments are too big to email together')
     const payload: SendPayload = {
       to: req.to,
       cc: req.cc ?? [],
@@ -273,6 +282,7 @@ export async function acceptSend(db: Db, userId: string, req: SendRequest): Prom
       html: req.html,
       replyToMessageId: req.replyToMessageId ?? null,
       draftId: req.draftId ?? null,
+      attachments: req.attachments ?? [],
     }
     const notBefore = Math.max(Date.now() + (req.undoMs ?? DEFAULT_UNDO_MS), req.sendAt ?? 0)
     const inserted = await tx.query<{ at: number }>(

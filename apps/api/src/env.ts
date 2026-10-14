@@ -17,6 +17,9 @@ export interface Env {
   OAUTH_STATE_SECRET?: string
   IMAGE_PROXY_SECRET?: string
   TOKEN_ENCRYPTION_KEY?: string
+  /** Service role key, used only for signed Storage upload URLs and downloads. */
+  SUPABASE_SERVICE_ROLE_KEY?: string
+  ATTACHMENTS_BUCKET?: string
 }
 
 export function readEnv(source: Record<string, string | undefined> = process.env): Env {
@@ -36,6 +39,8 @@ export function readEnv(source: Record<string, string | undefined> = process.env
     OAUTH_STATE_SECRET: source.OAUTH_STATE_SECRET,
     IMAGE_PROXY_SECRET: source.IMAGE_PROXY_SECRET,
     TOKEN_ENCRYPTION_KEY: source.TOKEN_ENCRYPTION_KEY,
+    SUPABASE_SERVICE_ROLE_KEY: source.SUPABASE_SERVICE_ROLE_KEY,
+    ATTACHMENTS_BUCKET: source.ATTACHMENTS_BUCKET,
   }
 }
 

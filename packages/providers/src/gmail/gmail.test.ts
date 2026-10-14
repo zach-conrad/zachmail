@@ -322,3 +322,24 @@ describe('GmailProvider drafts', () => {
     ])
   })
 })
+
+describe('GmailProvider large messages', () => {
+  it('sends big messages as a media upload', async () => {
+    const seen: { url: string; type?: string; size: number }[] = []
+    const gmail = new GmailProvider({
+      tokens: { getAccessToken: async () => 't' },
+      fetch: async (input, init) => {
+        const headers = init?.headers as Record<string, string>
+        const body = init?.body as Uint8Array
+        seen.push({ url: input, type: headers['content-type'], size: body.byteLength })
+        return new Response(JSON.stringify({ id: 'm', threadId: 't' }))
+      },
+    })
+    await gmail.send(new Uint8Array(5 * 1024 * 1024))
+    expect(seen[0]).toEqual({
+      url: 'https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send?uploadType=media',
+      type: 'message/rfc822',
+      size: 5 * 1024 * 1024,
+    })
+  })
+})
