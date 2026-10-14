@@ -24,6 +24,8 @@ import {
   enqueueDraftSync,
   enqueueOutboxFlush,
   getMessageBody,
+  sweepSyncs,
+  sweepUploads,
   type EngineConfig,
   type JobLike,
   type PushSender,
@@ -453,6 +455,56 @@ describe('engine', () => {
     await expect(
       acceptSend(db, USER, { ...fields, id: uploadId, attachments: [id] }),
     ).rejects.toThrow(/attachment/)
+  })
+
+  it('removes uploads nothing references once they are a day old', async () => {
+    const id = (n: number) => `00000000-0000-4000-8000-0000000000c${n}`
+    const file = { filename: 'a.txt', mime: 'text/plain', size: 1 }
+    for (const n of [1, 2, 3]) await createUpload(db, USER, id(n), `${USER}/${id(n)}/a.txt`, file)
+    // c1: orphaned. c2: on a live draft. c3: too new. b1 (earlier test): already sent.
+    await saveDraft(db, USER, id(9), {
+      accountId,
+      to: [],
+      subject: 'd',
+      html: '',
+      attachments: [id(2)],
+    })
+    await db.query(`UPDATE uploads SET created_at = now() - interval '2 days' WHERE id <> $1`, [
+      id(3),
+    ])
+    const deleted: unknown[] = []
+    const storage = new Storage(
+      { url: 'https://proj.supabase.co', serviceKey: 'sk', bucket: 'attachments' },
+      async (input, init) => {
+        expect(input).toBe('https://proj.supabase.co/storage/v1/object/attachments')
+        deleted.push(JSON.parse(String(init?.body)))
+        return new Response('[]')
+      },
+    )
+    expect(await sweepUploads(db, storage)).toBe(2)
+    expect(deleted).toEqual([
+      {
+        prefixes: expect.arrayContaining([
+          `${USER}/00000000-0000-4000-8000-0000000000b1/notes.txt`,
+          `${USER}/${id(1)}/a.txt`,
+        ]),
+      },
+    ])
+    const left = await db.query<{ id: string }>(`SELECT id FROM uploads ORDER BY id`)
+    expect(left.map((r) => r.id)).toEqual([id(2), id(3)])
+  })
+
+  it('syncs accounts push has not woken lately and reports stuck ones', async () => {
+    await db.query(`DELETE FROM jobs WHERE kind = 'account.sync'`)
+    await db.query(
+      `UPDATE accounts SET status = 'active', last_synced_at = now() - interval '45 minutes'`,
+    )
+    expect(await sweepSyncs(db)).toEqual([])
+    const jobs = await db.query(`SELECT 1 FROM jobs WHERE kind = 'account.sync'`)
+    expect(jobs).toHaveLength(1)
+    await db.query(`UPDATE accounts SET last_synced_at = now() - interval '3 hours'`)
+    expect((await sweepSyncs(db)).map((a) => a.id)).toEqual([accountId])
+    await db.query(`UPDATE accounts SET last_synced_at = now()`)
   })
 
   it('parks the account when the refresh token is revoked', async () => {
