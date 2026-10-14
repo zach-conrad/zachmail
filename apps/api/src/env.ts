@@ -32,6 +32,12 @@ export interface Env {
   ANTHROPIC_BASE_URL?: string
   /** Web Push application server key (public half; the worker holds the private one). */
   VAPID_PUBLIC_KEY?: string
+  /** Publishable (anon) key; the Claude connector's sign-in exchanges its Supabase code with it. */
+  SUPABASE_PUBLISHABLE_KEY?: string
+  /** Signs Claude connector tokens; defaults to a key derived from OAUTH_STATE_SECRET. Rotate to revoke. */
+  MCP_TOKEN_SECRET?: string
+  /** Extra comma-separated OAuth redirect URIs the connector accepts besides Claude's own. */
+  MCP_REDIRECT_URIS?: string
 }
 
 export function readEnv(source: Record<string, string | undefined> = process.env): Env {
@@ -60,6 +66,10 @@ export function readEnv(source: Record<string, string | undefined> = process.env
     ANTHROPIC_API_KEY: source.ANTHROPIC_API_KEY,
     ANTHROPIC_BASE_URL: source.ANTHROPIC_BASE_URL,
     VAPID_PUBLIC_KEY: source.VAPID_PUBLIC_KEY,
+    SUPABASE_PUBLISHABLE_KEY:
+      source.SUPABASE_PUBLISHABLE_KEY ?? source.VITE_SUPABASE_PUBLISHABLE_KEY,
+    MCP_TOKEN_SECRET: source.MCP_TOKEN_SECRET,
+    MCP_REDIRECT_URIS: source.MCP_REDIRECT_URIS,
   }
 }
 
