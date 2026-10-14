@@ -35,13 +35,17 @@ const indexRoute = createRoute({
 const inboxRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/inbox/$split',
+  // `thread` opens a conversation on arrival (a notification click in a fresh window).
+  validateSearch: (s: Record<string, unknown>): { thread?: string } =>
+    typeof s.thread === 'string' ? { thread: s.thread } : {},
   beforeLoad: ({ params }) => {
     if (!isSplitKey(params.split))
       throw redirect({ to: '/inbox/$split', params: { split: 'important' } })
   },
   component: function InboxRoute() {
     const { split } = inboxRoute.useParams()
-    return <Shell split={isSplitKey(split) ? split : 'important'} />
+    const { thread } = inboxRoute.useSearch()
+    return <Shell split={isSplitKey(split) ? split : 'important'} openThread={thread ?? null} />
   },
 })
 

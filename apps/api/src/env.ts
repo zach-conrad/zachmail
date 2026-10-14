@@ -23,6 +23,8 @@ export interface Env {
   /** Claude API; AI routes answer 503 while unset. */
   ANTHROPIC_API_KEY?: string
   ANTHROPIC_BASE_URL?: string
+  /** Web Push application server key (public half; the worker holds the private one). */
+  VAPID_PUBLIC_KEY?: string
 }
 
 export function readEnv(source: Record<string, string | undefined> = process.env): Env {
@@ -46,6 +48,7 @@ export function readEnv(source: Record<string, string | undefined> = process.env
     ATTACHMENTS_BUCKET: source.ATTACHMENTS_BUCKET,
     ANTHROPIC_API_KEY: source.ANTHROPIC_API_KEY,
     ANTHROPIC_BASE_URL: source.ANTHROPIC_BASE_URL,
+    VAPID_PUBLIC_KEY: source.VAPID_PUBLIC_KEY,
   }
 }
 

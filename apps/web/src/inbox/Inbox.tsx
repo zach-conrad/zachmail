@@ -11,10 +11,12 @@ import {
   useSyncExternalStore,
   type MouseEvent,
 } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import { useData } from '../data/DataProvider'
 import { ListModel } from '../data/listModel'
 import { beginInteraction, endInteraction, markOnce } from '../lib/perf'
 import { useCommands } from '../lib/useCommands'
+import { clearThreadNotifications } from '../notifications/push'
 import { InboxZero } from './InboxZero'
 import { LabelPicker, type LabelChoice } from './LabelPicker'
 import { ThreadList } from './ThreadList'
@@ -39,14 +41,30 @@ const describe = (verb: string, rows: ThreadListItem[]) =>
     : `${verb} · ${rows.length} conversations`
 
 /** One split: the virtualized list, the reading pane and their keyboard model. */
-export function Inbox({ split, active }: { split: SplitKey; active: boolean }) {
+export function Inbox({
+  split,
+  active,
+  openThread = null,
+}: {
+  split: SplitKey
+  active: boolean
+  /** A thread to open on arrival (from a notification click). */
+  openThread?: string | null
+}) {
   const { client, threads, triage, compose, ownEmails } = useData()
+  const navigate = useNavigate()
   const model = useMemo(() => new ListModel(client, { split }), [client, split])
   const version = useSyncExternalStore(model.subscribe, model.getVersion)
   const count = model.count
 
   const [focus, setFocus] = useState(0)
-  const [openId, setOpenId] = useState<string | null>(null)
+  const [openId, setOpenId] = useState<string | null>(openThread)
+  // A notification click while mounted: adopt it during render (no effect round-trip).
+  const [arrival, setArrival] = useState(openThread)
+  if (openThread !== arrival) {
+    setArrival(openThread)
+    if (openThread) setOpenId(openThread)
+  }
   const focusId = model.get(focus)?.id ?? null
   // The thread the user meant, so focus follows it when new mail shifts the list.
   const wanted = useRef<string | null>(null)
@@ -115,9 +133,19 @@ export function Inbox({ split, active }: { split: SplitKey; active: boolean }) {
     if (!openId) endInteraction('nav.back')
   }, [openId])
 
+  // A notification click: open the thread, mark it read, then drop it from the URL so a
+  // reload doesn't reopen it. Focus follows once the list finds the row.
+  useEffect(() => {
+    if (!openThread) return
+    wanted.current = openThread
+    triage.run({ kind: 'read', threadIds: [openThread] }, 'Mark read', model, true)
+    void navigate({ to: '/inbox/$split', params: { split }, search: {}, replace: true })
+  }, [openThread, triage, model, navigate, split])
+
   // Opening an unread thread marks it read (no toast, not on the undo stack).
   useEffect(() => {
     const row = model.get(focus)
+    if (openId) void clearThreadNotifications(openId).catch(() => {})
     if (openId && row?.id === openId && row.unread)
       triage.run({ kind: 'read', threadIds: [openId] }, 'Mark read', model, true)
     // Only on open: focus and model are read as of then.
