@@ -1,3 +1,4 @@
+import { aiConfigFromEnv, type Ai } from '@zachmail/ai/config'
 import { fromPostgresJs, type Db } from '@zachmail/db/server'
 import { ProviderFactory, Storage, type EngineConfig } from '@zachmail/engine'
 import type { FetchLike } from '@zachmail/providers/gmail'
@@ -12,6 +13,11 @@ export interface Deps {
   fetch: FetchLike
   /** Attachment storage; null until SUPABASE_SERVICE_ROLE_KEY is set. */
   storage: () => Storage | null
+  /**
+   * Claude client; null while ANTHROPIC_API_KEY is unset. Loaded on first use so the SDK
+   * stays out of cold starts for every other route.
+   */
+  ai: () => Promise<Ai | null>
   /** Supabase JWKS (overridable in tests). */
   supabaseKeys?: JWTVerifyGetKey
   /** Google OIDC JWKS for Pub/Sub push tokens (overridable in tests). */
@@ -23,6 +29,11 @@ export function buildDeps(env: Env, overrides: Partial<Deps> = {}): Deps {
   let db: Db | undefined
   let providers: ProviderFactory | undefined
   let storage: Storage | undefined
+  let ai: Promise<Ai> | undefined
+  const aiConfig = aiConfigFromEnv({
+    ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
+    ANTHROPIC_BASE_URL: env.ANTHROPIC_BASE_URL,
+  })
   const storageConfig = env.SUPABASE_SERVICE_ROLE_KEY
     ? {
         url: env.SUPABASE_URL,
@@ -40,6 +51,7 @@ export function buildDeps(env: Env, overrides: Partial<Deps> = {}): Deps {
     appOrigin: env.APP_ORIGIN,
     tokenKey: env.TOKEN_ENCRYPTION_KEY,
     storage: storageConfig,
+    ai: aiConfig,
   })
   const getDb =
     overrides.db ??
@@ -59,6 +71,8 @@ export function buildDeps(env: Env, overrides: Partial<Deps> = {}): Deps {
     engineConfig,
     fetch: fetchImpl,
     storage: () => (storageConfig ? (storage ??= new Storage(storageConfig, fetchImpl)) : null),
+    ai: async () =>
+      aiConfig ? (ai ??= import('@zachmail/ai').then((m) => m.createAi(aiConfig))) : null,
     ...overrides,
   }
 }

@@ -2,6 +2,7 @@
  * Wire format between the API and every client replica (web, macOS, iOS). Times are epoch
  * milliseconds so clients can sort and compare without parsing.
  */
+import type { ThreadAi } from './ai'
 import type { OpStatusRow } from './ops'
 import type { SplitRuleRow } from './split'
 
@@ -53,6 +54,8 @@ export interface ThreadRow {
   snoozedUntil?: number | null
   /** Pending reminder (see ops.ts `remind`); null/absent when none. */
   reminder?: Reminder | null
+  /** Triage result (see ai.ts); null/absent until triaged or while AI is off. */
+  ai?: ThreadAi | null
 }
 
 /** `if_no_reply` fires only if nobody else has written in the thread since it was set. */
