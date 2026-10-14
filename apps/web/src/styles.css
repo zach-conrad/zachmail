@@ -428,6 +428,73 @@ html[data-shell='macos'] body {
   font: 400 16px var(--font-ui);
   outline: none;
 }
+.palette-results {
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  border-top: 1px solid var(--border);
+  list-style: none;
+}
+.palette-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  height: 40px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: default;
+}
+.palette-item[aria-selected='true'] {
+  background: var(--row-focus);
+  color: var(--text);
+}
+.palette-empty {
+  padding: var(--space-3);
+  color: var(--text-faint);
+}
+
+.cheatsheet {
+  width: min(880px, calc(100% - 32px));
+  max-height: 80vh;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-5);
+  padding: var(--space-5);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-float);
+  animation: palette-in var(--dur-slow) var(--ease);
+}
+.cheatsheet dl {
+  margin: 0;
+}
+.section-label {
+  margin: 0 0 var(--space-2);
+  font: 600 13px/16px var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.cheatsheet-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 3px 0;
+}
+.cheatsheet-row dt {
+  color: var(--text);
+}
+.cheatsheet-row dd {
+  margin: 0;
+}
+.cheatsheet-row[data-off] {
+  opacity: 0.45;
+}
+
 @keyframes palette-in {
   from {
     opacity: 0;
