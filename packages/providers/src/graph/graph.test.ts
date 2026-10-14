@@ -432,4 +432,31 @@ describe('GraphApi auth', () => {
     const q = new GraphProvider({ tokens: always.tokens, fetch: always.fetchImpl })
     await expect(q.profile()).rejects.toBeInstanceOf(ProviderAuthError)
   })
+
+  it('searches with KQL and returns conversations in order, once each', async () => {
+    let search: string | null = null
+    const g = fakeGraph({
+      'GET /me/messages': ({ url }) => {
+        search = url.searchParams.get('$search')
+        return {
+          body: {
+            value: [{ conversationId: 'c1' }, { conversationId: 'c2' }, { conversationId: 'c1' }],
+            '@odata.nextLink': 'https://graph.microsoft.com/v1.0/search-2',
+          },
+        }
+      },
+      'GET /search-2': () => ({ body: { value: [{ conversationId: 'c3' }] } }),
+    })
+    const p = new GraphProvider({ tokens: g.tokens, fetch: g.fetchImpl })
+    const first = await p.searchThreads('from:"ana r" AND budget', { limit: 50 })
+    expect(search).toBe('"from:\\"ana r\\" AND budget"')
+    expect(first).toEqual({
+      providerThreadIds: ['c1', 'c2'],
+      pageToken: 'https://graph.microsoft.com/v1.0/search-2',
+    })
+    expect(await p.searchThreads('ignored', { limit: 50, pageToken: first.pageToken })).toEqual({
+      providerThreadIds: ['c3'],
+      pageToken: null,
+    })
+  })
 })

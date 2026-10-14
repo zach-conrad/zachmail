@@ -7,6 +7,7 @@ import {
   type ProviderChange,
   type ProviderFolder,
   type RawBody,
+  type SearchPage,
   type SentRef,
   type SyncBatch,
   type SyncState,
@@ -482,6 +483,27 @@ export class GraphProvider implements MailProvider {
   async fetchThreads(providerThreadIds: string[]): Promise<SyncBatch> {
     const all = await this.conversationMessages(providerThreadIds, MESSAGE_SELECT)
     return { messages: await this.normalize(all.flat()), deletedMessageIds: [] }
+  }
+
+  /**
+   * `query` is KQL. Outlook searches messages, newest first and without `$orderby`; a page's
+   * conversations are its messages' conversations in order, so a page can hold fewer threads
+   * than `limit`.
+   */
+  async searchThreads(
+    query: string,
+    opts: { limit: number; pageToken?: string | null },
+  ): Promise<SearchPage> {
+    const page = await this.api.get<GraphPage<{ conversationId?: string }>>(
+      opts.pageToken ??
+        graphPath('/me/messages', {
+          $search: `"${query.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`,
+          $select: 'conversationId',
+          $top: Math.min(opts.limit, 250),
+        }),
+    )
+    const ids = (page.value ?? []).flatMap((m) => (m.conversationId ? [m.conversationId] : []))
+    return { providerThreadIds: [...new Set(ids)], pageToken: page['@odata.nextLink'] ?? null }
   }
 
   private async createFromMime(raw: Uint8Array) {

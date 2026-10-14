@@ -1,7 +1,7 @@
 /**
  * The search language (design §3.5): Gmail-style operators parsed once here and compiled to
- * SQLite FTS5 (clients), Postgres full-text search (server) and the Gmail `q=` syntax
- * (fallback for mail older than the mirror).
+ * SQLite FTS5 (clients), Postgres full-text search (server) and the Gmail `q=` / Outlook KQL
+ * syntax (fallback for mail older than the mirror).
  *
  * Matching is per message, like Gmail: a thread is a result when one of its messages satisfies
  * every message-level clause. Folders, labels and accounts are thread-level.
@@ -438,6 +438,49 @@ export function toGmailQuery(q: ParsedQuery, opts: { before?: number } = {}): st
   }
   if (opts.before !== undefined) parts.push(`before:${Math.floor(opts.before / 1000)}`)
   return parts.join(' ')
+}
+
+/**
+ * The Outlook `$search` (KQL) for a parsed query, or null when it uses something KQL on mail
+ * cannot express (folders, labels, read or flagged state, `me`, Gmail-only operators): then
+ * the account is not asked rather than answered with a wider set. Dates are whole UTC days.
+ */
+export function toGraphSearch(q: ParsedQuery, opts: { before?: number } = {}): string | null {
+  const parts: string[] = []
+  const day = (at: number) => new Date(at).toISOString().slice(0, 10)
+  const FIELD: Record<TextField, string> = {
+    any: '',
+    subject: 'subject:',
+    from: 'from:',
+    to: 'recipients:',
+  }
+  for (const c of q.clauses) {
+    switch (c.kind) {
+      case 'match': {
+        if (c.field !== 'any' && c.field !== 'subject' && c.value.toLowerCase() === 'me')
+          return null
+        const words = tokenize(c.value)
+        if (!words.length) break
+        const v = words.length > 1 || c.phrase ? `"${words.join(' ')}"` : words[0]!
+        parts.push(`${c.negated ? 'NOT ' : ''}${FIELD[c.field]}${v}`)
+        break
+      }
+      case 'account':
+        break
+      case 'flag':
+        if (c.flag !== 'attachment') return null
+        parts.push(`hasAttachments:${c.value}`)
+        break
+      case 'date':
+        parts.push(`received${c.bound === 'after' ? '>=' : '<'}${day(c.at)}`)
+        break
+      default:
+        return null
+    }
+  }
+  // Rounded up so a horizon mid-day still reaches it; the overlap is already mirrored.
+  if (opts.before !== undefined) parts.push(`received<${day(opts.before + 86_400_000)}`)
+  return parts.length ? parts.join(' AND ') : null
 }
 
 // ---- Highlighting ------------------------------------------------------------------------

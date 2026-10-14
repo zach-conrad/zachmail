@@ -5,6 +5,7 @@ import {
   planQuery,
   toFts5,
   toGmailQuery,
+  toGraphSearch,
   toTsQuery,
   tokenize,
   type SearchContext,
@@ -174,6 +175,19 @@ describe('compilers', () => {
     ).toBe(
       `from:"Ana R" -in:inbox -is:starred larger:5M after:${Date.UTC(2026, 9, 1) / 1000} before:${Date.UTC(2026, 0, 1) / 1000}`,
     )
+  })
+
+  it('Outlook KQL with the mirror horizon, or nothing when KQL cannot say it', () => {
+    expect(
+      toGraphSearch(p('from:"Ana R" -budget has:attachment account:work after:2026/10/01'), {
+        before: Date.UTC(2026, 0, 1, 12),
+      }),
+    ).toBe(
+      'from:"ana r" AND NOT budget AND hasAttachments:true AND received>=2026-10-01 AND received<2026-01-02',
+    )
+    expect(toGraphSearch(p('to:sam'))).toBe('recipients:sam')
+    for (const q of ['in:inbox plan', 'is:unread', 'label:work', 'from:me', 'larger:5M'])
+      expect(toGraphSearch(p(q))).toBeNull()
   })
 })
 

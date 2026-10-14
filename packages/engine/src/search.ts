@@ -4,6 +4,7 @@ import {
   parseQuery,
   planQuery,
   toGmailQuery,
+  toGraphSearch,
   type SearchResponse,
   type ThreadRow,
 } from '@zachmail/core'
@@ -134,11 +135,15 @@ export async function searchMail(
       const account = await getAccount(db, accountId)
       if (!account || account.userId !== userId || account.status === 'disabled') return
       try {
+        const before = horizons.get(accountId)
+        const query =
+          account.provider === 'graph'
+            ? toGraphSearch(parsed, { before })
+            : toGmailQuery(parsed, { before })
+        // Outlook can't express every query; asking it a wider one would return wrong hits.
+        if (query === null) return
         const provider = providers.forAccount(account)
-        const page = await provider.searchThreads(
-          toGmailQuery(parsed, { before: horizons.get(accountId) }),
-          { limit, pageToken },
-        )
+        const page = await provider.searchThreads(query, { limit, pageToken })
         let known = await mirroredThreadIds(db, accountId, page.providerThreadIds)
         const missing = page.providerThreadIds.filter((id) => !known.has(id))
         if (missing.length) {
@@ -193,7 +198,7 @@ async function providerAccounts(
   all: boolean,
 ): Promise<string[]> {
   const rows = await db.query<{ id: string }>(
-    `SELECT id FROM accounts WHERE user_id = $1 AND provider = 'gmail'
+    `SELECT id FROM accounts WHERE user_id = $1 AND provider IN ('gmail', 'graph')
        AND status NOT IN ('disabled', 'needs_reauth', 'connecting')
        AND ($2::uuid[] IS NULL OR id = ANY($2::uuid[]))
        AND ($3 OR NOT COALESCE((sync_state ->> 'mirrorComplete')::boolean, false))
