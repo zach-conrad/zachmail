@@ -93,7 +93,7 @@ export class DataClient {
       const p = this.pending.get(m.id)
       this.pending.delete(m.id)
       if (m.ok) p?.resolve(m.value)
-      else p?.reject(new Error(m.error))
+      else p?.reject(new Error(m.error.replace(/^\w*Error: /, '')))
     } else if (m.type === 'status') {
       if (this.status.syncing && !m.status.syncing && !m.status.error) markOnce('synced')
       this.status = m.status

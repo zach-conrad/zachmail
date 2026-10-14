@@ -1,9 +1,11 @@
 /// <reference lib="webworker" />
 import {
+  DEFAULT_UNDO_MS,
   OpDrain,
   SyncClient,
   httpTransport,
   startSyncLoop,
+  type ContactRow,
   type MessageBody,
   type OpEnvelope,
   type OpsResponse,
@@ -75,10 +77,23 @@ async function init(config: InitConfig) {
   // Demo mode has no server: ops are accepted on the spot and settle as if done.
   let sendOps: ((ops: OpEnvelope[]) => Promise<OpsResponse>) | null = null
   let searchServer: ((p: SearchParams) => Promise<SearchResponse>) | null = null
+  let outgoing: Pick<DataApi, 'send' | 'unsend' | 'saveDraft' | 'deleteDraft' | 'contacts'>
   if (config.mode === 'demo') {
     const fx = await import('./fixture')
     transport = fx.fixtureTransport(config.threads)
     fetchBody = async (id) => fx.fixtureBody(id)
+    const sendAt = new Map<string, number>()
+    outgoing = {
+      async send(req) {
+        const at = Math.max(Date.now() + (req.undoMs ?? DEFAULT_UNDO_MS), req.sendAt ?? 0)
+        sendAt.set(req.id, at)
+        return { id: req.id, sendAt: at }
+      },
+      unsend: async (id) => (sendAt.get(id) ?? 0) > Date.now(),
+      saveDraft: async () => {},
+      deleteDraft: async () => {},
+      contacts: async () => fx.fixtureContacts(),
+    }
   } else {
     // A 'token' message may have landed while SQLite was opening; it is the newer one.
     token ??= config.token
@@ -87,16 +102,31 @@ async function init(config: InitConfig) {
     fetchBody = (id) => http.body(id)
     sendOps = (ops) => http.ops({ ops })
     searchServer = (p) => http.search(p)
+    let contacts: Promise<ContactRow[]> | null = null
+    outgoing = {
+      send: (req) => http.send(req),
+      unsend: (id) => http.unsend(id),
+      saveDraft: (id, d) => http.saveDraft(id, d),
+      deleteDraft: (id) => http.deleteDraft(id),
+      contacts: () =>
+        (contacts ??= http.contacts().catch((err: unknown) => {
+          contacts = null
+          throw err
+        })),
+    }
   }
 
   const inflight = new Set<string>()
-  // Opening search re-warms only if it has been a while: the read itself costs a keystroke.
-  let warmedAt = 0
-  const warm = (deep = false) => {
+  // Search's indexes into memory, between other calls. Opening search re-warms only if it
+  // has been a while.
+  let warmedAt = -Infinity
+  const warm = async () => {
     if (performance.now() - warmedAt < WARM_FOR_MS) return
-    search.warm(deep)
     warmedAt = performance.now()
+    const steps = search.warming()
+    while (!steps.next().done) await yieldToQueue()
   }
+
   api = {
     accounts: () => store.accounts(),
     countThreads: (q) => (isSearchQuery(q) ? search.countThreads(q) : store.countThreads(q)),
@@ -113,8 +143,9 @@ async function init(config: InitConfig) {
       post({ type: 'changed' })
       return { cursor: r.nextCursor, found: r.threads.length, source: r.source }
     },
-    warmSearch: () => warm(),
+    warmSearch: () => void warm(),
     folders: () => store.folders(),
+    ...outgoing,
     getThread: (id) => store.getThread(id),
     async ensureBodies(threadIds) {
       const missing = store.bodiesMissing(threadIds).filter((m) => !inflight.has(m.messageId))
@@ -193,7 +224,7 @@ async function init(config: InitConfig) {
       await client.pull()
       setStatus({ syncing: false, error: lastError })
       // Idle after the first sync: have search's indexes in memory before it is opened.
-      if (!warmedAt) warm(true)
+      if (warmedAt === -Infinity) void warm()
       drain()
     },
   }

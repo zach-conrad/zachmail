@@ -5,12 +5,15 @@ import { useData } from '../data/DataProvider'
 import { displayName, longTime, shortTime } from '../lib/format'
 import { endInteraction } from '../lib/perf'
 import { useCommands } from '../lib/useCommands'
+import { Composer } from '../compose/Composer'
 import { BodyFrame } from './BodyFrame'
 
 /** The reading pane for one thread. Renders from the main-thread cache when warm. */
 export function ThreadView({ threadId, active }: { threadId: string; active: boolean }) {
-  const { threads, client, accounts, ownEmails } = useData()
+  const { threads, client, accounts, ownEmails, compose } = useData()
   useSyncExternalStore(threads.subscribe, threads.getVersion)
+  useSyncExternalStore(compose.subscribe, compose.getVersion)
+  const draft = compose.inline?.threadId === threadId ? compose.inline : null
   const detail = threads.get(threadId)
 
   useEffect(() => {
@@ -105,6 +108,7 @@ export function ThreadView({ threadId, active }: { threadId: string; active: boo
           </button>
         ),
       )}
+      {draft && <Composer key={draft.id} initial={draft} />}
     </article>
   )
 }

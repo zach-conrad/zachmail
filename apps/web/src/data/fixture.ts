@@ -2,6 +2,7 @@ import {
   emptyDeletes,
   emptyRows,
   type AccountRow,
+  type ContactRow,
   type Address,
   type FolderRow,
   type MessageBody,
@@ -199,6 +200,19 @@ export function fixtureTransport(n: number): SyncTransport {
       return { seq: since, more: false, upserts: emptyRows(), deletes: emptyDeletes(), ops: [] }
     },
   }
+}
+
+/** Everyone in the demo mailbox, as GET /api/contacts would rank them. */
+export function fixtureContacts(): ContactRow[] {
+  const people = FIRST.flatMap((f, i) =>
+    LAST.map((l, j) => ({
+      email: `${f}.${l}@example.com`.toLowerCase(),
+      name: `${f} ${l}`,
+      score: 100 - i * 7 - j,
+      lastAt: Date.now() - (i * LAST.length + j) * 3_600_000,
+    })),
+  )
+  return people.sort((a, b) => b.score - a.score)
 }
 
 const PIXEL =

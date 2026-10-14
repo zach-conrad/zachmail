@@ -1,5 +1,6 @@
 import type { CommandId, MailOp, SimpleOpKind } from '@zachmail/core'
-import type { ThreadListItem } from '@zachmail/local-store'
+import type { ThreadDetail, ThreadListItem } from '@zachmail/local-store'
+import { replyDraft } from '../compose/draft'
 import {
   useCallback,
   useEffect,
@@ -54,7 +55,7 @@ interface Props {
 
 /** One view: the virtualized list, the reading pane and their keyboard model. */
 export function Inbox({ view, active, empty, onExit, highlight }: Props) {
-  const { client, threads, triage } = useData()
+  const { client, threads, triage, compose, ownEmails } = useData()
   // One model per mount; a new search query swaps its rows in place (no flash while typing).
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const model = useMemo(() => new ListModel(client, view), [client])
@@ -256,6 +257,23 @@ export function Inbox({ view, active, empty, onExit, highlight }: Props) {
     }
   }
 
+  /** r / a / f: open the thread (if needed) with a reply or forward under it. */
+  const reply = (kind: 'reply' | 'replyAll' | 'forward') => {
+    const id = openId ?? focusId
+    if (!id) return
+    if (!openId) setOpenId(id)
+    const resumed = compose.resume(id)
+    if (resumed && resumed.kind === kind) return compose.open(resumed)
+    const start = (detail: ThreadDetail) => {
+      const last = detail.messages[detail.messages.length - 1]
+      const body = last ? detail.bodies[last.id]?.html : undefined
+      compose.open(replyDraft(detail, kind, ownEmails, body))
+    }
+    const warm = threads.get(id)
+    if (warm) start(warm)
+    else void threads.load(id).then((d) => d && start(d))
+  }
+
   const select = (i: number, extend: boolean) => {
     const id = model.get(focus)?.id
     if (!id) return
@@ -293,6 +311,9 @@ export function Inbox({ view, active, empty, onExit, highlight }: Props) {
           'thread.toggleRead': () => toggle('unread'),
           'thread.label': () => targets().length && setPicker('label'),
           'thread.move': () => targets().length && setPicker('move'),
+          'compose.reply': () => reply('reply'),
+          'compose.replyAll': () => reply('replyAll'),
+          'compose.forward': () => reply('forward'),
           'select.toggle': () => select(focus, false),
           'select.extendDown': () => select(focus + 1, true),
           'select.extendUp': () => select(focus - 1, true),

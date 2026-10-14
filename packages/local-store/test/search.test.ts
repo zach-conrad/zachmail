@@ -175,6 +175,10 @@ describe('SearchIndex', () => {
     expect(titles('zebra other')).toEqual([])
   })
 
+  it('warms in steps', () => {
+    expect([...index.warming()].length).toBeGreaterThan(4)
+  })
+
   it('strips HTML to text', () => {
     expect(htmlToText('<style>p{color:red}</style><p>a&nbsp;&lt;b&gt; &#233;&#x41;</p>')).toBe(
       'a <b> éA',

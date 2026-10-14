@@ -42,7 +42,10 @@ CREATE INDEX IF NOT EXISTS threads_search ON threads (
 CREATE INDEX IF NOT EXISTS messages_flags ON messages (
   thread_id, unread, (data ->> '$.starred'), (data ->> '$.hasAttachments'), date
 );
-CREATE TEMP TABLE IF NOT EXISTS search_hits (id TEXT PRIMARY KEY) WITHOUT ROWID;
+-- In list order, so a page of results is a walk of this table, not a sort of all of them.
+CREATE TEMP TABLE IF NOT EXISTS search_hits (
+  at INTEGER NOT NULL, id TEXT NOT NULL, PRIMARY KEY (at, id)
+) WITHOUT ROWID;
 -- Plain text of cached bodies (HTML stripped in JS), so re-synced messages keep it indexed.
 CREATE TABLE IF NOT EXISTS search_bodies (message_id TEXT PRIMARY KEY, text TEXT NOT NULL);
 `
@@ -123,19 +126,35 @@ export class SearchIndex {
   }
 
   /**
-   * Reads the indexes matching walks, and the thread rows results are built from, into the
-   * page cache. A first query otherwise pays for
-   * them from storage (tens of ms in a browser), which lands on the first keystrokes.
+   * Reads what a query walks (the indexes, the full-text index, the thread rows results are
+   * built from) into the page cache, a bounded step per iteration so the caller can let
+   * other work run in between. A first query otherwise reads them from storage, which in a
+   * browser costs a keystroke tens of ms.
    */
-  warm(deep = false): void {
-    // The full-text index too when idle: a first prefix otherwise reads its pages from storage.
-    if (deep) this.db.all(`SELECT sum(length(block)) FROM messages_fts_data`)
-    this.db.all(`SELECT count(*) FROM messages INDEXED BY messages_thread WHERE thread_id > ''`)
-    this.db.all(`SELECT count(*) FROM threads INDEXED BY threads_search WHERE id > ''`)
-    this.db.all(`SELECT count(*) FROM threads INDEXED BY threads_recent WHERE last_message_at > 0`)
-    this.db.all(`SELECT count(*) FROM messages INDEXED BY messages_flags WHERE thread_id > ''`)
-    // The rows a results page is built from.
-    this.db.all(`SELECT sum(length(participants)) FROM threads`)
+  *warming(): Generator<void> {
+    for (const index of ['messages_thread', 'messages_flags'])
+      yield void this.db.all(
+        `SELECT count(*) FROM messages INDEXED BY ${index} WHERE thread_id > ''`,
+      )
+    yield void this.db.all(`SELECT count(*) FROM threads INDEXED BY threads_search WHERE id > ''`)
+    yield void this.db.all(
+      `SELECT count(*) FROM threads INDEXED BY threads_recent WHERE last_message_at > 0`,
+    )
+    yield* this.scan('messages_fts_data', 'id', 'block', 200)
+    yield* this.scan('threads', 'rowid', 'participants', 2000)
+  }
+
+  private *scan(table: string, key: string, col: string, n: number): Generator<void> {
+    for (let after = -Infinity; ;) {
+      const r = this.db.all<{ last: number | null }>(
+        `SELECT max(k) AS last, sum(length(v)) FROM (
+           SELECT ${key} AS k, ${col} AS v FROM ${table} WHERE ${key} > ? ORDER BY ${key} LIMIT ${n})`,
+        [after],
+      )[0]
+      if (r?.last == null) return
+      after = r.last
+      yield
+    }
   }
 
   countThreads(q: SearchListQuery): number {
@@ -148,8 +167,7 @@ export class SearchIndex {
       // Page the ids first: building JSON for every hit before the LIMIT would cost more.
       `SELECT json_group_array(json(j)) AS j FROM (
          SELECT ${LIST_ITEM} AS j FROM (
-           SELECT id FROM threads INDEXED BY threads_search WHERE id IN (SELECT id FROM search_hits)
-           ORDER BY last_message_at DESC, id DESC LIMIT ? OFFSET ?) p
+           SELECT id FROM search_hits ORDER BY at DESC, id DESC LIMIT ? OFFSET ?) p
          JOIN threads t ON t.id = p.id ORDER BY t.last_message_at DESC, t.id DESC)`,
       [limit, offset],
     )[0]
@@ -158,15 +176,10 @@ export class SearchIndex {
 
   indexOfThread(q: SearchListQuery, threadId: string): number {
     if (!this.hits(q)) return -1
-    const t = this.db.all<{ at: number }>(
-      `SELECT t.last_message_at AS at FROM search_hits h
-       JOIN threads t INDEXED BY threads_search ON t.id = h.id WHERE h.id = ?`,
-      [threadId],
-    )[0]
+    const t = this.db.all<{ at: number }>(`SELECT at FROM search_hits WHERE id = ?`, [threadId])[0]
     if (!t) return -1
     return this.db.all<{ n: number }>(
-      `SELECT count(*) AS n FROM search_hits h JOIN threads t INDEXED BY threads_search ON t.id = h.id
-       WHERE t.last_message_at > ? OR (t.last_message_at = ? AND t.id > ?)`,
+      `SELECT count(*) AS n FROM search_hits WHERE at > ? OR (at = ? AND id > ?)`,
       [t.at, t.at, threadId],
     )[0]!.n
   }
@@ -228,7 +241,8 @@ export class SearchIndex {
     this.db.run('DELETE FROM search_hits')
     if (w)
       this.db.run(
-        `INSERT INTO search_hits (id) SELECT t.id FROM threads t INDEXED BY threads_search WHERE ${w[0]}`,
+        `INSERT INTO search_hits (at, id)
+         SELECT t.last_message_at, t.id FROM threads t INDEXED BY threads_search WHERE ${w[0]}`,
         w[1],
       )
     const count = w ? this.db.all<{ n: number }>(`SELECT count(*) AS n FROM search_hits`)[0]!.n : 0

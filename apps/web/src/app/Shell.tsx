@@ -1,5 +1,8 @@
 import { useNavigate } from '@tanstack/react-router'
-import { useLayoutEffect, useMemo, useState } from 'react'
+import { useLayoutEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { Composer } from '../compose/Composer'
+import { newDraft } from '../compose/draft'
+import { useData } from '../data/DataProvider'
 import { Inbox } from '../inbox/Inbox'
 import { SearchView } from '../search/SearchView'
 import { endInteraction } from '../lib/perf'
@@ -15,6 +18,9 @@ type Overlay = 'palette' | 'shortcuts' | null
 
 export function Shell({ split }: { split: SplitId }) {
   const navigate = useNavigate()
+  const { compose, accounts } = useData()
+  useSyncExternalStore(compose.subscribe, compose.getVersion)
+  const sheet = compose.sheet
   const [overlay, setOverlay] = useState<Overlay>(null)
   // Search replaces the list while open (design §3.5); null when not searching.
   const [search, setSearch] = useState<string | null>(null)
@@ -46,6 +52,10 @@ export function Shell({ split }: { split: SplitId }) {
     'nav.search': () => setSearch(''),
     'app.palette': () => open('palette'),
     'app.shortcuts': () => open('shortcuts'),
+    'compose.new': () => {
+      const first = accounts.keys().next().value
+      if (first) compose.open(compose.resume(null) ?? newDraft(first))
+    },
     ...(overlay ? { 'nav.back': () => setOverlay(null) } : {}),
   })
 
@@ -67,11 +77,12 @@ export function Shell({ split }: { split: SplitId }) {
       <AppHeader split={split} onPalette={() => open('palette')} />
       <main className="main">
         {search !== null ? (
-          <SearchView initial={search} active={!overlay} onExit={() => setSearch(null)} />
+          <SearchView initial={search} active={!overlay && !sheet} onExit={() => setSearch(null)} />
         ) : (
-          <Inbox key={split} view={view} active={!overlay} />
+          <Inbox key={split} view={view} active={!overlay && !sheet} />
         )}
       </main>
+      {sheet && <Composer key={sheet.id} initial={sheet} />}
       <UndoToast />
       {overlay === 'palette' && (
         <CommandPalette
