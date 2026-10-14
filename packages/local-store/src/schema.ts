@@ -1,5 +1,7 @@
+import { SPLIT_RULES_DROP, SPLIT_RULES_SCHEMA } from './splitRules'
+
 /** Bump when the client schema changes; the replica is dropped and bootstrapped again. */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 export const SCHEMA = /* sql */ `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -50,7 +52,7 @@ CREATE TABLE IF NOT EXISTS bodies (
   has_remote_images INTEGER NOT NULL,
   fetched_at INTEGER NOT NULL
 );
-`
+${SPLIT_RULES_SCHEMA}`
 
 export const DROP_ALL = /* sql */ `
 DROP TABLE IF EXISTS meta;
@@ -60,4 +62,4 @@ DROP TABLE IF EXISTS threads;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS bodies;
 DROP TABLE IF EXISTS pending_ops;
-`
+${SPLIT_RULES_DROP}`

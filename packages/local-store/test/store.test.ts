@@ -1,4 +1,4 @@
-import type { FolderRow, MessageRow, OpEnvelope, ThreadRow } from '@zachmail/core'
+import type { FolderRow, MessageRow, SplitRuleRow, ThreadRow } from '@zachmail/core'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { openSqliteWasm } from '../src/sqlite-wasm'
 import { SqlStore } from '../src/store'
@@ -238,5 +238,90 @@ describe('SqlStore pending ops', () => {
     seed()
     expect(ids()).toEqual(['t2'])
     expect(store.unsentOps(10).map((e) => e.id)).toEqual(['o1'])
+  })
+})
+
+describe('split rules', () => {
+  const RULE: SplitRuleRow = {
+    id: 'r1',
+    name: 'Stripe',
+    target: 'custom',
+    match: 'all',
+    conditions: [{ field: 'domain', value: 'stripe.com' }],
+    position: 1,
+  }
+  const inSplit = (split: string) => store.listThreads({ split }, 0, 10).map((t) => t.id)
+
+  beforeEach(() => {
+    store.apply(
+      {
+        threads: [thread('t1', 1, ['inbox', 'imp']), thread('t2', 2, ['inbox', 'imp'])],
+        messages: [
+          message('m1', 't1', 1, { from: { email: 'ana@stripe.com' } }),
+          message('m2', 't2', 2, { cc: [{ email: 'Team@Work.example' }] }),
+        ],
+      },
+      null,
+      1,
+    )
+  })
+
+  it('re-splits at once on a local edit and keeps it over stale synced rows', () => {
+    expect(inSplit('important')).toEqual(['t2', 't1'])
+    store.editSplitRule(RULE.id, RULE)
+    expect(inSplit('r1')).toEqual(['t1'])
+    expect(store.splitRules()).toEqual([RULE])
+    // A delta from before the edit reached the server does not undo it on screen.
+    store.apply({ splitRules: [{ ...RULE, name: 'Old' }] }, null, 2)
+    expect(store.splitRules()[0]!.name).toBe('Stripe')
+
+    const [pending] = store.pendingSplitRules()
+    store.ackSplitRule(pending!)
+    expect(store.pendingSplitRules()).toEqual([])
+    expect(store.splitRules()).toEqual([RULE])
+    expect(inSplit('r1')).toEqual(['t1'])
+
+    store.apply({}, { splitRule: ['r1'] }, 3)
+    expect(inSplit('important')).toEqual(['t2', 't1'])
+  })
+
+  it('drops a rejected edit and keeps unsent edits across a re-bootstrap', () => {
+    store.editSplitRule(RULE.id, RULE)
+    store.reset()
+    expect(store.pendingSplitRules()).toHaveLength(1)
+    store.rejectSplitRule('r1')
+    expect(store.splitRules()).toEqual([])
+  })
+
+  it('matches recipients only when a rule needs them', () => {
+    store.editSplitRule('r2', {
+      ...RULE,
+      id: 'r2',
+      target: 'other',
+      conditions: [{ field: 'to', value: 'team@work' }],
+    })
+    expect(inSplit('other')).toEqual(['t2'])
+  })
+
+  it('re-splits 20k threads well inside a frame budget for a settings save', () => {
+    const n = 20_000
+    store.apply(
+      {
+        threads: Array.from({ length: n }, (_, i) => thread(`b${i}`, 10 + i, ['inbox', 'imp'])),
+        messages: Array.from({ length: n }, (_, i) =>
+          message(`bm${i}`, `b${i}`, 10 + i, {
+            from: { email: i % 3 ? `p${i}@example.com` : `x${i}@stripe.com` },
+          }),
+        ),
+      },
+      null,
+      4,
+    )
+    const t0 = performance.now()
+    store.editSplitRule(RULE.id, RULE)
+    const ms = performance.now() - t0
+    expect(store.countThreads({ split: 'r1' })).toBe(Math.ceil(n / 3) + 1)
+    // Runs in the data worker, off the UI thread; keep it well under a second on CI.
+    expect(ms).toBeLessThan(1000)
   })
 })
