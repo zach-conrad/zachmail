@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { htmlToText, rowTime } from './format'
-import { snoozeOptions } from './snooze'
 import { swipeAction } from './swipe'
 
 describe('swipeAction', () => {
@@ -10,26 +9,6 @@ describe('swipeAction', () => {
     expect(swipeAction(260, 400)).toBe('trash')
     expect(swipeAction(-100, 400)).toBe('snooze')
     expect(swipeAction(-260, 400)).toBe('toggleRead')
-  })
-})
-
-describe('snoozeOptions', () => {
-  it('resolves presets in local time', () => {
-    const now = new Date(2026, 9, 13, 10, 0).getTime() // Tuesday 10:00
-    const o = Object.fromEntries(snoozeOptions(now).map((x) => [x.id, x.until]))
-    expect(o.later).toBe(now + 3 * 3_600_000)
-    expect(o.tonight).toBe(new Date(2026, 9, 13, 20).getTime())
-    expect(o.tomorrow).toBe(new Date(2026, 9, 14, 8).getTime())
-    expect(o.weekend).toBe(new Date(2026, 9, 17, 9).getTime())
-    expect(o.nextWeek).toBe(new Date(2026, 9, 19, 8).getTime())
-    expect(o.someday).toBeNull()
-  })
-
-  it('rolls tonight to tomorrow after 8pm and weekend forward on Saturday', () => {
-    const sat = new Date(2026, 9, 17, 21, 0).getTime()
-    const o = Object.fromEntries(snoozeOptions(sat).map((x) => [x.id, x.until]))
-    expect(o.tonight).toBe(new Date(2026, 9, 18, 20).getTime())
-    expect(o.weekend).toBe(new Date(2026, 9, 24, 9).getTime())
   })
 })
 

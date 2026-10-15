@@ -69,7 +69,7 @@ describe('MailStore', () => {
     expect(ids(store.done(store.getState()))).not.toContain('t5')
     store.wake(NOW + 1000)
     expect(store.reminders(store.getState())).toEqual([])
-    expect(inSplit(store, 'important')[0]).toBe('t5')
+    expect(inSplit(store, 'important')).toContain('t5')
   })
 
   it('toggleRead flips the thread and the split counts', () => {

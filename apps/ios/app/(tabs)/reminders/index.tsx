@@ -19,7 +19,7 @@ export default function Reminders() {
         threads={rows.map((r) => r.thread)}
         metaFor={(t) => {
           const until = due.get(t.id)
-          return until ? fullTime(until) : 'Someday'
+          return until ? fullTime(until) : undefined
         }}
         empty={
           <EmptyState

@@ -1,7 +1,8 @@
 /**
  * Keeps the iOS replica fed from the API with the shared sync client (packages/core): bootstrap,
  * then deltas every 60 s and whenever the app comes to the foreground. Bodies are prefetched for
- * the top of the inbox so opening a thread never waits (architecture §1a).
+ * the top of the inbox so opening a thread never waits (architecture §1a). Queued triage ops
+ * drain to /api/ops after each pull.
  */
 import { httpTransport, startSyncLoop, SyncClient } from '@zachmail/core'
 import { fetch as expoFetch } from 'expo/fetch'
@@ -31,6 +32,8 @@ export function startSync(mail: MailStore, cfg: SyncConfig): Syncing {
     fetch: expoFetch as unknown as typeof fetch,
   })
   const inFlight = new Set<string>()
+  // Triage ops queued on the phone now go to /api/ops; the server reports them done in deltas.
+  mail.useDrain((ops) => transport.ops({ ops }))
 
   const fetchBodies = (threadIds: string[]) => {
     const want = mail.sql.bodiesMissing(threadIds).filter((m) => !inFlight.has(m.messageId))
@@ -49,6 +52,7 @@ export function startSync(mail: MailStore, cfg: SyncConfig): Syncing {
   const client = new SyncClient(mail.sql, transport, {
     onChange: () => {
       mail.changed()
+      mail.flushOps()
       fetchBodies(mail.inbox(mail.getState(), PREFETCH).map((t) => t.id))
     },
     onError: (err) => console.warn('sync failed', err),
