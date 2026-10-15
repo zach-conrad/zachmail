@@ -17,9 +17,9 @@ import {
   type SplitRuleRow,
   type SyncSink,
   type SyncTransport,
-} from '@zachmail/core'
-import { SearchIndex, SqlStore, isSearchQuery } from '@zachmail/local-store'
-import { openSqliteWasm } from '@zachmail/local-store/sqlite-wasm'
+} from '@zachhub/core'
+import { SearchIndex, SqlStore, isSearchQuery } from '@zachhub/local-store'
+import { openSqliteWasm } from '@zachhub/local-store/sqlite-wasm'
 import type { DataApi, FromWorker, InitConfig, ToWorker, WorkerStatus } from './protocol'
 
 // SQLite, sync merges and body fetches all live here so the UI thread only renders.

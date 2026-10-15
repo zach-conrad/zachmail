@@ -1,4 +1,4 @@
-import type { ThreadListItem } from '@zachmail/local-store'
+import type { ThreadListItem } from '@zachhub/local-store'
 import type { DataClient } from './client'
 import type { ViewQuery } from './protocol'
 

@@ -1,5 +1,5 @@
 {
-  "name": "@zachmail/worker",
+  "name": "@zachhub/worker",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,12 +12,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@zachmail/db": "workspace:*",
-    "@zachmail/engine": "workspace:*",
+    "@zachhub/db": "workspace:*",
+    "@zachhub/engine": "workspace:*",
     "postgres": "^3.4.9"
   },
   "devDependencies": {
-    "@zachmail/config": "workspace:*",
+    "@zachhub/config": "workspace:*",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.15"
   }

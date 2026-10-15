@@ -1,4 +1,4 @@
-import { keymap, type CommandId } from '@zachmail/core'
+import { keymap, type CommandId } from '@zachhub/core'
 import { useMemo, useState, type KeyboardEvent } from 'react'
 import { flushSync } from 'react-dom'
 import { fuzzyScore } from '../lib/fuzzy'

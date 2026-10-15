@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import { hostname } from 'node:os'
-import { fromPostgresJs } from '@zachmail/db/server'
+import { fromPostgresJs } from '@zachhub/db/server'
 import {
   Storage,
   engineConfigFromEnv,
@@ -8,7 +8,7 @@ import {
   sweepOutbox,
   sweepSyncs,
   sweepUploads,
-} from '@zachmail/engine'
+} from '@zachhub/engine'
 import postgres from 'postgres'
 import { buildHandlers } from './handlers'
 import { pgQueue } from './queue'

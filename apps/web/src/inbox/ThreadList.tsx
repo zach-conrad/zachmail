@@ -1,6 +1,6 @@
-import { highlightRanges } from '@zachmail/core'
-import { accountColor, tokens } from '@zachmail/tokens'
-import type { ThreadListItem } from '@zachmail/local-store'
+import { highlightRanges } from '@zachhub/core'
+import { accountColor, tokens } from '@zachhub/tokens'
+import type { ThreadListItem } from '@zachhub/local-store'
 import {
   memo,
   useEffect,

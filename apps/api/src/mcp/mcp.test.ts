@@ -1,5 +1,5 @@
-import { applySyncBatch, saveCredentials, type Db } from '@zachmail/db/server'
-import { USER, createTestDb, type TestDb } from '@zachmail/db/testing'
+import { applySyncBatch, saveCredentials, type Db } from '@zachhub/db/server'
+import { USER, createTestDb, type TestDb } from '@zachhub/db/testing'
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from 'jose'
 import { createHash, randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'

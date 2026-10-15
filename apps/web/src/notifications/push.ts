@@ -1,4 +1,4 @@
-import type { NotificationSettings } from '@zachmail/core'
+import type { NotificationSettings } from '@zachhub/core'
 import { desktop } from '../lib/desktop'
 
 /**
