@@ -10,17 +10,22 @@ import {
   useState,
   useSyncExternalStore,
   type MouseEvent,
+  type ReactNode,
 } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import { useData } from '../data/DataProvider'
 import { ListModel } from '../data/listModel'
+import type { ViewQuery } from '../data/protocol'
 import { beginInteraction, endInteraction, markOnce } from '../lib/perf'
 import { useCommands } from '../lib/useCommands'
+import { clearThreadNotifications } from '../notifications/push'
 import { InboxZero } from './InboxZero'
 import { LabelPicker, type LabelChoice } from './LabelPicker'
 import { ThreadList } from './ThreadList'
 import { ThreadView } from './ThreadView'
 
 const PREFETCH_TOP = 50
+const SEARCH_PREFETCH_DELAY_MS = 300
 
 const TIMED: CommandId[] = [
   'thread.done',
@@ -38,20 +43,59 @@ const describe = (verb: string, rows: ThreadListItem[]) =>
     ? `${verb} · “${rows[0]!.subject || '(no subject)'}”`
     : `${verb} · ${rows.length} conversations`
 
-/** One split: the virtualized list, the reading pane and their keyboard model. */
-export function Inbox({ split, active }: { split: SplitKey; active: boolean }) {
+interface Props {
+  /** A split, or search results. */
+  view: ViewQuery
+  active: boolean
+  /** A thread to open on arrival (from a notification click). */
+  openThread?: string | null
+  /** Shown when the view is empty; the Inbox Zero screen by default. */
+  empty?: ReactNode
+  /** Esc with nothing open or selected (leaves search). */
+  onExit?: () => void
+  /** Search tokens to mark in subjects and snippets. */
+  highlight?: readonly string[]
+}
+
+/** One view: the virtualized list, the reading pane and their keyboard model. */
+export function Inbox({ view, active, openThread = null, empty, onExit, highlight }: Props) {
   const { client, threads, triage, compose, ownEmails } = useData()
-  const model = useMemo(() => new ListModel(client, { split }), [client, split])
+  const navigate = useNavigate()
+  const split: SplitKey | null = 'split' in view ? view.split : null
+  // One model per mount; a new search query swaps its rows in place (no flash while typing).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const model = useMemo(() => new ListModel(client, view), [client])
   const version = useSyncExternalStore(model.subscribe, model.getVersion)
   const count = model.count
 
   const [focus, setFocus] = useState(0)
-  const [openId, setOpenId] = useState<string | null>(null)
+  const [openId, setOpenId] = useState<string | null>(openThread)
+  // A notification click while mounted: adopt it during render (no effect round-trip).
+  const [arrival, setArrival] = useState(openThread)
+  if (openThread !== arrival) {
+    setArrival(openThread)
+    if (openThread) setOpenId(openThread)
+  }
   const focusId = model.get(focus)?.id ?? null
   // The thread the user meant, so focus follows it when new mail shifts the list.
   const wanted = useRef<string | null>(null)
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [picker, setPicker] = useState<'label' | 'move' | null>(null)
+
+  // A new query (search as you type) starts again at the top with nothing open.
+  const viewKey = JSON.stringify(view)
+  const [shownKey, setShownKey] = useState(viewKey)
+  if (shownKey !== viewKey) {
+    setShownKey(viewKey)
+    setFocus(0)
+    setSelected(new Set())
+    setOpenId(null)
+  }
+  useLayoutEffect(() => {
+    if (model.setQuery(view)) wanted.current = null
+    // viewKey stands in for view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, viewKey])
 
   // Threads worth keeping warm: the open one, the focused one and its neighbours.
   const keepKey = [openId, focusId, model.get(focus - 1)?.id, model.get(focus + 1)?.id]
@@ -90,7 +134,8 @@ export function Inbox({ split, active }: { split: SplitKey; active: boolean }) {
   }, [client, model, version, focus])
 
   // Body prefetch: the top of the inbox once, then the focused thread and its neighbours.
-  const primed = useRef(false)
+  // Not for search: the first results are a keystroke's, gone by the next one.
+  const primed = useRef('search' in view)
   useEffect(() => {
     if (primed.current || !model.get(0)) return
     primed.current = true
@@ -100,9 +145,19 @@ export function Inbox({ split, active }: { split: SplitKey; active: boolean }) {
     )
     void client.api.ensureBodies(ids)
   }, [client, model, version])
+  // While a search is being typed every keystroke moves focus to a new top result; warming
+  // each would take the worker from the next keystroke, so wait for a pause.
+  const typing = 'search' in view ? viewKey : null
   useEffect(() => {
-    if (keepKey) threads.prefetch(keepKey.split(' '))
-  }, [threads, keepKey])
+    if (!keepKey) return
+    const ids = keepKey.split(' ')
+    if (typing === null) {
+      threads.prefetch(ids)
+      return
+    }
+    const t = setTimeout(() => threads.prefetch(ids), SEARCH_PREFETCH_DELAY_MS)
+    return () => clearTimeout(t)
+  }, [threads, keepKey, typing])
 
   useLayoutEffect(() => {
     endInteraction('nav.next')
@@ -111,13 +166,25 @@ export function Inbox({ split, active }: { split: SplitKey; active: boolean }) {
   useLayoutEffect(() => {
     for (const id of TIMED) endInteraction(id)
   }, [version, selected])
+  // A keystroke in search: its results have replaced the list.
+  useLayoutEffect(() => endInteraction('search.type'), [version])
   useLayoutEffect(() => {
     if (!openId) endInteraction('nav.back')
   }, [openId])
 
+  // A notification click: open the thread, mark it read, then drop it from the URL so a
+  // reload doesn't reopen it. Focus follows once the list finds the row.
+  useEffect(() => {
+    if (!openThread || !split) return
+    wanted.current = openThread
+    triage.run({ kind: 'read', threadIds: [openThread] }, 'Mark read', model, true)
+    void navigate({ to: '/inbox/$split', params: { split }, search: {}, replace: true })
+  }, [openThread, triage, model, navigate, split])
+
   // Opening an unread thread marks it read (no toast, not on the undo stack).
   useEffect(() => {
     const row = model.get(focus)
+    if (openId) void clearThreadNotifications(openId).catch(() => {})
     if (openId && row?.id === openId && row.unread)
       triage.run({ kind: 'read', threadIds: [openId] }, 'Mark read', model, true)
     // Only on open: focus and model are read as of then.
@@ -251,7 +318,12 @@ export function Inbox({ split, active }: { split: SplitKey; active: boolean }) {
           'nav.open': () => {
             if (focusId) setOpenId(focusId)
           },
-          'nav.back': () => (selected.size ? setSelected(new Set()) : setOpenId(null)),
+          ...(selected.size || openId || onExit
+            ? {
+                'nav.back': () =>
+                  selected.size ? setSelected(new Set()) : openId ? setOpenId(null) : onExit?.(),
+              }
+            : {}),
           'thread.done': () => simple('archive', 'Done'),
           'thread.undone': () => simple('inbox', 'Moved to Inbox'),
           'thread.trash': () => simple('trash', 'Trashed'),
@@ -299,12 +371,18 @@ export function Inbox({ split, active }: { split: SplitKey; active: boolean }) {
     />
   )
 
-  if (count === 0) return <InboxZero hero={split === 'important'} />
+  if (count === 0) return empty ?? <InboxZero hero={split === 'important'} />
 
   return (
     <div className="panes" data-open={openId ? '' : undefined}>
       <div className="list-pane">
-        <ThreadList model={model} focus={focus} selected={selected} onActivate={onActivate} />
+        <ThreadList
+          model={model}
+          focus={focus}
+          selected={selected}
+          onActivate={onActivate}
+          highlight={highlight}
+        />
       </div>
       <div className="reader-pane">
         {openId ? (

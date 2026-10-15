@@ -1,5 +1,6 @@
 import { ResyncRequired, type SyncTransport } from './client'
 import type { OpsRequest, OpsResponse } from './ops'
+import type { SearchResponse } from '../search/protocol'
 import type { ContactRow, DraftRequest, SendRequest, SendResponse } from './send'
 import type { BootstrapLine, MessageBody, SyncDelta } from './protocol'
 import type { SplitRuleRemote } from './split'
@@ -10,6 +11,13 @@ export interface HttpTransportOptions {
   /** Current Supabase access token (re-read per request so refreshes apply). */
   token: () => string | null | Promise<string | null>
   fetch?: typeof fetch
+}
+
+export interface SearchParams {
+  q: string
+  cursor?: string | null
+  limit?: number
+  tzOffset?: number
 }
 
 export class HttpError extends Error {
@@ -43,6 +51,7 @@ async function errorMessage(res: Response): Promise<string | null> {
 export function httpTransport(opts: HttpTransportOptions): SyncTransport & {
   body(messageId: string, signal?: AbortSignal): Promise<MessageBody>
   ops(req: OpsRequest, signal?: AbortSignal): Promise<OpsResponse>
+  search(params: SearchParams, signal?: AbortSignal): Promise<SearchResponse>
   send(req: SendRequest): Promise<SendResponse>
   /** Undo send: true when cancelled, false when it is already on its way (409). */
   unsend(id: string): Promise<boolean>
@@ -115,6 +124,13 @@ export function httpTransport(opts: HttpTransportOptions): SyncTransport & {
     },
     async contacts() {
       return ((await (await get('/api/contacts')).json()) as { contacts: ContactRow[] }).contacts
+    },
+    async search(params, signal) {
+      const qs = new URLSearchParams({ q: params.q })
+      if (params.cursor) qs.set('cursor', params.cursor)
+      if (params.limit) qs.set('limit', String(params.limit))
+      if (params.tzOffset !== undefined) qs.set('tz', String(params.tzOffset))
+      return (await (await get(`/api/search?${qs}`, signal)).json()) as SearchResponse
     },
   }
 }

@@ -3,18 +3,27 @@ import {
   WAKE_JOB,
   applySyncBatch,
   enqueueJob,
+  markMirrorComplete,
   nudge,
   recomputeSplits,
   updateAccount,
   type Db,
 } from '@zachmail/db/server'
 import { ProviderAuthError, mapLimit } from '@zachmail/providers'
-import { getAccount, type AccountRecord, type ProviderFactory } from './accounts'
+import { canWatch, getAccount, type AccountRecord, type ProviderFactory } from './accounts'
 import { AI_TRIAGE_JOB, enqueueTriage, triageAccount } from './ai'
 import { getMessageBody } from './bodies'
 import type { EngineConfig } from './config'
 import { DRAFT_JOB, syncDraft } from './drafts'
 import { Storage } from './storage'
+import {
+  NOTIFY_JOB,
+  NOTIFY_TEST_JOB,
+  enqueueNotify,
+  notifyNewMail,
+  sendTestNotification,
+  type PushSender,
+} from './notify'
 import { OUTBOX_JOB, enqueueOutboxFlush, flushOutbox, rearchiveMuted } from './outbox'
 import { runWakeups } from './snooze'
 
@@ -36,6 +45,8 @@ export const JOB = {
   wake: WAKE_JOB,
   splits: 'splits.recompute',
   triage: AI_TRIAGE_JOB,
+  notify: NOTIFY_JOB,
+  notifyTest: NOTIFY_TEST_JOB,
 } as const
 
 const RECENT_DAYS = 90
@@ -49,6 +60,15 @@ export const enqueueSync = (db: Db, userId: string, accountId: string) =>
 /** Re-splits every inbox thread after the user's split rules change; bursts coalesce. */
 export const enqueueResplit = (db: Db, userId: string) =>
   enqueueJob(db, { userId, kind: JOB.splits, dedupeKey: `splits:${userId}` })
+
+/** Renews the account's push watch now (Graph lifecycle events ask for this). */
+export const enqueueWatchNow = (db: Db, userId: string, accountId: string) =>
+  enqueueJob(db, {
+    userId,
+    kind: JOB.watch,
+    payload: { accountId },
+    dedupeKey: `watch-now:${accountId}`,
+  })
 
 /** Starts the first sync of a freshly connected account. */
 export const enqueueInitialSync = (db: Db, userId: string, accountId: string) =>
@@ -67,6 +87,8 @@ export function createHandlers(deps: {
   storage?: Storage
   /** Defaults to a Claude client from config.ai; AI jobs are skipped while neither is set. */
   ai?: Ai
+  /** Web Push delivery; notifications are skipped while VAPID keys are unset. */
+  push?: PushSender
 }): Record<string, Handler> {
   const { db, providers, config } = deps
   const storage = deps.storage ?? (config.storage ? new Storage(config.storage) : undefined)
@@ -152,6 +174,8 @@ export function createHandlers(deps: {
             dedupeKey: `backfill:${account.id}:older:start`,
             runAt: new Date(Date.now() + 60_000),
           })
+        } else {
+          await markMirrorComplete(db, account.id)
         }
       })
     },
@@ -159,7 +183,7 @@ export function createHandlers(deps: {
     async [JOB.sync](job) {
       await withAccount(job, async (account) => {
         // No cursor yet means the first backfill hasn't started; it enqueues a sync when done.
-        if (!account.syncState.historyId) return
+        if (!Object.keys(account.syncState).length) return
         const provider = providers.forAccount(account)
         const r = await provider.incremental(account.syncState)
         if (r.resyncRequired) {
@@ -172,11 +196,13 @@ export function createHandlers(deps: {
           })
           return
         }
-        const { changed } = await applySyncBatch(db, {
+        const { changed, inserted } = await applySyncBatch(db, {
           userId: account.userId,
           accountId: account.id,
           batch: r.batch,
         })
+        // Only incremental sync notifies: backfills replay history, not news.
+        if (inserted.length && deps.push) await enqueueNotify(db, account.userId, inserted)
         const recovered = account.status === 'needs_reauth' || account.status === 'error'
         await updateAccount(db, account.id, {
           syncState: r.next,
@@ -186,6 +212,8 @@ export function createHandlers(deps: {
         })
         // Ops parked while the account was unreachable can go now.
         if (recovered) await enqueueOutboxFlush(db, account.userId, account.id)
+        // A capped first pass (Outlook folder deltas) carries on in the next job.
+        if (r.more) await enqueueSync(db, account.userId, account.id)
         if (changed) {
           await rearchiveMuted(db, account.userId, account.id)
           await afterNewMail(account)
@@ -202,13 +230,15 @@ export function createHandlers(deps: {
 
     async [JOB.watch](job) {
       await withAccount(job, async (account) => {
-        if (!config.google.pubsubTopic) return
+        if (!canWatch(config, account)) return
         const provider = providers.forAccount(account)
         const w = await provider.watch(account.syncState)
         await updateAccount(db, account.id, {
           syncState: { ...w.state, watchExpiresAt: w.expiresAt.getTime() },
         })
-        // Gmail watches last 7 days; renew daily so one failure never lets it lapse.
+        // Graph drops notifications now and then; a daily sync catches whatever was missed.
+        if (account.provider === 'graph') await enqueueSync(db, account.userId, account.id)
+        // Watches last days (Gmail 7, Graph 3); renew daily so one failure never lets one lapse.
         await enqueueJob(db, {
           userId: account.userId,
           kind: JOB.watch,
@@ -223,6 +253,16 @@ export function createHandlers(deps: {
       // Clients evaluate the same rules locally the moment they change; this keeps the
       // stored split (notifications, badges) in step.
       await db.transaction((tx) => recomputeSplits(tx, job.userId, null))
+    },
+
+    async [JOB.notify](job) {
+      if (!deps.push) return
+      const ids = job.payload.messageIds
+      if (Array.isArray(ids)) await notifyNewMail(db, deps.push, job.userId, ids.map(String))
+    },
+
+    async [JOB.notifyTest](job) {
+      if (deps.push) await sendTestNotification(db, deps.push, job.userId)
     },
 
     async [JOB.outbox](job) {

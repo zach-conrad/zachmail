@@ -7,22 +7,36 @@ import type {
   SnippetRow,
   SplitRuleRow,
 } from '@zachmail/core'
-import type { StoreApi } from '@zachmail/local-store'
+import type { ListQuery, SearchListQuery, StoreApi, ThreadListItem } from '@zachmail/local-store'
 
 /** Store reads the UI may call over the worker boundary (writes stay inside the worker). */
 export type ReadMethod =
-  | 'accounts'
-  | 'folders'
-  | 'countThreads'
-  | 'listThreads'
-  | 'indexOfThread'
-  | 'getThread'
-  | 'unread'
-  | 'splitRules'
-  | 'snippets'
-  | 'followUps'
+  'accounts' | 'folders' | 'getThread' | 'unread' | 'splitRules' | 'snippets' | 'followUps'
+
+/** What a thread list shows: a split, or search results. */
+export type ViewQuery = ListQuery | SearchListQuery
+
+export interface RemoteSearchPage {
+  /** Pass back for the next page; null when the server has nothing more. */
+  cursor: string | null
+  /** Results on this page (threads new to the replica are now in it). */
+  found: number
+  /** 'provider' once the server is reaching back into Gmail for older mail. */
+  source: 'mirror' | 'provider'
+}
 
 export interface DataApi extends Pick<StoreApi, ReadMethod> {
+  countThreads(q: ViewQuery): number
+  listThreads(q: ViewQuery, offset: number, limit: number): ThreadListItem[]
+  /** Position of a thread in a list, or -1 when it is not in it. */
+  indexOfThread(q: ViewQuery, threadId: string): number
+  /**
+   * One page of server search (the mirror, then Gmail for older mail). Results join the
+   * local results for `q`; a 'changed' event follows when the list should re-read.
+   */
+  searchRemote(q: SearchListQuery, cursor: string | null): Promise<RemoteSearchPage>
+  /** Search is opening: pull its indexes into the page cache before the first keystroke. */
+  warmSearch(): void
   /** Fetch and cache the bodies a thread view needs; resolves once they are stored. */
   ensureBodies(threadIds: string[]): Promise<number>
   /** Queue a message on the server; it goes out after the undo window. */
