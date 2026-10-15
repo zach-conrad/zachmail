@@ -9,7 +9,7 @@ import {
   type SplitCondition,
   type SplitField,
   type SplitRuleRow,
-} from '@zachmail/core'
+} from '@zachhub/core'
 import { useState } from 'react'
 import { useCommands } from '../lib/useCommands'
 

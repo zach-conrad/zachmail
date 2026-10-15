@@ -1,7 +1,7 @@
 import { RouterProvider } from '@tanstack/react-router'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import '@zachmail/tokens/tokens.css'
+import '@zachhub/tokens/tokens.css'
 import { AuthProvider } from './auth/session'
 import { loadFonts } from './lib/fonts'
 import { router } from './router'

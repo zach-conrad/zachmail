@@ -1,5 +1,5 @@
-import { highlightTokens, parseQuery } from '@zachmail/core'
-import type { SearchListQuery } from '@zachmail/local-store'
+import { highlightTokens, parseQuery } from '@zachhub/core'
+import type { SearchListQuery } from '@zachhub/local-store'
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Kbd } from '../app/Kbd'
 import { useData } from '../data/DataProvider'

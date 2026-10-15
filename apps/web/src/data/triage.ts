@@ -4,7 +4,7 @@ import {
   type MailOp,
   type OpEnvelope,
   type SendRequest,
-} from '@zachmail/core'
+} from '@zachhub/core'
 import type { DataClient } from './client'
 import type { ListModel, Removed } from './listModel'
 

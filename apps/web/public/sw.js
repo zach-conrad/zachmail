@@ -1,5 +1,5 @@
 // ZachMail service worker: Web Push only (no caching; the app shell is served by Vercel).
-// Payload contract: PushPayload in packages/core/src/sync/notify.ts.
+// Payload contract: PushPayload in hub/core/src/sync/notify.ts.
 
 const ICON = '/favicon.svg'
 // Safari revokes subscriptions whose pushes show nothing, so it always gets a banner.

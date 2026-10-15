@@ -1,0 +1,19 @@
+{
+  "name": "@zachhub/tokens",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.json": "./tokens.json",
+    "./tokens.css": "./dist/tokens.css"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p .",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@zachhub/config": "workspace:*"
+  }
+}

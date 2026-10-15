@@ -1,4 +1,4 @@
-import type { AccountRow, SplitRuleRow } from '@zachmail/core'
+import type { AccountRow, SplitRuleRow } from '@zachhub/core'
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useAuth } from '../auth/session'
 import { demoMode, supabase } from '../lib/supabase'

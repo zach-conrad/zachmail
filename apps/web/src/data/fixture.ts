@@ -9,7 +9,7 @@ import {
   type MessageRow,
   type SyncTransport,
   type ThreadRow,
-} from '@zachmail/core'
+} from '@zachhub/core'
 
 // Deterministic demo mailbox: the same seed always yields the same 20k threads, so perf runs
 // compare like with like. Loaded only in demo mode (dynamic import in the worker).

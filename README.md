@@ -10,28 +10,32 @@ frame, and the perf budgets (architecture §1a) are CI gates. See [CONTRIBUTING.
 
 | Path              | What                                                                  |
 | ----------------- | --------------------------------------------------------------------- |
-| `apps/web`        | React 19 + Vite SPA (also the future Tauri frontend)                  |
+| `apps/web`        | React 19 + Vite SPA (also the Tauri frontend)                         |
 | `apps/api`        | Hono API, bundled into one Vercel Function at `/api/*`                |
 | `apps/worker`     | Node job worker for Fly.io (sync, outbox, schedulers)                 |
-| `packages/core`   | Keymap registry (single source for keys, palette, cheat sheet, menus) |
-| `packages/db`     | Drizzle schema + SQL migrations (Supabase Postgres)                   |
-| `packages/tokens` | Design tokens (`tokens.json` → CSS variables; Swift theme later)      |
-| `packages/config` | Shared tsconfig and ESLint                                            |
+| `hub/core`        | Wire types, sync client, keymap registry (keys, palette, cheat sheet) |
+| `hub/db`          | Drizzle schema + SQL migrations (Supabase Postgres)                   |
+| `hub/engine`      | Job handlers shared by the worker and API                             |
+| `hub/local-store` | Client SQLite replica                                                 |
+| `hub/ai`          | Claude client and prompts                                             |
+| `hub/tokens`      | Design tokens (`tokens.json` → CSS variables; Swift theme later)      |
+| `hub/config`      | Shared tsconfig and ESLint                                            |
+| `modules/mail/*`  | Mail-only packages: `providers` (Gmail, Graph), `mime`                |
 | `infra`           | Vercel build output assembly, Fly config                              |
 
 ## Develop
 
 ```sh
 pnpm install
-pnpm --filter @zachmail/web dev     # http://localhost:5173 (demo mode without Supabase env)
-pnpm --filter @zachmail/api dev     # http://localhost:8787/api, needs SUPABASE_URL + ALLOWED_EMAILS
+pnpm --filter @zachhub/web dev     # http://localhost:5173 (demo mode without Supabase env)
+pnpm --filter @zachhub/api dev     # http://localhost:8787/api, needs SUPABASE_URL + ALLOWED_EMAILS
 pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm size
 ```
 
 ## One-time setup (production)
 
-1. **Supabase**: create the project, then apply `packages/db/migrations/*.sql` in order
-   (`DATABASE_URL=... pnpm --filter @zachmail/db migrate`). Insert your email into
+1. **Supabase**: create the project, then apply `hub/db/migrations/*.sql` in order
+   (`DATABASE_URL=... pnpm --filter @zachhub/db migrate`). Insert your email into
    `allowed_users`. Enable Auth → Hooks → _Before User Created_ →
    `public.hook_before_user_created`. Enable the Google provider and passkeys. Create the
    Vault secret `zachmail_token_key` (32 random bytes, base64: `openssl rand -base64 32`);
