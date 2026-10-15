@@ -285,7 +285,7 @@ const HTML: Record<string, string> = {
 const accountId = (s: Seed) => `acc-${s.account}`
 
 export interface DemoMailbox {
-  rows: Rows
+  rows: Partial<Rows>
   bodies: MessageBody[]
 }
 
