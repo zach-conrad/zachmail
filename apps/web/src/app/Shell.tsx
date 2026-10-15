@@ -9,6 +9,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { Composer } from '../compose/Composer'
+import { FollowUps } from '../followups/FollowUps'
 import { newDraft } from '../compose/draft'
 import { Inbox } from '../inbox/Inbox'
 import { SearchView } from '../search/SearchView'
@@ -25,8 +26,11 @@ import { usePushBridge } from '../notifications/usePushBridge'
 
 // Settings panes load on first open so they never weigh on the initial bundle.
 const NotificationSettingsPane = lazy(() => import('../notifications/NotificationSettingsPane'))
+const SnippetsEditor = lazy(() =>
+  import('../compose/SnippetsEditor').then((m) => ({ default: m.SnippetsEditor })),
+)
 
-type Overlay = 'palette' | 'shortcuts' | 'rules' | 'notifications' | null
+type Overlay = 'palette' | 'shortcuts' | 'rules' | 'notifications' | 'followUps' | 'snippets' | null
 
 export function Shell({ split, openThread }: { split: SplitKey; openThread: string | null }) {
   const navigate = useNavigate()
@@ -89,6 +93,8 @@ export function Shell({ split, openThread }: { split: SplitKey; openThread: stri
     },
     'app.splitRules': () => open('rules'),
     'app.notifications': () => open('notifications'),
+    'app.snippets': () => open('snippets'),
+    'go.followUps': () => open('followUps'),
     ...(overlay ? { 'nav.back': () => setOverlay(null) } : {}),
   })
 
@@ -144,6 +150,12 @@ export function Shell({ split, openThread }: { split: SplitKey; openThread: stri
             accounts={[...accounts.values()]}
             onClose={() => setOverlay(null)}
           />
+        </Suspense>
+      )}
+      {overlay === 'followUps' && <FollowUps onClose={() => setOverlay(null)} />}
+      {overlay === 'snippets' && (
+        <Suspense fallback={null}>
+          <SnippetsEditor onClose={() => setOverlay(null)} />
         </Suspense>
       )}
       {overlay === 'shortcuts' && (

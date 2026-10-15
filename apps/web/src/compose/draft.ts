@@ -19,6 +19,8 @@ export interface Draft {
   replyToMessageId?: string
   /** Forwarded message, already sanitized HTML, appended below the text. */
   quoted?: string
+  /** A reply shown as the centered sheet (e.g. a follow-up started outside its thread). */
+  sheet?: boolean
 }
 
 const uuid = () => crypto.randomUUID()

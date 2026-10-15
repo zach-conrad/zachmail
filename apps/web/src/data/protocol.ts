@@ -4,12 +4,14 @@ import type {
   OpEnvelope,
   SendRequest,
   SendResponse,
+  SnippetRow,
   SplitRuleRow,
 } from '@zachhub/core'
 import type { ListQuery, SearchListQuery, StoreApi, ThreadListItem } from '@zachhub/local-store'
 
 /** Store reads the UI may call over the worker boundary (writes stay inside the worker). */
-export type ReadMethod = 'accounts' | 'folders' | 'getThread' | 'unread' | 'splitRules'
+export type ReadMethod =
+  'accounts' | 'folders' | 'getThread' | 'unread' | 'splitRules' | 'snippets' | 'followUps'
 
 /** What a thread list shows: a split, or search results. */
 export type ViewQuery = ListQuery | SearchListQuery
@@ -60,6 +62,10 @@ export type ToWorker =
   | { type: 'op'; env: OpEnvelope }
   /** Save (rule) or delete (null) a split rule: re-split locally now, send when online. */
   | { type: 'splitRule'; id: string; rule: SplitRuleRow | null }
+  /** Save (snippet) or delete (null) a snippet: local now, sent when online. */
+  | { type: 'snippet'; id: string; snippet: SnippetRow | null }
+  /** Hide (dismiss) or bring back follow-up nudges on these threads. */
+  | { type: 'nudges'; threadIds: string[]; dismiss: boolean }
   | { type: 'call'; id: number; method: Method; args: unknown[] }
 
 export interface WorkerStatus {
