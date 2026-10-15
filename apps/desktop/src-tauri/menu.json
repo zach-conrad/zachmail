@@ -1,0 +1,257 @@
+{
+  "app": [
+    {
+      "id": "app.settings",
+      "label": "Settings",
+      "accelerator": "CmdOrCtrl+Comma"
+    }
+  ],
+  "menus": [
+    {
+      "title": "Go",
+      "items": [
+        {
+          "id": "nav.next",
+          "label": "Next thread"
+        },
+        {
+          "id": "nav.prev",
+          "label": "Previous thread"
+        },
+        {
+          "id": "nav.open",
+          "label": "Open thread"
+        },
+        {
+          "id": "nav.back",
+          "label": "Back"
+        },
+        {
+          "id": "nav.nextMessage",
+          "label": "Next message"
+        },
+        {
+          "id": "nav.prevMessage",
+          "label": "Previous message"
+        },
+        {
+          "id": "nav.expandAll",
+          "label": "Expand all messages"
+        },
+        {
+          "id": "nav.nextSplit",
+          "label": "Next split"
+        },
+        {
+          "id": "nav.prevSplit",
+          "label": "Previous split"
+        },
+        {
+          "id": "nav.search",
+          "label": "Search"
+        },
+        {
+          "id": "nav.senderCard",
+          "label": "Toggle sender card"
+        },
+        {
+          "id": "go.inbox",
+          "label": "Go to Inbox"
+        },
+        {
+          "id": "go.done",
+          "label": "Go to Done"
+        },
+        {
+          "id": "go.sent",
+          "label": "Go to Sent"
+        },
+        {
+          "id": "go.drafts",
+          "label": "Go to Drafts"
+        },
+        {
+          "id": "go.reminders",
+          "label": "Go to Reminders"
+        },
+        {
+          "id": "go.followUps",
+          "label": "Go to Follow-ups"
+        },
+        {
+          "id": "go.starred",
+          "label": "Go to Starred"
+        },
+        {
+          "id": "go.trash",
+          "label": "Go to Trash"
+        },
+        {
+          "id": "go.spam",
+          "label": "Go to Spam"
+        },
+        {
+          "id": "scope.all",
+          "label": "All accounts",
+          "accelerator": "CmdOrCtrl+0"
+        }
+      ]
+    },
+    {
+      "title": "Thread",
+      "items": [
+        {
+          "id": "thread.done",
+          "label": "Mark done"
+        },
+        {
+          "id": "thread.undone",
+          "label": "Move to inbox"
+        },
+        {
+          "id": "thread.snooze",
+          "label": "Remind me"
+        },
+        {
+          "id": "thread.trash",
+          "label": "Trash"
+        },
+        {
+          "id": "thread.star",
+          "label": "Star"
+        },
+        {
+          "id": "thread.toggleRead",
+          "label": "Mark read / unread"
+        },
+        {
+          "id": "thread.move",
+          "label": "Move to…"
+        },
+        {
+          "id": "thread.label",
+          "label": "Label…"
+        },
+        {
+          "id": "thread.mute",
+          "label": "Mute thread"
+        },
+        {
+          "id": "thread.unsubscribe",
+          "label": "Unsubscribe",
+          "accelerator": "CmdOrCtrl+U"
+        },
+        {
+          "id": "thread.spam",
+          "label": "Mark as spam"
+        },
+        {
+          "id": "thread.block",
+          "label": "Block sender"
+        },
+        {
+          "id": "nudge.dismiss",
+          "label": "Dismiss follow-up"
+        },
+        {
+          "separator": true
+        },
+        {
+          "id": "select.toggle",
+          "label": "Select"
+        },
+        {
+          "id": "select.extendDown",
+          "label": "Extend selection down"
+        },
+        {
+          "id": "select.extendUp",
+          "label": "Extend selection up"
+        },
+        {
+          "id": "select.all",
+          "label": "Select all"
+        },
+        {
+          "id": "undo",
+          "label": "Undo"
+        }
+      ]
+    },
+    {
+      "title": "Message",
+      "items": [
+        {
+          "id": "compose.new",
+          "label": "Compose"
+        },
+        {
+          "id": "compose.reply",
+          "label": "Reply"
+        },
+        {
+          "id": "compose.replyAll",
+          "label": "Reply all"
+        },
+        {
+          "id": "compose.forward",
+          "label": "Forward"
+        },
+        {
+          "id": "compose.send",
+          "label": "Send",
+          "accelerator": "CmdOrCtrl+Enter"
+        },
+        {
+          "id": "compose.snippets",
+          "label": "Insert snippet",
+          "accelerator": "CmdOrCtrl+Semicolon"
+        },
+        {
+          "id": "compose.instantIntro",
+          "label": "Instant intro",
+          "accelerator": "CmdOrCtrl+Shift+I"
+        }
+      ]
+    },
+    {
+      "title": "View",
+      "items": [
+        {
+          "id": "app.snippets",
+          "label": "Edit snippets"
+        },
+        {
+          "id": "app.palette",
+          "label": "Command palette",
+          "accelerator": "CmdOrCtrl+K"
+        },
+        {
+          "id": "app.splitRules",
+          "label": "Edit splits and rules"
+        },
+        {
+          "id": "app.notifications",
+          "label": "Notification settings"
+        },
+        {
+          "id": "app.toggleSidebar",
+          "label": "Toggle sidebar",
+          "accelerator": "CmdOrCtrl+Backslash"
+        }
+      ]
+    }
+  ],
+  "help": [
+    {
+      "id": "app.shortcuts",
+      "label": "Keyboard shortcuts"
+    }
+  ],
+  "global": [
+    {
+      "accelerator": "CmdOrCtrl+Control+M",
+      "command": "compose.new"
+    }
+  ]
+}

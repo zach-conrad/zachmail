@@ -63,6 +63,13 @@ export const keymap = [
   { id: 'compose.instantIntro', label: 'Instant intro', group: 'compose', keys: ['mod+shift+i'] },
   { id: 'nudge.dismiss', label: 'Dismiss follow-up', group: 'triage', keys: [] },
   { id: 'app.snippets', label: 'Edit snippets', group: 'app', keys: [] },
+  {
+    id: 'compose.global',
+    label: 'Compose from anywhere',
+    group: 'compose',
+    keys: ['mod+ctrl+m'],
+    platforms: ['macos'],
+  },
   // Selection
   { id: 'select.toggle', label: 'Select', group: 'selection', keys: ['x'] },
   {
