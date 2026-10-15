@@ -1,9 +1,9 @@
-import { keymap, type CommandId, type KeyBinding } from '@zachmail/core'
+import { keymap, type CommandId, type KeyBinding } from '@zachhub/core'
 
 /**
  * The macOS menu bar, generated from the core keymap (design §4: the menu bar mirrors the
  * keymap). The result is written to src-tauri/menu.json, which the Rust shell embeds so the
- * menu exists before the web view loads. `pnpm --filter @zachmail/desktop menu` regenerates
+ * menu exists before the web view loads. `pnpm --filter @zachhub/desktop menu` regenerates
  * it; a test fails if it drifts from the keymap.
  */
 

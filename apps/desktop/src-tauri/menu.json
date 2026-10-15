@@ -75,6 +75,10 @@
           "label": "Go to Reminders"
         },
         {
+          "id": "go.followUps",
+          "label": "Go to Follow-ups"
+        },
+        {
           "id": "go.starred",
           "label": "Go to Starred"
         },
@@ -146,6 +150,10 @@
           "label": "Block sender"
         },
         {
+          "id": "nudge.dismiss",
+          "label": "Dismiss follow-up"
+        },
+        {
           "separator": true
         },
         {
@@ -188,6 +196,21 @@
         {
           "id": "compose.forward",
           "label": "Forward"
+        },
+        {
+          "id": "compose.send",
+          "label": "Send",
+          "accelerator": "CmdOrCtrl+Enter"
+        },
+        {
+          "id": "compose.snippets",
+          "label": "Insert snippet",
+          "accelerator": "CmdOrCtrl+Semicolon"
+        },
+        {
+          "id": "compose.instantIntro",
+          "label": "Instant intro",
+          "accelerator": "CmdOrCtrl+Shift+I"
         }
       ]
     },
@@ -195,9 +218,21 @@
       "title": "View",
       "items": [
         {
+          "id": "app.snippets",
+          "label": "Edit snippets"
+        },
+        {
           "id": "app.palette",
           "label": "Command palette",
           "accelerator": "CmdOrCtrl+K"
+        },
+        {
+          "id": "app.splitRules",
+          "label": "Edit splits and rules"
+        },
+        {
+          "id": "app.notifications",
+          "label": "Notification settings"
         },
         {
           "id": "app.toggleSidebar",

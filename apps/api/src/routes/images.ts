@@ -1,4 +1,4 @@
-import { verifyImageSignature } from '@zachmail/engine'
+import { verifyImageSignature } from '@zachhub/engine'
 import { Hono } from 'hono'
 import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'

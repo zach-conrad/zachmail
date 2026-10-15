@@ -1,4 +1,4 @@
-import { KeySequenceMatcher, chordFromEvent, keymap, type CommandId } from '@zachmail/core'
+import { KeySequenceMatcher, chordFromEvent, keymap, type CommandId } from '@zachhub/core'
 import { describe, expect, it } from 'vitest'
 import { keyEventsFor } from './replay'
 

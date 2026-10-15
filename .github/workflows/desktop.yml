@@ -12,7 +12,7 @@ name: Desktop
 #   APPLE_ID                    Apple ID email used for notarization
 #   APPLE_PASSWORD              app-specific password for that Apple ID
 #   APPLE_TEAM_ID               10-character team id
-#   TAURI_SIGNING_PRIVATE_KEY   updater key from `pnpm --filter @zachmail/desktop tauri signer generate`
+#   TAURI_SIGNING_PRIVATE_KEY   updater key from `pnpm --filter @zachhub/desktop tauri signer generate`
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 # The updater public key goes in apps/desktop/src-tauri/tauri.conf.json (plugins.updater.pubkey).
 
@@ -20,7 +20,7 @@ on:
   pull_request:
     paths:
       - apps/desktop/**
-      - packages/core/**
+      - hub/core/**
       - .github/workflows/desktop.yml
   push:
     tags: ['desktop-v*']
@@ -48,7 +48,7 @@ jobs:
         with:
           workspaces: apps/desktop/src-tauri
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @zachmail/desktop build
+      - run: pnpm --filter @zachhub/desktop build
       - name: Rust format, lint and tests
         working-directory: apps/desktop/src-tauri
         run: |

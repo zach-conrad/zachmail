@@ -1,4 +1,4 @@
-import { keymap } from '@zachmail/core'
+import { keymap } from '@zachhub/core'
 import { describe, expect, it } from 'vitest'
 import { buildMenuSpec, toAccelerator } from './menu'
 
@@ -35,7 +35,7 @@ describe('menu spec', () => {
     expect(spec.global).toEqual([{ accelerator: 'CmdOrCtrl+Control+M', command: 'compose.new' }])
   })
 
-  it('matches the menu the shell embeds (run `pnpm --filter @zachmail/desktop menu`)', async () => {
+  it('matches the menu the shell embeds (run `pnpm --filter @zachhub/desktop menu`)', async () => {
     await expect(JSON.stringify(spec, null, 2) + '\n').toMatchFileSnapshot('../src-tauri/menu.json')
   })
 })

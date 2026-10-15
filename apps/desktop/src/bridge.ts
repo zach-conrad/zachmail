@@ -1,6 +1,6 @@
 /**
  * Runs in the main web view before any page script (Tauri initialization script). It defines
- * `window.zachmailDesktop` (contract in packages/core/src/desktop.ts) and the hooks the Rust
+ * `window.zachmailDesktop` (contract in hub/core/src/desktop.ts) and the hooks the Rust
  * shell calls with `eval` for menu commands and opened URLs.
  */
 import { invoke } from '@tauri-apps/api/core'
@@ -11,7 +11,7 @@ import {
   type ComposeDraft,
   type SecureStorage,
   type ZachMailDesktop,
-} from '@zachmail/core'
+} from '@zachhub/core'
 import { parseMailto } from './mailto'
 import { toAccelerator } from './menu'
 import { keyEventsFor } from './replay'

@@ -1,0 +1,27 @@
+{
+  "name": "@zachhub/engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./webpush": "./src/webpush.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@zachhub/ai": "workspace:*",
+    "@zachhub/core": "workspace:*",
+    "@zachhub/db": "workspace:*",
+    "@zachhub/mime": "workspace:*",
+    "@zachhub/providers": "workspace:*",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@types/web-push": "^3.6.4",
+    "@zachhub/config": "workspace:*"
+  }
+}

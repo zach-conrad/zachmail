@@ -6,8 +6,8 @@
   "build": {
     "devUrl": "http://localhost:5173",
     "frontendDist": "../../web/dist",
-    "beforeDevCommand": "pnpm --filter @zachmail/web dev",
-    "beforeBuildCommand": "pnpm -w exec turbo run build --filter=@zachmail/web --filter=@zachmail/desktop"
+    "beforeDevCommand": "pnpm --filter @zachhub/web dev",
+    "beforeBuildCommand": "pnpm -w exec turbo run build --filter=@zachhub/web --filter=@zachhub/desktop"
   },
   "app": {
     "macOSPrivateApi": true,

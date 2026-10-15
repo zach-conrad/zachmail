@@ -14,8 +14,7 @@ cpSync('apps/web/dist', `${out}/static`, {
 
 const fn = `${out}/functions/api.func`
 mkdirSync(fn, { recursive: true })
-cpSync('apps/api/dist/index.mjs', `${fn}/index.mjs`)
-cpSync('apps/api/dist/index.mjs.map', `${fn}/index.mjs.map`)
+cpSync('apps/api/dist', fn, { recursive: true })
 writeFileSync(`${fn}/package.json`, JSON.stringify({ type: 'module' }))
 writeFileSync(
   `${fn}/.vc-config.json`,
@@ -36,7 +35,8 @@ const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(
 )
 const csp = [
   "default-src 'self'",
-  `script-src 'self' ${inline.join(' ')}`,
+  // wasm-unsafe-eval: the data worker compiles SQLite (wasm); it allows no JS eval.
+  `script-src 'self' 'wasm-unsafe-eval' ${inline.join(' ')}`,
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com",
   "img-src 'self' data: blob:",
@@ -68,7 +68,11 @@ writeFileSync(
         },
         { src: '^/(.*)$', headers: security, continue: true },
         // The original path rides along in __zm_path; apps/api/src/vercel.ts restores it.
-        { src: '^/(api|webhooks)(/.*)?$', dest: '/api?__zm_path=/$1$2' },
+        // .well-known/oauth-*: the Claude connector's OAuth discovery documents.
+        {
+          src: '^/(api|webhooks|\\.well-known/oauth-[a-z-]+)(/.*)?$',
+          dest: '/api?__zm_path=/$1$2',
+        },
         { handle: 'filesystem' },
         { src: '^/(.*)$', dest: '/index.html', headers: { 'Cache-Control': 'no-cache' } },
       ],

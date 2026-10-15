@@ -1,4 +1,4 @@
-import type { ComposeDraft } from '@zachmail/core'
+import type { ComposeDraft } from '@zachhub/core'
 
 const decode = (s: string) => {
   try {

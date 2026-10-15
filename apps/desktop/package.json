@@ -1,5 +1,5 @@
 {
-  "name": "@zachmail/desktop",
+  "name": "@zachhub/desktop",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -18,8 +18,8 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.2",
-    "@zachmail/config": "workspace:*",
-    "@zachmail/core": "workspace:*",
+    "@zachhub/config": "workspace:*",
+    "@zachhub/core": "workspace:*",
     "vite": "^8.3.4"
   }
 }

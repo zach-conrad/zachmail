@@ -1,5 +1,5 @@
 pnpm-lock.yaml
-packages/db/migrations/meta
+hub/db/migrations/meta
 .vercel
 AGENTS.md
 apps/desktop/src-tauri/menu.json

@@ -1,4 +1,4 @@
-import { keymap, type CommandId } from '@zachmail/core'
+import { keymap, type CommandId } from '@zachhub/core'
 
 const KEYS: Record<string, string> = {
   enter: 'Enter',

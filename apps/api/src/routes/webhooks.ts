@@ -1,6 +1,7 @@
-import { enqueueSync } from '@zachmail/engine'
+import { enqueueSync, enqueueWatchNow, graphClientState } from '@zachhub/engine'
 import { Hono } from 'hono'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
+import { timingSafeEqual } from 'node:crypto'
 import type { Deps } from '../deps'
 import { required, type Env } from '../env'
 
@@ -53,5 +54,53 @@ export function webhookRoutes(env: Env, deps: Deps) {
     return c.body(null, 204)
   })
 
+  /**
+   * Graph change notifications and lifecycle events for Outlook accounts. Graph first proves
+   * the endpoint with a validationToken to echo; each notification then carries the
+   * subscription id and the per-account clientState we registered, which is what we trust.
+   */
+  app.post('/graph', async (c) => {
+    const validationToken = c.req.query('validationToken')
+    if (validationToken !== undefined)
+      return c.text(validationToken, 200, { 'content-type': 'text/plain' })
+
+    const secret = env.GRAPH_WEBHOOK_SECRET
+    if (!secret) return c.body(null, 503)
+    let notes: { subscriptionId?: string; clientState?: string; lifecycleEvent?: string }[]
+    try {
+      notes = (await c.req.json<{ value?: typeof notes }>()).value ?? []
+    } catch {
+      return c.body(null, 202) // malformed: ack so it isn't redelivered forever
+    }
+
+    const db = deps.db()
+    const subs = [...new Set(notes.map((n) => n.subscriptionId).filter((s) => !!s))]
+    if (!subs.length) return c.body(null, 202)
+    const accounts = await db.query<{ id: string; user_id: string; sub: string }>(
+      `SELECT id, user_id, sync_state->>'subscriptionId' AS sub FROM accounts
+       WHERE provider = 'graph' AND status <> 'disabled' AND sync_state->>'subscriptionId' = ANY($1::text[])`,
+      [subs],
+    )
+    const done = new Set<string>()
+    for (const n of notes) {
+      const a = accounts.find((x) => x.sub === n.subscriptionId)
+      if (!a || !sameSecret(n.clientState, graphClientState(secret, a.id))) continue
+      const key = `${a.id}:${n.lifecycleEvent ?? 'change'}`
+      if (done.has(key)) continue
+      done.add(key)
+      if (
+        n.lifecycleEvent === 'reauthorizationRequired' ||
+        n.lifecycleEvent === 'subscriptionRemoved'
+      )
+        await enqueueWatchNow(db, a.user_id, a.id)
+      // 'missed' and plain changes alike: sync; the delta finds what changed.
+      if (n.lifecycleEvent !== 'reauthorizationRequired') await enqueueSync(db, a.user_id, a.id)
+    }
+    return c.body(null, 202)
+  })
+
   return app
 }
+
+const sameSecret = (got: string | undefined, want: string) =>
+  !!got && got.length === want.length && timingSafeEqual(Buffer.from(got), Buffer.from(want))
