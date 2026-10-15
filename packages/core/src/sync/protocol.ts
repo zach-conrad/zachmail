@@ -3,6 +3,8 @@
  * milliseconds so clients can sort and compare without parsing.
  */
 import type { ThreadAi } from './ai'
+import type { NudgeDismissalRow } from '../compose/nudges'
+import type { SnippetRow } from '../compose/snippets'
 import type { OpStatusRow } from './ops'
 import type { SplitRuleRow } from './split'
 
@@ -91,6 +93,8 @@ export interface Rows {
   threads: ThreadRow[]
   messages: MessageRow[]
   splitRules: SplitRuleRow[]
+  snippets: SnippetRow[]
+  nudgeDismissals: NudgeDismissalRow[]
 }
 
 export interface Deletes {
@@ -99,6 +103,8 @@ export interface Deletes {
   thread: string[]
   message: string[]
   splitRule: string[]
+  snippet: string[]
+  nudgeDismissal: string[]
 }
 
 /** GET /api/sync?since=<seq>. Apply upserts then deletes; repeat while `more`. */
@@ -130,6 +136,8 @@ export const emptyRows = (): Rows => ({
   threads: [],
   messages: [],
   splitRules: [],
+  snippets: [],
+  nudgeDismissals: [],
 })
 export const emptyDeletes = (): Deletes => ({
   account: [],
@@ -137,4 +145,6 @@ export const emptyDeletes = (): Deletes => ({
   thread: [],
   message: [],
   splitRule: [],
+  snippet: [],
+  nudgeDismissal: [],
 })

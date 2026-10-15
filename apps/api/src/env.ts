@@ -13,6 +13,13 @@ export interface Env {
   GMAIL_PUSH_AUDIENCE?: string
   /** Service account the push subscription authenticates as. */
   GMAIL_PUSH_SERVICE_ACCOUNT?: string
+  /** Azure app registration for Microsoft 365 / Outlook.com (Graph). */
+  MICROSOFT_CLIENT_ID?: string
+  MICROSOFT_CLIENT_SECRET?: string
+  /** 'common' (default) or one tenant's id/domain. */
+  MICROSOFT_TENANT?: string
+  /** Signs Graph clientState values; Outlook push is off while unset. */
+  GRAPH_WEBHOOK_SECRET?: string
   /** HMAC secrets for OAuth state and image-proxy URLs. */
   OAUTH_STATE_SECRET?: string
   IMAGE_PROXY_SECRET?: string
@@ -23,6 +30,14 @@ export interface Env {
   /** Claude API; AI routes answer 503 while unset. */
   ANTHROPIC_API_KEY?: string
   ANTHROPIC_BASE_URL?: string
+  /** Web Push application server key (public half; the worker holds the private one). */
+  VAPID_PUBLIC_KEY?: string
+  /** Publishable (anon) key; the Claude connector's sign-in exchanges its Supabase code with it. */
+  SUPABASE_PUBLISHABLE_KEY?: string
+  /** Signs Claude connector tokens; defaults to a key derived from OAUTH_STATE_SECRET. Rotate to revoke. */
+  MCP_TOKEN_SECRET?: string
+  /** Extra comma-separated OAuth redirect URIs the connector accepts besides Claude's own. */
+  MCP_REDIRECT_URIS?: string
 }
 
 export function readEnv(source: Record<string, string | undefined> = process.env): Env {
@@ -39,6 +54,10 @@ export function readEnv(source: Record<string, string | undefined> = process.env
     GMAIL_PUBSUB_TOPIC: source.GMAIL_PUBSUB_TOPIC,
     GMAIL_PUSH_AUDIENCE: source.GMAIL_PUSH_AUDIENCE,
     GMAIL_PUSH_SERVICE_ACCOUNT: source.GMAIL_PUSH_SERVICE_ACCOUNT,
+    MICROSOFT_CLIENT_ID: source.MICROSOFT_CLIENT_ID,
+    MICROSOFT_CLIENT_SECRET: source.MICROSOFT_CLIENT_SECRET,
+    MICROSOFT_TENANT: source.MICROSOFT_TENANT,
+    GRAPH_WEBHOOK_SECRET: source.GRAPH_WEBHOOK_SECRET,
     OAUTH_STATE_SECRET: source.OAUTH_STATE_SECRET,
     IMAGE_PROXY_SECRET: source.IMAGE_PROXY_SECRET,
     TOKEN_ENCRYPTION_KEY: source.TOKEN_ENCRYPTION_KEY,
@@ -46,6 +65,11 @@ export function readEnv(source: Record<string, string | undefined> = process.env
     ATTACHMENTS_BUCKET: source.ATTACHMENTS_BUCKET,
     ANTHROPIC_API_KEY: source.ANTHROPIC_API_KEY,
     ANTHROPIC_BASE_URL: source.ANTHROPIC_BASE_URL,
+    VAPID_PUBLIC_KEY: source.VAPID_PUBLIC_KEY,
+    SUPABASE_PUBLISHABLE_KEY:
+      source.SUPABASE_PUBLISHABLE_KEY ?? source.VITE_SUPABASE_PUBLISHABLE_KEY,
+    MCP_TOKEN_SECRET: source.MCP_TOKEN_SECRET,
+    MCP_REDIRECT_URIS: source.MCP_REDIRECT_URIS,
   }
 }
 

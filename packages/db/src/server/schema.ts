@@ -7,6 +7,7 @@ import { sql } from 'drizzle-orm'
 import {
   bigserial,
   boolean,
+  customType,
   doublePrecision,
   index,
   integer,
@@ -21,6 +22,9 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 import { authUid, authUsers, authenticatedRole } from 'drizzle-orm/supabase'
+
+/** Maintained by triggers (migration 0014_search_triggers): subject A, sender B, recipients C, body D. */
+const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
 
 const ownerId = () =>
   uuid('user_id')
@@ -257,11 +261,13 @@ export const messages = pgTable(
     bodyStatus: text('body_status', { enum: ['none', 'cached'] })
       .notNull()
       .default('none'),
+    search: tsvector('search'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex('messages_account_provider').on(t.accountId, t.providerMessageId),
     index('messages_thread_date').on(t.threadId, t.date),
+    index('messages_search').using('gin', t.search),
     ownRowsReadOnly('messages'),
   ],
 ).enableRLS()
@@ -434,6 +440,96 @@ export const reminders = pgTable(
   ],
 ).enableRLS()
 
+/**
+ * Composer snippets (core `SnippetRow`). ZachMail-only data: written by the API, synced to
+ * clients as the `snippet` entity. Ids are client-generated so an offline edit keeps its id;
+ * a non-empty shortcut is unique per user.
+ */
+export const snippets = pgTable(
+  'snippets',
+  {
+    id: uuid('id').primaryKey(),
+    userId: ownerId(),
+    name: text('name').notNull(),
+    shortcut: text('shortcut').notNull().default(''),
+    subject: text('subject').notNull().default(''),
+    html: text('html').notNull().default(''),
+    cc: jsonb('cc').$type<Address[]>().notNull().default([]),
+    bcc: jsonb('bcc').$type<Address[]>().notNull().default([]),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('snippets_user_shortcut')
+      .on(t.userId, t.shortcut)
+      .where(sql`shortcut <> ''`),
+    ownRowsReadOnly('snippets'),
+  ],
+).enableRLS()
+
+/**
+ * Dismissed follow-up nudges (core `NudgeDismissalRow`), one per thread. The nudge stays hidden
+ * until the thread gets a message newer than `last_message_at`.
+ */
+export const nudgeDismissals = pgTable(
+  'nudge_dismissals',
+  {
+    threadId: uuid('thread_id')
+      .primaryKey()
+      .references(() => threads.id, { onDelete: 'cascade' }),
+    userId: ownerId(),
+    lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [ownRowsReadOnly('nudge_dismissals')],
+).enableRLS()
+
+/**
+ * Push targets (architecture §4): Web Push subscriptions now, APNs device tokens with the iOS
+ * app. `token` is the push endpoint URL (webpush) or device token (apns); `keys` holds the
+ * Web Push p256dh/auth pair. Rows the push service reports gone are deleted by the worker.
+ */
+export const devices = pgTable(
+  'devices',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: ownerId(),
+    kind: text('kind', { enum: ['webpush', 'apns'] }).notNull(),
+    token: text('token').notNull(),
+    keys: jsonb('keys').$type<{ p256dh: string; auth: string }>(),
+    label: text('label'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('devices_token').on(t.token),
+    index('devices_user').on(t.userId, t.kind),
+    ownRowsReadOnly('devices'),
+  ],
+).enableRLS()
+
+/** Notification rules (core `NotificationSettings`); no row means the defaults. */
+export const notificationSettings = pgTable(
+  'notification_settings',
+  {
+    userId: ownerId().primaryKey(),
+    enabled: boolean('enabled').notNull().default(true),
+    splits: text('splits')
+      .array()
+      .notNull()
+      .default(sql`'{important}'`),
+    vips: text('vips')
+      .array()
+      .notNull()
+      .default(sql`'{}'`),
+    mutedAccounts: text('muted_accounts')
+      .array()
+      .notNull()
+      .default(sql`'{}'`),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [ownRowsReadOnly('notification_settings')],
+).enableRLS()
+
 /** Single-row allowlist checked by the auth hook: only these emails can ever get a session. */
 export const allowedUsers = pgTable('allowed_users', {
   email: text('email').primaryKey(),
@@ -450,3 +546,4 @@ export type Thread = typeof threads.$inferSelect
 export type Message = typeof messages.$inferSelect
 export type ReminderRecord = typeof reminders.$inferSelect
 export type SplitRule = typeof splitRules.$inferSelect
+export type Snippet = typeof snippets.$inferSelect

@@ -11,12 +11,14 @@ import {
   type MessageBody,
   type OpEnvelope,
   type OpsResponse,
+  type SearchParams,
+  type SearchResponse,
   type SplitRuleRemote,
   type SplitRuleRow,
   type SyncSink,
   type SyncTransport,
 } from '@zachmail/core'
-import { SqlStore } from '@zachmail/local-store'
+import { SearchIndex, SqlStore, isSearchQuery } from '@zachmail/local-store'
 import { openSqliteWasm } from '@zachmail/local-store/sqlite-wasm'
 import type { DataApi, FromWorker, InitConfig, ToWorker, WorkerStatus } from './protocol'
 
@@ -61,7 +63,8 @@ self.addEventListener('online', () => drain())
 async function call(m: Extract<ToWorker, { type: 'call' }>) {
   try {
     const fn = api![m.method] as (...a: unknown[]) => unknown
-    post({ type: 'result', id: m.id, ok: true, value: await fn(...m.args) })
+    const v = await fn(...m.args)
+    post({ type: 'result', id: m.id, ok: true, value: v })
   } catch (err) {
     post({ type: 'result', id: m.id, ok: false, error: String(err) })
   }
@@ -72,12 +75,14 @@ async function init(config: InitConfig) {
     file: config.mode === 'demo' ? '/demo.db' : '/zachmail.db',
   })
   const store = new SqlStore(driver)
+  const search = new SearchIndex(driver, store)
   setStatus({ storage })
 
   let fetchBody: (id: string) => Promise<MessageBody>
   let transport: SyncTransport
   // Demo mode has no server: ops are accepted on the spot and settle as if done.
   let sendOps: ((ops: OpEnvelope[]) => Promise<OpsResponse>) | null = null
+  let searchServer: ((p: SearchParams) => Promise<SearchResponse>) | null = null
   let outgoing: Pick<DataApi, 'send' | 'unsend' | 'saveDraft' | 'deleteDraft' | 'contacts'>
   let rulesRemote: SplitRuleRemote | null = null
   if (config.mode === 'demo') {
@@ -103,6 +108,7 @@ async function init(config: InitConfig) {
     transport = http
     fetchBody = (id) => http.body(id)
     sendOps = (ops) => http.ops({ ops })
+    searchServer = (p) => http.search(p)
     let contacts: Promise<ContactRow[]> | null = null
     outgoing = {
       send: (req) => http.send(req),
@@ -119,12 +125,33 @@ async function init(config: InitConfig) {
   }
 
   const inflight = new Set<string>()
+  // Search's indexes into memory, between other calls. Opening search re-warms only if it
+  // has been a while.
+  let warmedAt = -Infinity
+  const warm = async () => {
+    if (performance.now() - warmedAt < WARM_FOR_MS) return
+    warmedAt = performance.now()
+    const steps = search.warming()
+    while (!steps.next().done) await yieldToQueue()
+  }
+
   api = {
     accounts: () => store.accounts(),
-    countThreads: (q) => store.countThreads(q),
+    countThreads: (q) => (isSearchQuery(q) ? search.countThreads(q) : store.countThreads(q)),
     unread: (q, since, limit) => store.unread(q, since, limit),
-    listThreads: (q, offset, limit) => store.listThreads(q, offset, limit),
-    indexOfThread: (q, id) => store.indexOfThread(q, id),
+    listThreads: (q, offset, limit) =>
+      isSearchQuery(q) ? search.listThreads(q, offset, limit) : store.listThreads(q, offset, limit),
+    indexOfThread: (q, id) =>
+      isSearchQuery(q) ? search.indexOfThread(q, id) : store.indexOfThread(q, id),
+    async searchRemote(q, cursor) {
+      if (!searchServer || !token) return { cursor: null, found: 0, source: 'mirror' }
+      const r = await searchServer({ q: q.search, cursor, tzOffset: q.tzOffset })
+      const fresh = search.addRemote(q, r)
+      if (fresh.threads.length) store.apply(fresh, null, null)
+      post({ type: 'changed' })
+      return { cursor: r.nextCursor, found: r.threads.length, source: r.source }
+    },
+    warmSearch: () => void warm(),
     folders: () => store.folders(),
     ...outgoing,
     splitRules: () => store.splitRules(),
@@ -145,13 +172,18 @@ async function init(config: InitConfig) {
       for (const m of missing) inflight.add(m.messageId)
       try {
         await run
+        // Writing and indexing bodies is synchronous; do it in slices so list and search
+        // calls queued behind a big prefetch aren't held up by it.
+        for (let i = 0; i < fetched.length; i += BODY_SLICE) {
+          if (i) await yieldToQueue()
+          const slice = fetched.slice(i, i + BODY_SLICE)
+          store.putBodies(slice)
+          search.indexBodies(slice)
+        }
       } finally {
         for (const m of missing) inflight.delete(m.messageId)
       }
-      if (fetched.length) {
-        store.putBodies(fetched)
-        post({ type: 'bodies', threadIds: [...done] })
-      }
+      if (fetched.length) post({ type: 'bodies', threadIds: [...done] })
       return fetched.length
     },
   }
@@ -248,11 +280,19 @@ async function init(config: InitConfig) {
       setStatus({ syncing: true })
       await client.pull()
       setStatus({ syncing: false, error: lastError })
+      // Idle after the first sync: have search's indexes in memory before it is opened.
+      if (warmedAt === -Infinity) void warm()
       drain()
     },
   }
   startSyncLoop(sync)
 }
+
+const BODY_SLICE = 10
+const WARM_FOR_MS = 60_000
+
+/** Lets messages that arrived meanwhile run before continuing. */
+const yieldToQueue = () => new Promise<void>((r) => setTimeout(r))
 
 /** Runs `fn` over `items` with at most `n` in flight. */
 async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {

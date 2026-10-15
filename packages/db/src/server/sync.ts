@@ -3,6 +3,7 @@ import { emptyDeletes, emptyRows } from '@zachmail/core'
 import type { SyncBatch } from '@zachmail/providers'
 import { attachSentReminders, unsnoozeOnReply } from './snooze'
 import { SELECT_SPLIT_RULE, recomputeSplits } from './splits'
+import { SELECT_NUDGE_DISMISSAL, SELECT_SNIPPET } from './composer'
 import type { Db, Queryable } from './sql'
 
 type Entity = keyof Deletes
@@ -27,14 +28,16 @@ const ids = (rows: { id: string }[]) => rows.map((r) => r.id)
  * Writes one provider batch into the mirror and the change log in a single transaction:
  * folders, threads, messages, attachments, then recomputed thread aggregates and folder
  * membership. Unchanged rows produce no change entries, so re-syncing is cheap and quiet.
+ * `inserted` lists messages new to the mirror (what notifications look at).
  */
 export async function applySyncBatch(
   db: Db,
   args: { userId: string; accountId: string; batch: SyncBatch },
-): Promise<{ changed: number }> {
+): Promise<{ changed: number; inserted: string[] }> {
   const { userId, accountId, batch } = args
   return db.transaction(async (tx) => {
     let changed = 0
+    let inserted: string[] = []
     const affectedThreads = new Set<string>()
 
     if (batch.folders) {
@@ -135,6 +138,7 @@ export async function applySyncBatch(
       // Their threads are already in affectedThreads, so the changes get logged below.
       await unsnoozeOnReply(tx, insertedIds)
       await attachSentReminders(tx, accountId, insertedIds)
+      inserted = insertedIds
       const atts = batch.messages.flatMap((m) =>
         m.attachments.map((a) => ({
           provider_message_id: m.providerMessageId,
@@ -185,7 +189,7 @@ export async function applySyncBatch(
       changed += threadIds.length
     }
 
-    return { changed }
+    return { changed, inserted }
   })
 }
 
@@ -228,6 +232,14 @@ export async function recomputeThreads(tx: Queryable, userId: string, threadIds:
   await recomputeSplits(tx, userId, threadIds)
 }
 
+/** Records that the backfill has mirrored an account's whole history (search stops asking it). */
+export async function markMirrorComplete(db: Queryable, accountId: string) {
+  await db.query(
+    `UPDATE accounts SET sync_state = sync_state || '{"mirrorComplete": true}' WHERE id = $1`,
+    [accountId],
+  )
+}
+
 export async function updateAccount(
   db: Queryable,
   accountId: string,
@@ -239,8 +251,10 @@ export async function updateAccount(
   },
 ) {
   const rows = await db.query<{ user_id: string }>(
+    // mirrorComplete is engine bookkeeping, not a provider cursor: keep it across cursor writes.
     `UPDATE accounts SET
-       sync_state = COALESCE($2::jsonb, sync_state),
+       sync_state = COALESCE($2::jsonb || jsonb_strip_nulls(
+         jsonb_build_object('mirrorComplete', sync_state -> 'mirrorComplete')), sync_state),
        status = COALESCE($3::account_status, status),
        last_synced_at = COALESCE($4::timestamptz, last_synced_at),
        last_error = CASE WHEN $5::boolean THEN $6 ELSE last_error END
@@ -273,7 +287,7 @@ const SELECT_ACCOUNT = `SELECT a.id, a.provider, a.email, a.display_name AS "dis
 const SELECT_FOLDER = `SELECT f.id, f.account_id AS "accountId", f.provider_id AS "providerId", f.name, f.kind,
   f.unread_count AS "unreadCount", f.total_count AS "totalCount" FROM folders f`
 
-const SELECT_THREAD = `SELECT t.id, t.account_id AS "accountId", t.subject, t.snippet, t.participants,
+export const SELECT_THREAD = `SELECT t.id, t.account_id AS "accountId", t.subject, t.snippet, t.participants,
   ${ms('t.last_message_at')} AS "lastMessageAt", t.message_count AS "messageCount", t.unread, t.starred,
   t.has_attachments AS "hasAttachments", t.muted, ${ms('t.snoozed_until')} AS "snoozedUntil",
   (SELECT jsonb_build_object('at', ${ms('r.remind_at')}, 'condition', r.condition)
@@ -283,7 +297,7 @@ const SELECT_THREAD = `SELECT t.id, t.account_id AS "accountId", t.subject, t.sn
   COALESCE((SELECT array_agg(tf.folder_id::text) FROM thread_folders tf WHERE tf.thread_id = t.id), '{}') AS "folderIds"
   FROM threads t`
 
-const SELECT_MESSAGE = `SELECT m.id, m.thread_id AS "threadId", m.account_id AS "accountId", m."from", m."to", m.cc,
+export const SELECT_MESSAGE = `SELECT m.id, m.thread_id AS "threadId", m.account_id AS "accountId", m."from", m."to", m.cc,
   m.reply_to AS "replyTo", m.subject, m.snippet, ${ms('m.date')} AS date, m.unread, m.starred,
   m.has_attachments AS "hasAttachments", m.list_unsubscribe AS "listUnsubscribe",
   m.rfc822_message_id AS "rfc822MessageId", m.body_status AS "bodyStatus" FROM messages m`
@@ -318,6 +332,8 @@ export async function readDelta(
       thread: [],
       message: [],
       splitRule: [],
+      snippet: [],
+      nudgeDismissal: [],
     }
     const deletes = emptyDeletes()
     const opIds: string[] = []
@@ -348,6 +364,8 @@ export async function readDelta(
     await load('threads', SELECT_THREAD, 't', want.thread)
     await load('messages', SELECT_MESSAGE, 'm', want.message)
     await load('splitRules', SELECT_SPLIT_RULE, 'r', want.splitRule)
+    await load('snippets', SELECT_SNIPPET, 's', want.snippet)
+    await load('nudgeDismissals', SELECT_NUDGE_DISMISSAL, 'n', want.nudgeDismissal)
 
     const ops = opIds.length ? await readOpStatuses(tx, userId, opIds) : []
 
@@ -379,6 +397,8 @@ const entityOf = (k: keyof Rows): Entity =>
       threads: 'thread',
       messages: 'message',
       splitRules: 'splitRule',
+      snippets: 'snippet',
+      nudgeDismissals: 'nudgeDismissal',
     }) as const
   )[k]
 
@@ -403,6 +423,8 @@ export async function readBootstrap(
       accounts: await tx.query(`${SELECT_ACCOUNT} WHERE a.user_id = $1`, [userId]),
       folders: await tx.query(`${SELECT_FOLDER} WHERE f.user_id = $1`, [userId]),
       splitRules: await tx.query(`${SELECT_SPLIT_RULE} WHERE r.user_id = $1`, [userId]),
+      snippets: await tx.query(`${SELECT_SNIPPET} WHERE s.user_id = $1`, [userId]),
+      nudgeDismissals: await tx.query(`${SELECT_NUDGE_DISMISSAL} WHERE n.user_id = $1`, [userId]),
     })
     const cutoff = `now() - make_interval(days => $2)`
     let cursor: { at: number; id: string } | null = null

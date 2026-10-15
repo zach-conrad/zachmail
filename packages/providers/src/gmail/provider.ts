@@ -6,6 +6,7 @@ import type {
   SentRef,
   ProviderMessage,
   RawBody,
+  SearchPage,
   SyncBatch,
   SyncState,
   WatchResult,
@@ -261,6 +262,20 @@ export class GmailProvider implements MailProvider {
     return {
       messages: threads.flatMap((t) => t?.messages ?? []).map(normalizeMessage),
       deletedMessageIds: [],
+    }
+  }
+
+  async searchThreads(
+    query: string,
+    opts: { limit: number; pageToken?: string | null },
+  ): Promise<SearchPage> {
+    const r = await this.api.get<{ threads?: { id: string }[]; nextPageToken?: string }>(
+      '/threads',
+      { q: query, maxResults: Math.min(opts.limit, 500), pageToken: opts.pageToken ?? undefined },
+    )
+    return {
+      providerThreadIds: (r.threads ?? []).map((t) => t.id),
+      pageToken: r.nextPageToken ?? null,
     }
   }
 }
