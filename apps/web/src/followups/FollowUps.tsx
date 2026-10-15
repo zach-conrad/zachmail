@@ -1,4 +1,4 @@
-import type { FollowUpItem } from '@zachmail/local-store'
+import type { FollowUpItem } from '@zachhub/local-store'
 import { useEffect, useLayoutEffect, useState } from 'react'
 import { Kbd } from '../app/Kbd'
 import { replyDraft } from '../compose/draft'

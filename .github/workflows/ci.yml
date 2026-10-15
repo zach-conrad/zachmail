@@ -51,7 +51,7 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @zachmail/db --filter @zachmail/engine --filter @zachmail/api test
+      - run: pnpm --filter @zachhub/db --filter @zachhub/engine --filter @zachhub/api test
 
   perf:
     # Speed budgets (architecture §1a) against the 20k-thread demo build.
@@ -64,8 +64,8 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @zachmail/web exec playwright install --with-deps chromium
-      - run: pnpm --filter @zachmail/tokens build
-      - run: pnpm --filter @zachmail/web perf:build
+      - run: pnpm --filter @zachhub/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @zachhub/tokens build
+      - run: pnpm --filter @zachhub/web perf:build
       - name: Perf budgets (cold start, j/k, open thread, palette, scroll)
-        run: pnpm --filter @zachmail/web perf
+        run: pnpm --filter @zachhub/web perf

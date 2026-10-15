@@ -1,4 +1,4 @@
-import type { SplitKey, SplitTab } from '@zachmail/core'
+import type { SplitKey, SplitTab } from '@zachhub/core'
 import { Link } from '@tanstack/react-router'
 import { Kbd } from './Kbd'
 

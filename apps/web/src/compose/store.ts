@@ -1,4 +1,4 @@
-import type { ContactRow } from '@zachmail/core'
+import type { ContactRow } from '@zachhub/core'
 import type { DataClient } from '../data/client'
 import { isEmpty, type Draft } from './draft'
 

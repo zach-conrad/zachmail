@@ -6,8 +6,8 @@ import type {
   SendResponse,
   SnippetRow,
   SplitRuleRow,
-} from '@zachmail/core'
-import type { ListQuery, SearchListQuery, StoreApi, ThreadListItem } from '@zachmail/local-store'
+} from '@zachhub/core'
+import type { ListQuery, SearchListQuery, StoreApi, ThreadListItem } from '@zachhub/local-store'
 
 /** Store reads the UI may call over the worker boundary (writes stay inside the worker). */
 export type ReadMethod =

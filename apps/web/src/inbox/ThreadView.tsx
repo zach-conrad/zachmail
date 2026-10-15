@@ -1,5 +1,5 @@
-import type { MessageRow } from '@zachmail/core'
-import { accountColor } from '@zachmail/tokens'
+import type { MessageRow } from '@zachhub/core'
+import { accountColor } from '@zachhub/tokens'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useData } from '../data/DataProvider'
 import { displayName, longTime, shortTime } from '../lib/format'

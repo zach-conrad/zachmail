@@ -1,11 +1,11 @@
-import { InvalidNotificationSettingsError, parseNotificationSettings } from '@zachmail/core'
+import { InvalidNotificationSettingsError, parseNotificationSettings } from '@zachhub/core'
 import {
   deleteDevice,
   readNotificationSettings,
   saveNotificationSettings,
   upsertDevice,
-} from '@zachmail/db/server'
-import { enqueueTestNotification } from '@zachmail/engine'
+} from '@zachhub/db/server'
+import { enqueueTestNotification } from '@zachhub/engine'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import type { AuthVariables } from '../auth'

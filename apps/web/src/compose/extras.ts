@@ -5,7 +5,7 @@ import {
   type Address,
   type MessageRow,
   type SnippetRow,
-} from '@zachmail/core'
+} from '@zachhub/core'
 import type { Draft } from './draft'
 
 const ENTITIES: Record<string, string> = {

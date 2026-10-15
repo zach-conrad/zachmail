@@ -4,8 +4,8 @@ import {
   matchSnippets,
   type Address,
   type ContactRow,
-} from '@zachmail/core'
-import { accountColor } from '@zachmail/tokens'
+} from '@zachhub/core'
+import { accountColor } from '@zachhub/tokens'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Kbd } from '../app/Kbd'
 import { useData } from '../data/DataProvider'

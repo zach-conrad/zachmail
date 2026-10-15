@@ -1,5 +1,5 @@
-import type { Address, DraftRequest, MessageRow, SendRequest } from '@zachmail/core'
-import type { ThreadDetail } from '@zachmail/local-store'
+import type { Address, DraftRequest, MessageRow, SendRequest } from '@zachhub/core'
+import type { ThreadDetail } from '@zachhub/local-store'
 import { longTime } from '../lib/format'
 
 export type ComposeKind = 'new' | 'reply' | 'replyAll' | 'forward'

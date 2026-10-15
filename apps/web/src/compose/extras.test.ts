@@ -1,4 +1,4 @@
-import type { MessageRow, SnippetRow } from '@zachmail/core'
+import type { MessageRow, SnippetRow } from '@zachhub/core'
 import { describe, expect, it } from 'vitest'
 import type { Draft } from './draft'
 import { applyIntro, applySnippet, htmlToText } from './extras'

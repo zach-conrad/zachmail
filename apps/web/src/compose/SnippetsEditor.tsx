@@ -1,4 +1,4 @@
-import { InvalidSnippetError, parseSnippetInput, type SnippetRow } from '@zachmail/core'
+import { InvalidSnippetError, parseSnippetInput, type SnippetRow } from '@zachhub/core'
 import { useState } from 'react'
 import { useData } from '../data/DataProvider'
 import { useCommands } from '../lib/useCommands'

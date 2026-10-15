@@ -1,4 +1,4 @@
-import type { SnippetRow } from '@zachmail/core'
+import type { SnippetRow } from '@zachhub/core'
 import type { KeyboardEvent } from 'react'
 
 export interface MenuState {

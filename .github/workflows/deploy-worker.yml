@@ -3,7 +3,7 @@ name: Deploy worker
 on:
   push:
     branches: [main]
-    paths: ['apps/worker/**', 'packages/**', 'infra/fly.toml', 'pnpm-lock.yaml']
+    paths: ['apps/worker/**', 'hub/**', 'modules/**', 'infra/fly.toml', 'pnpm-lock.yaml']
   workflow_dispatch:
 
 jobs:

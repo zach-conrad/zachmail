@@ -1,0 +1,22 @@
+{
+  "name": "@zachhub/providers",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./gmail": "./src/gmail/index.ts",
+    "./graph": "./src/graph/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@zachhub/mime": "workspace:*"
+  },
+  "devDependencies": {
+    "@zachhub/config": "workspace:*"
+  }
+}
