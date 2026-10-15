@@ -1,3 +1,4 @@
+import type { EntityDeltas } from '../hub/entities'
 import type { OpStatusRow } from './ops'
 import type { BootstrapLine, Deletes, Rows, SyncDelta } from './protocol'
 
@@ -7,14 +8,15 @@ export interface SyncSink {
   /** Drop every synced row; called before a fresh bootstrap. */
   reset(): void | Promise<void>
   /**
-   * Apply rows (and deletes), settle ops the server reports done or failed, and record `seq`
-   * when given, in one transaction.
+   * Apply rows (and deletes), settle ops the server reports done or failed, apply first-party
+   * entity changes, and record `seq` when given, in one transaction.
    */
   apply(
     upserts: Partial<Rows>,
     deletes: Partial<Deletes> | null,
     seq: number | null,
     ops?: readonly OpStatusRow[],
+    entities?: EntityDeltas,
   ): void | Promise<void>
 }
 
@@ -90,7 +92,12 @@ export class SyncClient {
     await this.sink.reset()
     for await (const line of this.transport.bootstrap(this.abort.signal)) {
       if ('rows' in line) await this.sink.apply(line.rows, null, null)
-      else await this.sink.apply({}, null, line.seq)
+      else if ('entities' in line) {
+        const entities: EntityDeltas = {}
+        for (const [kind, rows] of Object.entries(line.entities))
+          entities[kind] = { upserts: rows, deletes: [] }
+        await this.sink.apply({}, null, null, [], entities)
+      } else await this.sink.apply({}, null, line.seq)
       // Chunks arrive newest first, so the inbox fills in before the stream ends.
       this.opts.onChange?.()
       await yieldToEventLoop()
@@ -105,7 +112,7 @@ export class SyncClient {
       const d = await this.transport.delta(seq, this.abort.signal)
       const empty = d.seq === seq && !d.more && isEmpty(d)
       if (!empty) {
-        await this.sink.apply(d.upserts, d.deletes, d.seq, d.ops ?? [])
+        await this.sink.apply(d.upserts, d.deletes, d.seq, d.ops ?? [], d.entities)
         this.opts.onChange?.()
         await yieldToEventLoop()
       }
@@ -120,6 +127,7 @@ const yieldToEventLoop = () => new Promise<void>((r) => setTimeout(r, 0))
 
 const isEmpty = (d: SyncDelta) =>
   !d.ops?.length &&
+  Object.values(d.entities ?? {}).every((e) => !e.upserts.length && !e.deletes.length) &&
   Object.values(d.upserts).every((a: unknown[]) => a.length === 0) &&
   Object.values(d.deletes).every((a: unknown[]) => a.length === 0)
 
