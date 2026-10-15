@@ -7,6 +7,7 @@ const BUDGET = {
   keyAction: 16,
   openPrefetched: 50,
   palette: 16,
+  searchKey: 50,
   droppedFrames: 0.05,
 }
 
@@ -94,6 +95,78 @@ test('command palette opens < 16 ms', async () => {
   }
   report.palette = summary(xs)
   expect(pct(xs, 95)).toBeLessThan(BUDGET.palette)
+})
+
+test('search as you type: results per keystroke < 50 ms', async () => {
+  const xs: number[] = []
+  for (const query of ['design review', 'from:ana plan', 'is:unread contract']) {
+    await page.keyboard.press('/')
+    const input = page.getByRole('textbox', { name: 'Search mail' })
+    await expect(input).toBeFocused()
+    await clearSamples()
+    for (const ch of query) {
+      await page.keyboard.type(ch)
+      // Let each keystroke's results land before the next, as a typist's pace allows.
+      await page.waitForTimeout(60)
+    }
+    xs.push(...(await samples('search.type')))
+    await expect(page.locator('.thread-list .row[id]').first()).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(input).toBeHidden()
+  }
+  report.search = summary(xs)
+  expect(xs.length).toBeGreaterThan(20)
+  expect(pct(xs, 95)).toBeLessThan(BUDGET.searchKey)
+})
+
+test('compose and reply open < 16 ms', async () => {
+  const xs: number[] = []
+  for (let i = 0; i < 5; i++) {
+    await clearSamples()
+    await page.keyboard.press('c')
+    await expect(page.getByRole('dialog', { name: 'New message' })).toBeVisible()
+    xs.push(...(await samples('compose.new')))
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(150)
+    await clearSamples()
+    await page.keyboard.press('r')
+    await expect(page.getByRole('dialog', { name: 'Reply' })).toBeVisible()
+    xs.push(...(await samples('compose.reply')))
+    // Leave the reply empty so Esc doesn't keep it, then close the thread.
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('j')
+  }
+  report.compose = summary(xs)
+  expect(xs.length).toBe(10)
+  expect(pct(xs, 95)).toBeLessThan(BUDGET.keyAction)
+})
+
+test('archive 50 threads, then undo: each key < 16 ms', async () => {
+  const count = () =>
+    page.evaluate(() => document.querySelectorAll('.thread-list .row[id]').length > 0)
+  expect(await count()).toBe(true)
+  const first = () => page.locator('.row[data-focused]').getAttribute('id')
+  await clearSamples()
+  const archived: (string | null)[] = []
+  for (let i = 0; i < 50; i++) {
+    archived.push(await first())
+    await page.keyboard.press('e')
+  }
+  await expect(page.locator('.toast')).toContainText('Done')
+  const done = await samples('thread.done')
+  // Undo the last five; each archived row comes back focused, in place.
+  for (let i = 0; i < 5; i++) await page.keyboard.press('z')
+  expect(await first()).toBe(archived[45])
+  const undo = await samples('undo')
+  report.archive = summary(done)
+  report.undo = summary(undo)
+  expect(done.length).toBe(50)
+  expect(undo.length).toBe(5)
+  expect(new Set(archived).size).toBe(50)
+  expect(pct(done, 95)).toBeLessThan(BUDGET.keyAction)
+  expect(pct(undo, 95)).toBeLessThan(BUDGET.keyAction)
 })
 
 test('scrolling thousands of threads holds 60 fps', async () => {

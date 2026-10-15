@@ -1,11 +1,12 @@
 import { markOnce } from '../lib/perf'
+import type { OpEnvelope, SplitRuleRow } from '@zachmail/core'
 import type { DataApi, FromWorker, InitConfig, Method, ToWorker, WorkerStatus } from './protocol'
 
 type Remote<T> = {
   [K in keyof T]: T[K] extends (...a: infer A) => infer R ? (...a: A) => Promise<Awaited<R>> : never
 }
 
-export type DataEvent = Extract<FromWorker, { type: 'changed' | 'bodies' }>
+export type DataEvent = Extract<FromWorker, { type: 'changed' | 'bodies' | 'opFailed' }>
 
 /** Main-thread handle on the data worker: typed RPC for reads, events for changes. */
 export class DataClient {
@@ -41,6 +42,16 @@ export class DataClient {
 
   setToken(token: string | null) {
     this.send({ type: 'token', token })
+  }
+
+  /** Hand an op the UI has already applied on screen to the worker's queue. */
+  op(env: OpEnvelope) {
+    this.send({ type: 'op', env })
+  }
+
+  /** Saves (rule) or deletes (null) a split rule; a 'changed' event follows. */
+  editSplitRule(id: string, rule: SplitRuleRow | null) {
+    this.send({ type: 'splitRule', id, rule })
   }
 
   /** Ask the worker to pull now (focus, Realtime nudge). */
@@ -87,7 +98,7 @@ export class DataClient {
       const p = this.pending.get(m.id)
       this.pending.delete(m.id)
       if (m.ok) p?.resolve(m.value)
-      else p?.reject(new Error(m.error))
+      else p?.reject(new Error(m.error.replace(/^\w*Error: /, '')))
     } else if (m.type === 'status') {
       if (this.status.syncing && !m.status.syncing && !m.status.error) markOnce('synced')
       this.status = m.status

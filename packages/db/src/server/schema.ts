@@ -7,6 +7,8 @@ import { sql } from 'drizzle-orm'
 import {
   bigserial,
   boolean,
+  customType,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -20,6 +22,9 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 import { authUid, authUsers, authenticatedRole } from 'drizzle-orm/supabase'
+
+/** Maintained by triggers (migration 0014_search_triggers): subject A, sender B, recipients C, body D. */
+const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
 
 const ownerId = () =>
   uuid('user_id')
@@ -180,11 +185,28 @@ export const threads = pgTable(
     unread: boolean('unread').notNull().default(false),
     starred: boolean('starred').notNull().default(false),
     hasAttachments: boolean('has_attachments').notNull().default(false),
+    /** ZachMail-only: archived at the provider until then, then back to the inbox. */
+    snoozedUntil: timestamp('snoozed_until', { withTimezone: true }),
+    /** ZachMail-only state: new replies get archived (Gmail's API has no mute). */
+    muted: boolean('muted').notNull().default(false),
+    /** Inbox split under the user's rules (core `compileSplitRules`); null when not in the inbox. */
+    split: text('split'),
+    /** Claude triage (packages/ai), as of `ai_triaged_at`; re-run when newer mail arrives. */
+    aiCategory: text('ai_category'),
+    aiSummary: text('ai_summary'),
+    aiNeedsReply: boolean('ai_needs_reply'),
+    aiTriagedAt: timestamp('ai_triaged_at', { withTimezone: true }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    index('threads_muted')
+      .on(t.accountId)
+      .where(sql`muted`),
     uniqueIndex('threads_account_provider').on(t.accountId, t.providerThreadId),
     index('threads_user_recent').on(t.userId, t.lastMessageAt.desc()),
+    index('threads_snoozed')
+      .on(t.snoozedUntil)
+      .where(sql`snoozed_until is not null`),
     ownRowsReadOnly('threads'),
   ],
 ).enableRLS()
@@ -239,11 +261,13 @@ export const messages = pgTable(
     bodyStatus: text('body_status', { enum: ['none', 'cached'] })
       .notNull()
       .default('none'),
+    search: tsvector('search'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex('messages_account_provider').on(t.accountId, t.providerMessageId),
     index('messages_thread_date').on(t.threadId, t.date),
+    index('messages_search').using('gin', t.search),
     ownRowsReadOnly('messages'),
   ],
 ).enableRLS()
@@ -284,6 +308,228 @@ export const attachments = pgTable(
   (t) => [index('attachments_message').on(t.messageId), ownRowsReadOnly('attachments')],
 ).enableRLS()
 
+/**
+ * Provider writes waiting for the worker: triage ops now, sends later. One row per client op
+ * per account, executed in `seq` order per account. `payload` holds thread and folder ids
+ * (resolved to provider ids at execution time); `not_before` delays undo-send / send-later.
+ */
+export const outbox = pgTable(
+  'outbox',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+    userId: ownerId(),
+    opId: uuid('op_id').notNull(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
+    state: text('state', { enum: ['pending', 'in_flight', 'done', 'failed'] })
+      .notNull()
+      .default('pending'),
+    notBefore: timestamp('not_before', { withTimezone: true }).notNull().defaultNow(),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('outbox_op_account').on(t.opId, t.accountId),
+    index('outbox_account_open')
+      .on(t.accountId, t.seq)
+      .where(sql`state in ('pending', 'in_flight')`),
+    ownRowsReadOnly('outbox'),
+  ],
+).enableRLS()
+
+/**
+ * User split rules (core `SplitRuleRow`). ZachMail-only data: written by the API, synced to
+ * clients as the `split_rule` entity, evaluated on ingest into `threads.split`. Ids are
+ * client-generated so an offline edit keeps its id.
+ */
+export const splitRules = pgTable(
+  'split_rules',
+  {
+    id: uuid('id').primaryKey(),
+    userId: ownerId(),
+    name: text('name').notNull(),
+    target: text('target').notNull(),
+    match: text('match', { enum: ['all', 'any'] })
+      .notNull()
+      .default('all'),
+    conditions: jsonb('conditions')
+      .$type<{ field: string; value: string }[]>()
+      .notNull()
+      .default([]),
+    position: doublePrecision('position').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('split_rules_user').on(t.userId, t.position), ownRowsReadOnly('split_rules')],
+).enableRLS()
+
+/**
+ * Composer drafts, keyed by the client's id. The worker mirrors each to a provider draft
+ * (`synced_version` trails `version` until it has); deleted drafts linger until the provider
+ * copy is gone too.
+ */
+export const drafts = pgTable(
+  'drafts',
+  {
+    id: uuid('id').primaryKey(),
+    userId: ownerId(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    version: integer('version').notNull().default(1),
+    syncedVersion: integer('synced_version').notNull().default(0),
+    providerDraftId: text('provider_draft_id'),
+    deleted: boolean('deleted').notNull().default(false),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [ownRowsReadOnly('drafts')],
+).enableRLS()
+
+/** Files uploaded (straight to Storage) for outgoing mail; referenced by sends and drafts. */
+export const uploads = pgTable(
+  'uploads',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: ownerId(),
+    storageKey: text('storage_key').notNull(),
+    filename: text('filename').notNull(),
+    mime: text('mime').notNull(),
+    size: integer('size').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [ownRowsReadOnly('uploads')],
+).enableRLS()
+
+export const reminderConditionEnum = pgEnum('reminder_condition', ['always', 'if_no_reply'])
+
+/**
+ * ZachMail-only reminders, at most one per thread. A "remind if no reply" set while composing
+ * has no thread until the sent copy syncs back: it waits on `sent_message_id` (the send's
+ * Message-ID) and gets its thread_id from the sync that brings that message in.
+ */
+export const reminders = pgTable(
+  'reminders',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: ownerId(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    threadId: uuid('thread_id').references(() => threads.id, { onDelete: 'cascade' }),
+    sentMessageId: text('sent_message_id'),
+    /** The op that set it; a send's op id for compose reminders. */
+    opId: uuid('op_id').notNull(),
+    remindAt: timestamp('remind_at', { withTimezone: true }).notNull(),
+    condition: reminderConditionEnum('condition').notNull().default('if_no_reply'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('reminders_thread').on(t.threadId),
+    index('reminders_due').on(t.remindAt),
+    index('reminders_sent_message')
+      .on(t.accountId, t.sentMessageId)
+      .where(sql`thread_id is null`),
+    ownRowsReadOnly('reminders'),
+  ],
+).enableRLS()
+
+/**
+ * Composer snippets (core `SnippetRow`). ZachMail-only data: written by the API, synced to
+ * clients as the `snippet` entity. Ids are client-generated so an offline edit keeps its id;
+ * a non-empty shortcut is unique per user.
+ */
+export const snippets = pgTable(
+  'snippets',
+  {
+    id: uuid('id').primaryKey(),
+    userId: ownerId(),
+    name: text('name').notNull(),
+    shortcut: text('shortcut').notNull().default(''),
+    subject: text('subject').notNull().default(''),
+    html: text('html').notNull().default(''),
+    cc: jsonb('cc').$type<Address[]>().notNull().default([]),
+    bcc: jsonb('bcc').$type<Address[]>().notNull().default([]),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('snippets_user_shortcut')
+      .on(t.userId, t.shortcut)
+      .where(sql`shortcut <> ''`),
+    ownRowsReadOnly('snippets'),
+  ],
+).enableRLS()
+
+/**
+ * Dismissed follow-up nudges (core `NudgeDismissalRow`), one per thread. The nudge stays hidden
+ * until the thread gets a message newer than `last_message_at`.
+ */
+export const nudgeDismissals = pgTable(
+  'nudge_dismissals',
+  {
+    threadId: uuid('thread_id')
+      .primaryKey()
+      .references(() => threads.id, { onDelete: 'cascade' }),
+    userId: ownerId(),
+    lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [ownRowsReadOnly('nudge_dismissals')],
+).enableRLS()
+
+/**
+ * Push targets (architecture §4): Web Push subscriptions now, APNs device tokens with the iOS
+ * app. `token` is the push endpoint URL (webpush) or device token (apns); `keys` holds the
+ * Web Push p256dh/auth pair. Rows the push service reports gone are deleted by the worker.
+ */
+export const devices = pgTable(
+  'devices',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: ownerId(),
+    kind: text('kind', { enum: ['webpush', 'apns'] }).notNull(),
+    token: text('token').notNull(),
+    keys: jsonb('keys').$type<{ p256dh: string; auth: string }>(),
+    label: text('label'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('devices_token').on(t.token),
+    index('devices_user').on(t.userId, t.kind),
+    ownRowsReadOnly('devices'),
+  ],
+).enableRLS()
+
+/** Notification rules (core `NotificationSettings`); no row means the defaults. */
+export const notificationSettings = pgTable(
+  'notification_settings',
+  {
+    userId: ownerId().primaryKey(),
+    enabled: boolean('enabled').notNull().default(true),
+    splits: text('splits')
+      .array()
+      .notNull()
+      .default(sql`'{important}'`),
+    vips: text('vips')
+      .array()
+      .notNull()
+      .default(sql`'{}'`),
+    mutedAccounts: text('muted_accounts')
+      .array()
+      .notNull()
+      .default(sql`'{}'`),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [ownRowsReadOnly('notification_settings')],
+).enableRLS()
+
 /** Single-row allowlist checked by the auth hook: only these emails can ever get a session. */
 export const allowedUsers = pgTable('allowed_users', {
   email: text('email').primaryKey(),
@@ -293,7 +539,11 @@ export const allowedUsers = pgTable('allowed_users', {
 export type Account = typeof accounts.$inferSelect
 export type Change = typeof changes.$inferSelect
 export type Job = typeof jobs.$inferSelect
+export type OutboxRow = typeof outbox.$inferSelect
 export type NewJob = typeof jobs.$inferInsert
 export type Folder = typeof folders.$inferSelect
 export type Thread = typeof threads.$inferSelect
 export type Message = typeof messages.$inferSelect
+export type ReminderRecord = typeof reminders.$inferSelect
+export type SplitRule = typeof splitRules.$inferSelect
+export type Snippet = typeof snippets.$inferSelect

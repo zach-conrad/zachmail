@@ -32,6 +32,7 @@ const delta = (seq: number, more = false, threads = 0): SyncDelta => ({
   more,
   upserts: { ...emptyRows(), threads: Array.from({ length: threads }, () => ({}) as never) },
   deletes: emptyDeletes(),
+  ops: [],
 })
 
 function transport(lines: BootstrapLine[], deltas: Record<number, SyncDelta | Error>) {
@@ -107,6 +108,21 @@ describe('SyncClient', () => {
     fire()
     expect(pull).toHaveBeenCalledTimes(3)
     stop()
+  })
+})
+
+describe('SyncClient ops', () => {
+  it('hands op status rows to the sink even when no rows changed', async () => {
+    const seen: unknown[] = []
+    const sink: SyncSink = {
+      getSeq: () => 3,
+      reset: () => {},
+      apply: (_r, _d, _s, ops) => void seen.push(ops),
+    }
+    const status = { id: 'op-1', state: 'done' as const, error: null }
+    const client = new SyncClient(sink, transport([], { 3: { ...delta(3), ops: [status] } }).t)
+    await client.pull()
+    expect(seen).toEqual([[status]])
   })
 })
 

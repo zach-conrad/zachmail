@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { authRedirect, desktop } from '../lib/desktop'
 import { supabase } from '../lib/supabase'
 
 export function LoginScreen() {
@@ -27,21 +28,24 @@ export function LoginScreen() {
     <main className="login">
       <h1 className="display">ZachMail</h1>
       <div className="login-actions">
+        {/* Passkeys need a real browser; the macOS app signs in through Google. */}
+        {!desktop && (
+          <button
+            className="btn btn-primary"
+            disabled={busy}
+            onClick={() => run(() => auth.signInWithPasskey())}
+          >
+            Sign in with passkey
+          </button>
+        )}
         <button
-          className="btn btn-primary"
-          disabled={busy}
-          onClick={() => run(() => auth.signInWithPasskey())}
-        >
-          Sign in with passkey
-        </button>
-        <button
-          className="btn"
+          className={desktop ? 'btn btn-primary' : 'btn'}
           disabled={busy}
           onClick={() =>
             run(() =>
               auth.signInWithOAuth({
                 provider: 'google',
-                options: { redirectTo: location.origin },
+                options: { redirectTo: authRedirect },
               }),
             )
           }

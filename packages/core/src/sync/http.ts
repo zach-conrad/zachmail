@@ -1,5 +1,9 @@
 import { ResyncRequired, type SyncTransport } from './client'
+import type { OpsRequest, OpsResponse } from './ops'
+import type { SearchResponse } from '../search/protocol'
+import type { ContactRow, DraftRequest, SendRequest, SendResponse } from './send'
 import type { BootstrapLine, MessageBody, SyncDelta } from './protocol'
+import type { SplitRuleRemote } from './split'
 
 export interface HttpTransportOptions {
   /** API origin; '' for same-origin. */
@@ -9,32 +13,77 @@ export interface HttpTransportOptions {
   fetch?: typeof fetch
 }
 
+export interface SearchParams {
+  q: string
+  cursor?: string | null
+  limit?: number
+  tzOffset?: number
+}
+
 export class HttpError extends Error {
   constructor(
     readonly status: number,
     path: string,
+    /** The server's own message, when it sent one; safe to show. */
+    readonly detail: string | null = null,
   ) {
-    super(`${path} failed with HTTP ${status}`)
+    super(detail ?? `${path} failed with HTTP ${status}`)
+  }
+}
+
+async function errorMessage(res: Response): Promise<string | null> {
+  try {
+    const text = (await res.text()).trim()
+    if (!text) return null
+    try {
+      const j = JSON.parse(text) as { error?: unknown; message?: unknown }
+      const m = j.error ?? j.message
+      return typeof m === 'string' ? m : null
+    } catch {
+      return text.length <= 200 && !text.startsWith('<') ? text : null
+    }
+  } catch {
+    return null
   }
 }
 
 /** The client side of the wire contract in protocol.ts. */
 export function httpTransport(opts: HttpTransportOptions): SyncTransport & {
   body(messageId: string, signal?: AbortSignal): Promise<MessageBody>
+  ops(req: OpsRequest, signal?: AbortSignal): Promise<OpsResponse>
+  search(params: SearchParams, signal?: AbortSignal): Promise<SearchResponse>
+  send(req: SendRequest): Promise<SendResponse>
+  /** Undo send: true when cancelled, false when it is already on its way (409). */
+  unsend(id: string): Promise<boolean>
+  saveDraft(id: string, draft: DraftRequest): Promise<void>
+  deleteDraft(id: string): Promise<void>
+  contacts(): Promise<ContactRow[]>
 } {
   const f = opts.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
   const base = opts.baseUrl ?? ''
 
-  async function get(path: string, signal?: AbortSignal): Promise<Response> {
+  async function request(
+    method: string,
+    path: string,
+    signal?: AbortSignal,
+    body?: unknown,
+  ): Promise<Response> {
     const token = await opts.token()
+    const headers: Record<string, string> = token ? { authorization: `Bearer ${token}` } : {}
+    if (body !== undefined) headers['content-type'] = 'application/json'
     const res = await f(base + path, {
+      method,
       signal,
-      headers: token ? { authorization: `Bearer ${token}` } : {},
+      headers,
+      ...(body !== undefined && { body: JSON.stringify(body) }),
     })
     if (res.status === 410) throw new ResyncRequired()
-    if (!res.ok) throw new HttpError(res.status, path)
+    if (!res.ok) throw new HttpError(res.status, path, await errorMessage(res))
     return res
   }
+  const get = (path: string, signal?: AbortSignal) => request('GET', path, signal)
+  const post = (path: string, body: unknown, signal?: AbortSignal) =>
+    request('POST', path, signal, body)
 
   return {
     async *bootstrap(signal) {
@@ -47,6 +96,41 @@ export function httpTransport(opts: HttpTransportOptions): SyncTransport & {
     async body(messageId, signal) {
       const path = `/api/messages/${encodeURIComponent(messageId)}/body`
       return (await (await get(path, signal)).json()) as MessageBody
+    },
+    async ops(req, signal) {
+      return (await (await post('/api/ops', req, signal)).json()) as OpsResponse
+    },
+    async send(req) {
+      return (await (await post('/api/send', req)).json()) as SendResponse
+    },
+    async unsend(id) {
+      try {
+        await request('DELETE', `/api/send/${encodeURIComponent(id)}`)
+        return true
+      } catch (err) {
+        if (err instanceof HttpError && err.status === 409) return false
+        throw err
+      }
+    },
+    async saveDraft(id, draft) {
+      await request('PUT', `/api/drafts/${encodeURIComponent(id)}`, undefined, draft)
+    },
+    async deleteDraft(id) {
+      try {
+        await request('DELETE', `/api/drafts/${encodeURIComponent(id)}`)
+      } catch (err) {
+        if (!(err instanceof HttpError && err.status === 404)) throw err
+      }
+    },
+    async contacts() {
+      return ((await (await get('/api/contacts')).json()) as { contacts: ContactRow[] }).contacts
+    },
+    async search(params, signal) {
+      const qs = new URLSearchParams({ q: params.q })
+      if (params.cursor) qs.set('cursor', params.cursor)
+      if (params.limit) qs.set('limit', String(params.limit))
+      if (params.tzOffset !== undefined) qs.set('tz', String(params.tzOffset))
+      return (await (await get(`/api/search?${qs}`, signal)).json()) as SearchResponse
     },
   }
 }
@@ -71,5 +155,28 @@ export async function* readNdjson<T>(stream: ReadableStream<Uint8Array>): AsyncG
     if (buf.trim()) yield JSON.parse(buf) as T
   } finally {
     reader.releaseLock()
+  }
+}
+
+/** PUT/DELETE /api/split-rules/:id, with the same auth as the sync transport. */
+export function splitRuleHttp(opts: HttpTransportOptions): SplitRuleRemote {
+  const f = opts.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
+  const base = opts.baseUrl ?? ''
+  const send = async (method: 'PUT' | 'DELETE', id: string, body?: unknown) => {
+    const token = await opts.token()
+    const path = `/api/split-rules/${encodeURIComponent(id)}`
+    const res = await f(base + path, {
+      method,
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(body ? { 'content-type': 'application/json' } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    })
+    if (!res.ok) throw new HttpError(res.status, path)
+  }
+  return {
+    put: ({ id, ...rule }) => send('PUT', id, rule),
+    delete: (id) => send('DELETE', id),
   }
 }

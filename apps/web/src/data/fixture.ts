@@ -2,6 +2,7 @@ import {
   emptyDeletes,
   emptyRows,
   type AccountRow,
+  type ContactRow,
   type Address,
   type FolderRow,
   type MessageBody,
@@ -32,6 +33,7 @@ const ACCOUNTS: AccountRow[] = [
   lastError: null,
 }))
 
+const LABELS = ['Clients', 'Receipts', 'Travel', 'Waiting']
 const FIRST = ['Ana', 'Jordan', 'Sam', 'Priya', 'Lena', 'Marcus', 'Chen', 'Olivia', 'Noah', 'Ivy']
 const LAST = ['Ruiz', 'Lee', 'Patel', 'Kim', 'Okafor', 'Novak', 'Haas', 'Moreau', 'Silva', 'Berg']
 const NEWS = ['Stratechery', 'The Verge', 'Morning Brew', 'Hacker Newsletter', 'Figma', 'Linear']
@@ -92,17 +94,28 @@ function kindFor(r: () => number): Kind {
 
 /** Every thread and message for an N-thread mailbox, newest first, in CHUNK-sized slices. */
 export function* fixtureChunks(n: number, now = Date.now()) {
-  const folders: FolderRow[] = ACCOUNTS.flatMap((a) =>
-    (['inbox', 'important', 'sent', 'archive'] as const).map((kind) => ({
-      id: `${a.id}:${kind}`,
+  const folders: FolderRow[] = ACCOUNTS.flatMap((a) => [
+    ...(['inbox', 'important', 'sent', 'archive', 'trash', 'spam', 'starred'] as const).map(
+      (kind) => ({
+        id: `${a.id}:${kind}`,
+        accountId: a.id,
+        providerId: kind.toUpperCase(),
+        name: kind,
+        kind,
+        unreadCount: 0,
+        totalCount: 0,
+      }),
+    ),
+    ...LABELS.map((name) => ({
+      id: `${a.id}:label:${name}`,
       accountId: a.id,
-      providerId: kind.toUpperCase(),
-      name: kind,
-      kind,
+      providerId: `Label_${name}`,
+      name,
+      kind: 'custom' as const,
       unreadCount: 0,
       totalCount: 0,
     })),
-  )
+  ])
   yield { ...emptyRows(), accounts: ACCOUNTS, folders }
 
   const r = rng(42)
@@ -184,9 +197,22 @@ export function fixtureTransport(n: number): SyncTransport {
       yield { seq: 1 }
     },
     async delta(since) {
-      return { seq: since, more: false, upserts: emptyRows(), deletes: emptyDeletes() }
+      return { seq: since, more: false, upserts: emptyRows(), deletes: emptyDeletes(), ops: [] }
     },
   }
+}
+
+/** Everyone in the demo mailbox, as GET /api/contacts would rank them. */
+export function fixtureContacts(): ContactRow[] {
+  const people = FIRST.flatMap((f, i) =>
+    LAST.map((l, j) => ({
+      email: `${f}.${l}@example.com`.toLowerCase(),
+      name: `${f} ${l}`,
+      score: 100 - i * 7 - j,
+      lastAt: Date.now() - (i * LAST.length + j) * 3_600_000,
+    })),
+  )
+  return people.sort((a, b) => b.score - a.score)
 }
 
 const PIXEL =

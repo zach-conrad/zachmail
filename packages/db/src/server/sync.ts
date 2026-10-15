@@ -1,14 +1,17 @@
-import type { Deletes, Rows, SyncDelta } from '@zachmail/core'
+import type { Deletes, OpStatusRow, Rows, SyncDelta } from '@zachmail/core'
 import { emptyDeletes, emptyRows } from '@zachmail/core'
 import type { SyncBatch } from '@zachmail/providers'
+import { attachSentReminders, unsnoozeOnReply } from './snooze'
+import { SELECT_SPLIT_RULE, recomputeSplits } from './splits'
+import { SELECT_NUDGE_DISMISSAL, SELECT_SNIPPET } from './composer'
 import type { Db, Queryable } from './sql'
 
 type Entity = keyof Deletes
 
-async function recordChanges(
+export async function recordChanges(
   tx: Queryable,
   userId: string,
-  entity: Entity,
+  entity: Entity | 'op',
   ids: string[],
   op: 'upsert' | 'delete',
 ) {
@@ -25,14 +28,16 @@ const ids = (rows: { id: string }[]) => rows.map((r) => r.id)
  * Writes one provider batch into the mirror and the change log in a single transaction:
  * folders, threads, messages, attachments, then recomputed thread aggregates and folder
  * membership. Unchanged rows produce no change entries, so re-syncing is cheap and quiet.
+ * `inserted` lists messages new to the mirror (what notifications look at).
  */
 export async function applySyncBatch(
   db: Db,
   args: { userId: string; accountId: string; batch: SyncBatch },
-): Promise<{ changed: number }> {
+): Promise<{ changed: number; inserted: string[] }> {
   const { userId, accountId, batch } = args
   return db.transaction(async (tx) => {
     let changed = 0
+    let inserted: string[] = []
     const affectedThreads = new Set<string>()
 
     if (batch.folders) {
@@ -130,6 +135,10 @@ export async function applySyncBatch(
       changed += up.length
 
       const insertedIds = up.filter((r) => r.inserted).map((r) => r.id)
+      // Their threads are already in affectedThreads, so the changes get logged below.
+      await unsnoozeOnReply(tx, insertedIds)
+      await attachSentReminders(tx, accountId, insertedIds)
+      inserted = insertedIds
       const atts = batch.messages.flatMap((m) =>
         m.attachments.map((a) => ({
           provider_message_id: m.providerMessageId,
@@ -180,11 +189,11 @@ export async function applySyncBatch(
       changed += threadIds.length
     }
 
-    return { changed }
+    return { changed, inserted }
   })
 }
 
-async function recomputeThreads(tx: Queryable, userId: string, threadIds: string[]) {
+export async function recomputeThreads(tx: Queryable, userId: string, threadIds: string[]) {
   await tx.query(
     `WITH agg AS (
        SELECT m.thread_id,
@@ -220,6 +229,15 @@ async function recomputeThreads(tx: Queryable, userId: string, threadIds: string
      ON CONFLICT DO NOTHING`,
     [threadIds, userId],
   )
+  await recomputeSplits(tx, userId, threadIds)
+}
+
+/** Records that the backfill has mirrored an account's whole history (search stops asking it). */
+export async function markMirrorComplete(db: Queryable, accountId: string) {
+  await db.query(
+    `UPDATE accounts SET sync_state = sync_state || '{"mirrorComplete": true}' WHERE id = $1`,
+    [accountId],
+  )
 }
 
 export async function updateAccount(
@@ -233,8 +251,10 @@ export async function updateAccount(
   },
 ) {
   const rows = await db.query<{ user_id: string }>(
+    // mirrorComplete is engine bookkeeping, not a provider cursor: keep it across cursor writes.
     `UPDATE accounts SET
-       sync_state = COALESCE($2::jsonb, sync_state),
+       sync_state = COALESCE($2::jsonb || jsonb_strip_nulls(
+         jsonb_build_object('mirrorComplete', sync_state -> 'mirrorComplete')), sync_state),
        status = COALESCE($3::account_status, status),
        last_synced_at = COALESCE($4::timestamptz, last_synced_at),
        last_error = CASE WHEN $5::boolean THEN $6 ELSE last_error END
@@ -267,13 +287,17 @@ const SELECT_ACCOUNT = `SELECT a.id, a.provider, a.email, a.display_name AS "dis
 const SELECT_FOLDER = `SELECT f.id, f.account_id AS "accountId", f.provider_id AS "providerId", f.name, f.kind,
   f.unread_count AS "unreadCount", f.total_count AS "totalCount" FROM folders f`
 
-const SELECT_THREAD = `SELECT t.id, t.account_id AS "accountId", t.subject, t.snippet, t.participants,
+export const SELECT_THREAD = `SELECT t.id, t.account_id AS "accountId", t.subject, t.snippet, t.participants,
   ${ms('t.last_message_at')} AS "lastMessageAt", t.message_count AS "messageCount", t.unread, t.starred,
-  t.has_attachments AS "hasAttachments",
+  t.has_attachments AS "hasAttachments", t.muted, ${ms('t.snoozed_until')} AS "snoozedUntil",
+  (SELECT jsonb_build_object('at', ${ms('r.remind_at')}, 'condition', r.condition)
+   FROM reminders r WHERE r.thread_id = t.id) AS reminder,
+  CASE WHEN t.ai_category IS NULL THEN NULL ELSE jsonb_build_object('category', t.ai_category,
+    'summary', t.ai_summary, 'needsReply', t.ai_needs_reply) END AS ai,
   COALESCE((SELECT array_agg(tf.folder_id::text) FROM thread_folders tf WHERE tf.thread_id = t.id), '{}') AS "folderIds"
   FROM threads t`
 
-const SELECT_MESSAGE = `SELECT m.id, m.thread_id AS "threadId", m.account_id AS "accountId", m."from", m."to", m.cc,
+export const SELECT_MESSAGE = `SELECT m.id, m.thread_id AS "threadId", m.account_id AS "accountId", m."from", m."to", m.cc,
   m.reply_to AS "replyTo", m.subject, m.snippet, ${ms('m.date')} AS date, m.unread, m.starred,
   m.has_attachments AS "hasAttachments", m.list_unsubscribe AS "listUnsubscribe",
   m.rfc822_message_id AS "rfc822MessageId", m.body_status AS "bodyStatus" FROM messages m`
@@ -292,16 +316,31 @@ export async function readDelta(
     )
     const more = window.length > limit
     const upTo = more ? window[limit - 1]!.seq : (window.at(-1)?.seq ?? since)
-    const latest = await tx.query<{ entity: Entity; entity_id: string; op: 'upsert' | 'delete' }>(
+    const latest = await tx.query<{
+      entity: Entity | 'op'
+      entity_id: string
+      op: 'upsert' | 'delete'
+    }>(
       `SELECT DISTINCT ON (entity, entity_id) entity, entity_id, op FROM changes
        WHERE user_id = $1 AND seq > $2 AND seq <= $3 ORDER BY entity, entity_id, seq DESC`,
       [userId, since, upTo],
     )
 
-    const want: Record<Entity, string[]> = { account: [], folder: [], thread: [], message: [] }
+    const want: Record<Entity, string[]> = {
+      account: [],
+      folder: [],
+      thread: [],
+      message: [],
+      splitRule: [],
+      snippet: [],
+      nudgeDismissal: [],
+    }
     const deletes = emptyDeletes()
-    for (const c of latest)
-      (c.op === 'delete' ? deletes[c.entity] : want[c.entity]).push(c.entity_id)
+    const opIds: string[] = []
+    for (const c of latest) {
+      if (c.entity === 'op') opIds.push(c.entity_id)
+      else (c.op === 'delete' ? deletes[c.entity] : want[c.entity]).push(c.entity_id)
+    }
 
     const upserts = emptyRows()
     const load = async <K extends keyof Rows>(
@@ -324,13 +363,44 @@ export async function readDelta(
     await load('folders', SELECT_FOLDER, 'f', want.folder)
     await load('threads', SELECT_THREAD, 't', want.thread)
     await load('messages', SELECT_MESSAGE, 'm', want.message)
+    await load('splitRules', SELECT_SPLIT_RULE, 'r', want.splitRule)
+    await load('snippets', SELECT_SNIPPET, 's', want.snippet)
+    await load('nudgeDismissals', SELECT_NUDGE_DISMISSAL, 'n', want.nudgeDismissal)
 
-    return { seq: upTo, more, upserts, deletes }
+    const ops = opIds.length ? await readOpStatuses(tx, userId, opIds) : []
+
+    return { seq: upTo, more, upserts, deletes, ops }
   })
 }
 
+/** One status per op, folded over its per-account outbox rows. */
+export async function readOpStatuses(
+  db: Queryable,
+  userId: string,
+  opIds: string[],
+): Promise<OpStatusRow[]> {
+  return db.query<OpStatusRow>(
+    `SELECT op_id::text AS id,
+       CASE WHEN bool_or(state = 'failed') THEN 'failed'
+            WHEN bool_and(state = 'done') THEN 'done' ELSE 'pending' END AS state,
+       max(last_error) FILTER (WHERE state = 'failed') AS error
+     FROM outbox WHERE user_id = $1 AND op_id = ANY($2::uuid[]) GROUP BY op_id`,
+    [userId, opIds],
+  )
+}
+
 const entityOf = (k: keyof Rows): Entity =>
-  (({ accounts: 'account', folders: 'folder', threads: 'thread', messages: 'message' }) as const)[k]
+  (
+    ({
+      accounts: 'account',
+      folders: 'folder',
+      threads: 'thread',
+      messages: 'message',
+      splitRules: 'splitRule',
+      snippets: 'snippet',
+      nudgeDismissals: 'nudgeDismissal',
+    }) as const
+  )[k]
 
 /**
  * Initial replica: everything for threads active in the last `days`, in chunks the API
@@ -352,6 +422,9 @@ export async function readBootstrap(
     onRows({
       accounts: await tx.query(`${SELECT_ACCOUNT} WHERE a.user_id = $1`, [userId]),
       folders: await tx.query(`${SELECT_FOLDER} WHERE f.user_id = $1`, [userId]),
+      splitRules: await tx.query(`${SELECT_SPLIT_RULE} WHERE r.user_id = $1`, [userId]),
+      snippets: await tx.query(`${SELECT_SNIPPET} WHERE s.user_id = $1`, [userId]),
+      nudgeDismissals: await tx.query(`${SELECT_NUDGE_DISMISSAL} WHERE n.user_id = $1`, [userId]),
     })
     const cutoff = `now() - make_interval(days => $2)`
     let cursor: { at: number; id: string } | null = null
@@ -374,4 +447,21 @@ export async function readBootstrap(
     }
     return seq
   })
+}
+
+/** Accounts that should be syncing but haven't finished a sync in `olderThanMinutes`. */
+export async function staleSyncAccounts(db: Queryable, olderThanMinutes: number) {
+  return db.query<{
+    id: string
+    userId: string
+    email: string
+    status: string
+    lastSyncedAt: Date | null
+  }>(
+    `SELECT id, user_id AS "userId", email, status, last_synced_at AS "lastSyncedAt" FROM accounts
+     WHERE status IN ('active', 'backfilling', 'error')
+       AND coalesce(last_synced_at, created_at) < now() - make_interval(mins => $1)
+     ORDER BY last_synced_at NULLS FIRST`,
+    [olderThanMinutes],
+  )
 }

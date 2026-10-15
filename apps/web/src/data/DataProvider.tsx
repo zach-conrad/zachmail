@@ -1,15 +1,24 @@
-import type { AccountRow } from '@zachmail/core'
+import type { AccountRow, SplitRuleRow } from '@zachmail/core'
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useAuth } from '../auth/session'
 import { demoMode, supabase } from '../lib/supabase'
 import { DataClient } from './client'
 import { ThreadCache } from './threadCache'
+import { Triage } from './triage'
+import { ComposeStore } from '../compose/store'
+import { useDesktopUnread } from './useDesktopUnread'
 
 interface Data {
   client: DataClient
   threads: ThreadCache
+  triage: Triage
+  compose: ComposeStore
   accounts: Map<string, AccountRow>
   ownEmails: Set<string>
+  /** Split rules as the replica sees them (local edits included); null until first read. */
+  splitRules: SplitRuleRow[] | null
+  /** Saves (rule) or deletes (null) a split rule; tabs update this frame, lists follow. */
+  editSplitRule: (id: string, rule: SplitRuleRow | null) => void
 }
 
 const DataContext = createContext<Data | null>(null)
@@ -32,10 +41,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const client = new DataClient(
       demoMode ? { mode: 'demo', threads: demoThreads() } : { mode: 'live', apiBase: '', token },
     )
-    return { client, threads: new ThreadCache(client) }
+    return {
+      client,
+      threads: new ThreadCache(client),
+      triage: new Triage(client),
+      compose: new ComposeStore(client),
+    }
   })
   const { client } = base
   const [accounts, setAccounts] = useState<Map<string, AccountRow>>(new Map())
+  const [splitRules, setSplitRules] = useState<SplitRuleRow[] | null>(null)
 
   useEffect(() => {
     client.retain()
@@ -86,8 +101,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
         last = key
         setAccounts(new Map(rows.map((a) => [a.id, a])))
       })
+    const loadRules = () =>
+      void client.api.splitRules().then((rows) => {
+        if (cancelled) return
+        const key = JSON.stringify(rows)
+        setSplitRules((prev) => (JSON.stringify(prev) === key ? prev : rows))
+      })
     load()
-    const off = client.subscribe((e) => e.type === 'changed' && load())
+    loadRules()
+    const off = client.subscribe((e) => {
+      if (e.type !== 'changed') return
+      load()
+      loadRules()
+    })
     return () => {
       cancelled = true
       off()
@@ -99,9 +125,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
       ...base,
       accounts,
       ownEmails: new Set([...accounts.values()].map((a) => a.email.toLowerCase())),
+      splitRules,
+      editSplitRule: (id, rule) => {
+        setSplitRules((rs) => {
+          const rest = (rs ?? []).filter((r) => r.id !== id)
+          return rule ? [...rest, rule] : rest
+        })
+        base.client.editSplitRule(id, rule)
+      },
     }),
-    [base, accounts],
+    [base, accounts, splitRules],
   )
+
+  useDesktopUnread(client, value.ownEmails)
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>
 }
