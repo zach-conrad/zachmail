@@ -73,9 +73,21 @@ export const compareByPosition = (a: Task, b: Task) =>
 export const comparatorFor = (view: TaskView) =>
   view.kind === 'smart' ? compareByDue : compareByPosition
 
-export function selectTasks(state: TasksState, view: TaskView, clock: Clock): Task[] {
+/**
+ * The tasks in a view, sorted. `revive` lists completed tasks to treat as still open (rows
+ * playing their exit animation), so callers never copy the whole map to keep them.
+ */
+export function selectTasks(
+  state: TasksState,
+  view: TaskView,
+  clock: Clock,
+  revive?: ReadonlySet<string>,
+): Task[] {
   const out: Task[] = []
-  for (const t of state.tasks.values()) if (inView(t, view, clock)) out.push(t)
+  for (let t of state.tasks.values()) {
+    if (t.completedAt !== null && revive?.has(t.id)) t = { ...t, completedAt: null }
+    if (inView(t, view, clock)) out.push(t)
+  }
   return out.sort(comparatorFor(view))
 }
 
@@ -84,6 +96,27 @@ export function selectSubtasks(state: TasksState, parentId: string): Task[] {
   const out: Task[] = []
   for (const t of state.tasks.values()) if (t.parentId === parentId && isOpen(t)) out.push(t)
   return out.sort(compareByPosition)
+}
+
+/** Open subtasks of every parent in one pass, each list in manual order. */
+export function subtasksByParent(
+  state: TasksState,
+  revive?: ReadonlySet<string>,
+): Map<string, Task[]> {
+  const out = new Map<string, Task[]>()
+  for (let t of state.tasks.values()) {
+    const parent = t.parentId
+    if (parent === null) continue
+    if (t.completedAt !== null) {
+      if (!revive?.has(t.id)) continue
+      t = { ...t, completedAt: null }
+    }
+    const list = out.get(parent)
+    if (list) list.push(t)
+    else out.set(parent, [t])
+  }
+  for (const list of out.values()) list.sort(compareByPosition)
+  return out
 }
 
 export function sortedLists(state: TasksState): TaskList[] {

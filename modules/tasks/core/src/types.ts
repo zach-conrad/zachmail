@@ -34,7 +34,7 @@ export interface Task {
 export interface TaskList {
   id: string
   name: string
-  /** A key of the account palette in hub tokens ("blue", "green", …). */
+  /** One of LIST_COLORS, drawn from the account palette in hub tokens. */
   color: string
   position: string
   createdAt: number
@@ -61,4 +61,14 @@ export type TaskPatch = Partial<
 
 export type TaskListPatch = Partial<Pick<TaskList, 'name' | 'color' | 'position'>>
 
-export const LIST_COLORS = ['blue', 'green', 'orange', 'purple', 'pink', 'teal'] as const
+/** List colors, in the order of the account palette in hub tokens (`tokens.account`). */
+export const LIST_COLORS = [
+  'red',
+  'orange',
+  'yellow',
+  'green',
+  'blue',
+  'pink',
+  'teal',
+  'gray',
+] as const
