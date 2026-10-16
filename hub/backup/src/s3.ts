@@ -99,7 +99,7 @@ export class S3Client {
     extraHeaders: Record<string, string> = {},
   ): Promise<Response> {
     const { url, headers } = this.sign(method, key, query, body, extraHeaders)
-    const res = await this.fetchImpl(url, { method, headers, body: body as BodyInit | undefined })
+    const res = await this.fetchImpl(url, { method, headers, body: body as RequestInit['body'] })
     if (!res.ok) {
       const text = await res.text().catch(() => '')
       const code = text.match(/<Code>([^<]*)</)?.[1]
