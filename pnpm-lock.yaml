@@ -59,9 +59,15 @@ importers:
       '@zachhub/engine':
         specifier: workspace:*
         version: link:../../hub/engine
+      '@zachhub/kernel':
+        specifier: workspace:*
+        version: link:../../hub/kernel
       '@zachhub/mime':
         specifier: workspace:*
         version: link:../../modules/mail/mime
+      '@zachhub/modules':
+        specifier: workspace:*
+        version: link:../../modules/installed
       '@zachhub/providers':
         specifier: workspace:*
         version: link:../../modules/mail/providers
@@ -148,6 +154,12 @@ importers:
       '@zachhub/engine':
         specifier: workspace:*
         version: link:../../hub/engine
+      '@zachhub/kernel':
+        specifier: workspace:*
+        version: link:../../hub/kernel
+      '@zachhub/modules':
+        specifier: workspace:*
+        version: link:../../modules/installed
       postgres:
         specifier: ^3.4.9
         version: 3.4.9
@@ -249,6 +261,22 @@ importers:
         specifier: workspace:*
         version: link:../config
 
+  hub/kernel:
+    dependencies:
+      '@zachhub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@zachhub/db':
+        specifier: workspace:*
+        version: link:../db
+      hono:
+        specifier: ^4.13.13
+        version: 4.13.13
+    devDependencies:
+      '@zachhub/config':
+        specifier: workspace:*
+        version: link:../config
+
   hub/local-store:
     dependencies:
       '@sqlite.org/sqlite-wasm':
@@ -267,6 +295,16 @@ importers:
       '@zachhub/config':
         specifier: workspace:*
         version: link:../config
+
+  modules/installed:
+    dependencies:
+      '@zachhub/kernel':
+        specifier: workspace:*
+        version: link:../../hub/kernel
+    devDependencies:
+      '@zachhub/config':
+        specifier: workspace:*
+        version: link:../../hub/config
 
   modules/mail/mime:
     dependencies:

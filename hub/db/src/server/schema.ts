@@ -13,7 +13,7 @@ import {
   integer,
   jsonb,
   pgEnum,
-  pgPolicy,
+  pgSchema,
   pgTable,
   primaryKey,
   text,
@@ -21,24 +21,10 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
-import { authUid, authUsers, authenticatedRole } from 'drizzle-orm/supabase'
+import { firstPartyColumns, ownRowsReadOnly, ownerId } from './tables'
 
 /** Maintained by triggers (migration 0014_search_triggers): subject A, sender B, recipients C, body D. */
 const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
-
-const ownerId = () =>
-  uuid('user_id')
-    .notNull()
-    .default(sql`auth.uid()`)
-    .references(() => authUsers.id, { onDelete: 'cascade' })
-
-/** Read-only for clients; only server code (service role, bypasses RLS) writes. */
-const ownRowsReadOnly = (table: string) =>
-  pgPolicy(`${table}_owner_read`, {
-    for: 'select',
-    to: authenticatedRole,
-    using: sql`${authUid} = user_id`,
-  })
 
 export const providerEnum = pgEnum('provider', ['gmail', 'graph', 'imap'])
 export const accountStatusEnum = pgEnum('account_status', [
@@ -535,6 +521,48 @@ export const allowedUsers = pgTable('allowed_users', {
   email: text('email').primaryKey(),
   addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
 }).enableRLS()
+
+/** Hub kernel tables (ZACHHUB_PLAN.md §2.3, §4). */
+export const hub = pgSchema('hub')
+
+/** Cross-module references, entity 'hub.link' (core LinkRow). No FKs: either side may be any module. */
+export const links = hub
+  .table(
+    'links',
+    {
+      ...firstPartyColumns(),
+      fromKind: text('from_kind').notNull(),
+      fromId: text('from_id').notNull(),
+      toKind: text('to_kind').notNull(),
+      toId: text('to_id').notNull(),
+      title: text('title').notNull().default(''),
+      createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    },
+    (t) => [
+      index('links_from').on(t.userId, t.fromKind, t.fromId),
+      index('links_to').on(t.userId, t.toKind, t.toId),
+      ownRowsReadOnly('links'),
+    ],
+  )
+  .enableRLS()
+
+/**
+ * Deleted first-party rows, for every module. The row itself is gone; this keeps a late or
+ * replayed put for the same id from bringing it back.
+ */
+export const tombstones = hub
+  .table(
+    'tombstones',
+    {
+      kind: text('kind').notNull(),
+      id: uuid('id').notNull(),
+      userId: ownerId(),
+      hlc: text('hlc').notNull(),
+      deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull().defaultNow(),
+    },
+    (t) => [primaryKey({ columns: [t.kind, t.id] }), ownRowsReadOnly('tombstones')],
+  )
+  .enableRLS()
 
 export type Account = typeof accounts.$inferSelect
 export type Change = typeof changes.$inferSelect
