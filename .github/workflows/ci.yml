@@ -51,7 +51,7 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @zachhub/db --filter @zachhub/engine --filter @zachhub/api test
+      - run: pnpm --filter @zachhub/db --filter @zachhub/engine --filter @zachhub/backup --filter @zachhub/api test
 
   perf:
     # Speed budgets (architecture §1a) against the 20k-thread demo build.
