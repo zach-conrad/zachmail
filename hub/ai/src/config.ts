@@ -10,6 +10,8 @@ export interface AiConfig {
   /** Overrides the API origin (tests point it at a fake). */
   baseURL?: string
   fetch?: typeof fetch
+  /** The SDK's own retries on 429/5xx (default 2). Tests turn them off so no request lands late. */
+  maxRetries?: number
 }
 
 /** AI is off unless ANTHROPIC_API_KEY is set; other ambient credentials are ignored on purpose. */
