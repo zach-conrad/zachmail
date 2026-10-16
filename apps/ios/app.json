@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "ZachMail",
+    "slug": "zachmail",
+    "scheme": "zachmail",
+    "version": "0.0.0",
+    "platforms": ["ios"],
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "dev.zachconrad.mail",
+      "supportsTablet": true,
+      "config": { "usesNonExemptEncryption": false }
+    },
+    "plugins": [
+      "expo-router",
+      ["expo-build-properties", { "ios": { "deploymentTarget": "26.0" } }]
+    ],
+    "experiments": { "reactCompiler": true }
+  }
+}
