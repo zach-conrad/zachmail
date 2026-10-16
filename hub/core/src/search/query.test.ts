@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   highlightRanges,
+  moduleScope,
   parseQuery,
   planQuery,
   toFts5,
@@ -135,6 +136,25 @@ describe('planQuery', () => {
       },
     ])
     expect(plan.highlight).toEqual([])
+  })
+})
+
+describe('moduleScope', () => {
+  const known = ['mail', 'tasks', 'docs']
+
+  it('picks modules with in: and leaves mail folders to planQuery', () => {
+    const s = moduleScope(p('in:tasks in:docs in:inbox budget'), known)
+    expect(s.modules).toEqual(['tasks', 'docs'])
+    expect(s.query.clauses).toEqual([
+      { kind: 'in', value: 'inbox', negated: false },
+      { kind: 'match', field: 'any', value: 'budget', phrase: false, negated: false },
+    ])
+  })
+
+  it('-in: excludes a module; no module clause means all of them', () => {
+    expect(moduleScope(p('-in:mail x'), known).modules).toEqual(['tasks', 'docs'])
+    expect(moduleScope(p('x'), known).modules).toEqual(known)
+    expect(moduleScope(p('in:tasks -in:tasks'), known).modules).toEqual([])
   })
 })
 
