@@ -26,6 +26,9 @@ async function handlePush(p) {
       tag: 'test',
     })
 
+  // A module's notice (a task alert) is the point of the push: shown even with the app open.
+  if (p.kind === 'hub') return showHubNotice(p.notice)
+
   // Zach is looking at the app: the list updates by itself.
   if (!STRICT && windows.some((c) => c.focused && c.visibilityState === 'visible')) return
 
@@ -51,10 +54,39 @@ async function handlePush(p) {
   await Promise.all(shown)
 }
 
+function showHubNotice(n) {
+  // Same kind and tag replace the earlier banner (a re-sent task alert) instead of stacking.
+  const tag = n.tag ? `${n.kind}:${n.tag}` : undefined
+  return self.registration.showNotification(n.title, {
+    body: n.body,
+    icon: ICON,
+    tag,
+    renotify: !!tag,
+    timestamp: Date.now(),
+    data: { deepLink: n.deepLink },
+  })
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  event.waitUntil(openApp(event.notification.data || {}))
+  const data = event.notification.data || {}
+  event.waitUntil(data.deepLink ? openPath(data.deepLink) : openApp(data))
 })
+
+/** Opens a hub notice's app path: in the open tab when there is one, else a new window. */
+async function openPath(deepLink) {
+  const url = new URL(deepLink, self.location.origin)
+  // The worker only sends app paths; anything else opens the app's home.
+  const path = url.origin === self.location.origin ? url.pathname + url.search + url.hash : '/'
+  const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+  const win = windows.find((c) => new URL(c.url).origin === self.location.origin)
+  if (win) {
+    await win.focus()
+    win.postMessage({ type: 'zachmail:navigate', path })
+    return
+  }
+  await self.clients.openWindow(path)
+}
 
 async function openApp({ threadId, split }) {
   const path = `/inbox/${encodeURIComponent(split || 'important')}`

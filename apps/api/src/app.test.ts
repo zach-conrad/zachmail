@@ -473,6 +473,33 @@ describe('sync endpoints', () => {
     expect((await authed('/api/sync?since=-1')).status).toBe(400)
   })
 
+  it('writes first-party entities and syncs them back', async () => {
+    const json = (method: string, body: unknown) => ({
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const id = '00000000-0000-4000-8000-0000000000e1'
+    const op = {
+      kind: 'put',
+      entity: 'hub.link',
+      id,
+      hlc: '1700000000000-0000-dev1',
+      fields: { fromKind: 'tasks.task', fromId: 't', toKind: 'mail.thread', toId: 'm', title: 'x' },
+    }
+    const res = await authed('/api/entities', json('POST', { ops: [op] }))
+    expect(await res.json()).toEqual({ accepted: [0], rejected: [] })
+    const delta = (await (await authed('/api/sync?since=0')).json()) as {
+      entities: Record<string, { upserts: { id: string; title: string }[] }>
+    }
+    expect(delta.entities['hub.link']!.upserts).toEqual([
+      expect.objectContaining({ id, title: 'x' }),
+    ])
+    expect(
+      (await authed('/api/entities', json('POST', { ops: [{ ...op, hlc: 'x' }] }))).status,
+    ).toBe(400)
+  })
+
   it('searches the mirror and validates its parameters', async () => {
     const r = (await (await authed('/api/search?q=from%3Aana%20hel')).json()) as {
       threads: { subject: string }[]

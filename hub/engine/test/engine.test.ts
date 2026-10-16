@@ -8,11 +8,16 @@ import {
   saveDraft,
   createUpload,
   listDevices,
+  saveNotificationSettings,
   upsertDevice,
   type Db,
   type DeviceRow,
 } from '@zachhub/db/server'
-import type { PushPayload } from '@zachhub/core'
+import {
+  DEFAULT_NOTIFICATION_SETTINGS,
+  InvalidHubNoticeError,
+  type PushPayload,
+} from '@zachhub/core'
 import { USER, createTestDb, type TestDb } from '@zachhub/db/testing'
 import { randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -24,6 +29,7 @@ import {
   enqueueDraftSync,
   enqueueOutboxFlush,
   getMessageBody,
+  notify,
   searchMail,
   sweepSyncs,
   sweepUploads,
@@ -278,6 +284,48 @@ describe('engine', () => {
       'https://push/live',
     ])
     pushed.length = 0
+  })
+
+  it('pushes a module notice down the same path, under the same switch', async () => {
+    const keys = { p256dh: 'p', auth: 'a' }
+    await upsertDevice(db, USER, {
+      kind: 'webpush',
+      token: 'https://push/gone2',
+      keys,
+      label: null,
+    })
+    const alert = {
+      kind: 'tasks.alert',
+      title: 'Pay rent',
+      body: 'x'.repeat(500),
+      deepLink: '/tasks/t1',
+      tag: 't1',
+    }
+    expect(await notify(db, fakePush, USER, alert)).toBe(1)
+    expect(pushed).toEqual([
+      {
+        endpoint: 'https://push/live',
+        payload: {
+          v: 1,
+          kind: 'hub',
+          notice: { ...alert, body: 'x'.repeat(399) + '…' },
+          badge: 1,
+        },
+      },
+    ])
+    // Dead subscriptions are forgotten here too.
+    expect((await listDevices(db, USER, 'webpush')).map((d) => d.token)).toEqual([
+      'https://push/live',
+    ])
+    pushed.length = 0
+
+    await expect(
+      notify(db, fakePush, USER, { ...alert, deepLink: '//evil.example/x' }),
+    ).rejects.toBeInstanceOf(InvalidHubNoticeError)
+    await saveNotificationSettings(db, USER, { ...DEFAULT_NOTIFICATION_SETTINGS, enabled: false })
+    expect(await notify(db, fakePush, USER, alert)).toBe(0)
+    expect(pushed).toEqual([])
+    await saveNotificationSettings(db, USER, DEFAULT_NOTIFICATION_SETTINGS)
   })
 
   it('serves cached sanitized bodies with images parked behind the proxy', async () => {

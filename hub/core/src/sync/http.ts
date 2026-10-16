@@ -1,3 +1,4 @@
+import type { EntityOpsRequest, EntityOpsResponse } from '../hub/entities'
 import { ResyncRequired, type SyncTransport } from './client'
 import type { OpsRequest, OpsResponse } from './ops'
 import type { SearchResponse } from '../search/protocol'
@@ -51,6 +52,7 @@ async function errorMessage(res: Response): Promise<string | null> {
 export function httpTransport(opts: HttpTransportOptions): SyncTransport & {
   body(messageId: string, signal?: AbortSignal): Promise<MessageBody>
   ops(req: OpsRequest, signal?: AbortSignal): Promise<OpsResponse>
+  entities(req: EntityOpsRequest, signal?: AbortSignal): Promise<EntityOpsResponse>
   search(params: SearchParams, signal?: AbortSignal): Promise<SearchResponse>
   send(req: SendRequest): Promise<SendResponse>
   /** Undo send: true when cancelled, false when it is already on its way (409). */
@@ -99,6 +101,9 @@ export function httpTransport(opts: HttpTransportOptions): SyncTransport & {
     },
     async ops(req, signal) {
       return (await (await post('/api/ops', req, signal)).json()) as OpsResponse
+    },
+    async entities(req, signal) {
+      return (await (await post('/api/entities', req, signal)).json()) as EntityOpsResponse
     },
     async send(req) {
       return (await (await post('/api/send', req)).json()) as SendResponse

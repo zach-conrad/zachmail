@@ -1,0 +1,22 @@
+{
+  "name": "@zachhub/kernel",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@zachhub/core": "workspace:*",
+    "@zachhub/db": "workspace:*",
+    "hono": "^4.13.13"
+  },
+  "devDependencies": {
+    "@zachhub/config": "workspace:*"
+  }
+}
