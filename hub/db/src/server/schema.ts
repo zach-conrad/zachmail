@@ -8,6 +8,7 @@ import {
   bigserial,
   boolean,
   customType,
+  date,
   doublePrecision,
   index,
   integer,
@@ -529,6 +530,24 @@ export const notificationSettings = pgTable(
   },
   () => [ownRowsReadOnly('notification_settings')],
 ).enableRLS()
+
+/**
+ * One row per UTC day of the nightly offsite backup (hub/backup). The day key is how worker
+ * machines agree on who runs tonight's; a failed day is retried a few times. Server only.
+ */
+export const backupRuns = pgTable('backup_runs', {
+  day: date('day').primaryKey(),
+  status: text('status', { enum: ['running', 'ok', 'failed'] })
+    .notNull()
+    .default('running'),
+  attempts: integer('attempts').notNull().default(1),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+  objectKey: text('object_key'),
+  bytes: integer('bytes'),
+  rows: jsonb('rows').$type<Record<string, number>>(),
+  error: text('error'),
+}).enableRLS()
 
 /** Single-row allowlist checked by the auth hook: only these emails can ever get a session. */
 export const allowedUsers = pgTable('allowed_users', {

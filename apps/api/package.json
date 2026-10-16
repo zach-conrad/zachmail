@@ -16,6 +16,7 @@
   "dependencies": {
     "@hono/node-server": "^2.1.5",
     "@zachhub/ai": "workspace:*",
+    "@zachhub/backup": "workspace:*",
     "@zachhub/core": "workspace:*",
     "@zachhub/db": "workspace:*",
     "@zachhub/engine": "workspace:*",

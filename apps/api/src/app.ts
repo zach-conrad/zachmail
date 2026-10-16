@@ -7,6 +7,7 @@ import { aiRoutes } from './routes/ai'
 import { mcpOAuth, oauthRoutes, wellKnownRoutes } from './mcp/oauth'
 import { mcpRoutes } from './mcp/server'
 import { accountRoutes, oauthCallbackRoute } from './routes/accounts'
+import { backupRoutes } from './routes/backup'
 import { composerRoutes } from './routes/composer'
 import { imageRoutes } from './routes/images'
 import { notificationRoutes } from './routes/notifications'
@@ -50,6 +51,7 @@ export function createApp(env: Env, overrides: Partial<Deps> = {}) {
   authed.route('/', aiRoutes(deps))
   authed.route('/', composerRoutes(deps))
   authed.route('/', notificationRoutes(env, deps))
+  authed.route('/', backupRoutes(deps))
   api.route('/', authed)
 
   app.route('/api', api)
