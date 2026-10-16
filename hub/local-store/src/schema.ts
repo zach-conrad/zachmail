@@ -1,7 +1,7 @@
 import { SPLIT_RULES_DROP, SPLIT_RULES_SCHEMA } from './splitRules'
 
 /** Bump when the client schema changes; the replica is dropped and bootstrapped again. */
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 export const SCHEMA = /* sql */ `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -28,10 +28,13 @@ CREATE TABLE IF NOT EXISTS threads (
   -- Split inputs cached by the last full classify, so a rule edit re-splits without joins.
   split_from TEXT,
   list_unsub INTEGER NOT NULL DEFAULT 0,
+  -- Epoch ms a snoozed thread comes back (Today's "Coming back today"), else NULL.
+  snoozed_until INTEGER,
   -- The server's {folderIds, unread, starred} while pending ops overlay this row, else NULL.
   srv TEXT
 );
 CREATE INDEX IF NOT EXISTS threads_split ON threads (split, last_message_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS threads_snoozed ON threads (snoozed_until) WHERE snoozed_until IS NOT NULL;
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
   thread_id TEXT NOT NULL,

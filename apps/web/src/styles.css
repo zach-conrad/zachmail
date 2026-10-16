@@ -95,6 +95,208 @@ button {
   margin: 0;
 }
 
+/* Hub: the module rail and the open module (ZachHub design H1). */
+:root {
+  --rail-w: 68px;
+  --rail-inset: 8px;
+  --rail-space: calc(var(--rail-w) + 2 * var(--rail-inset));
+}
+.hub {
+  height: 100%;
+  display: grid;
+  grid-template-columns: var(--rail-space) minmax(0, 1fr);
+}
+.hub-main {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+/* Glass, but fixed in place and never scrolling, so its blur region is rasterised once.
+   Web budget: the rail plus at most one of palette or toast (design §5.6). */
+.rail {
+  margin: var(--rail-inset);
+  width: var(--rail-w);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: var(--space-2) 0;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface-raised) 72%, transparent);
+  backdrop-filter: blur(24px) saturate(1.6);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  box-shadow: var(--shadow-float);
+  -webkit-app-region: drag;
+}
+.rail-modules,
+.rail-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+.rail-item {
+  -webkit-app-region: no-drag;
+  width: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 0 5px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--text-muted);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+.rail-item:hover {
+  background: var(--row-hover);
+}
+.rail-item[aria-current='page'] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+.rail-glyph {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.rail-icon {
+  width: 22px;
+  height: 22px;
+}
+.rail-label {
+  font: 500 10px/12px var(--font-ui);
+}
+.rail-badge {
+  position: absolute;
+  top: -5px;
+  left: 14px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font: 600 10px/16px var(--font-ui);
+  text-align: center;
+}
+.rail-accounts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px;
+  width: 44px;
+  padding-bottom: var(--space-1);
+}
+
+/* Today (ZachHub design H3) */
+.today {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-7) var(--space-6) var(--space-6);
+  background: var(--bg);
+}
+.today-header,
+.today-cards {
+  max-width: 880px;
+  margin: 0 auto;
+}
+.today-summary {
+  margin: var(--space-1) 0 var(--space-5);
+}
+.today-cards {
+  display: grid;
+  gap: var(--space-4);
+}
+.today-card {
+  padding: var(--space-3) 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.today-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-4);
+}
+.today-card-head .section-label {
+  margin: 0;
+}
+.today-card-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-faint);
+  font-size: 12px;
+  text-decoration: none;
+}
+.today-card-link:hover {
+  color: var(--text-muted);
+}
+.today-empty {
+  margin: 0;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  color: var(--text-faint);
+}
+.today-rows {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.today-row {
+  width: 100%;
+  height: 44px;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 168px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  text-align: left;
+  white-space: nowrap;
+  cursor: default;
+}
+.today-row:hover {
+  background: var(--row-hover);
+}
+.today-row[data-focused] {
+  background: var(--row-focus);
+  box-shadow: inset 2px 0 var(--accent);
+}
+.today-row .row-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.today-row:not([data-unread]) .row-sender {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.today-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.today-row[data-tone='warning'] .today-meta {
+  color: var(--warning);
+}
+
+/* Modules not built yet */
+.module-empty {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-2);
+  background: var(--bg);
+}
+
 /* Shell */
 .shell {
   height: 100%;
@@ -487,7 +689,9 @@ html[data-shell='macos'] body {
 .palette {
   width: min(640px, calc(100% - 32px));
   border-radius: var(--radius-lg);
-  background: var(--surface-raised);
+  background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
+  backdrop-filter: blur(24px) saturate(1.6);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
   box-shadow: var(--shadow-float);
   animation: palette-in var(--dur-slow) var(--ease);
 }
@@ -523,6 +727,31 @@ html[data-shell='macos'] body {
 .palette-item[aria-selected='true'] {
   background: var(--row-focus);
   color: var(--text);
+}
+.palette-group {
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  color: var(--text-faint);
+  font: 600 11px/16px var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.palette-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette-detail {
+  margin-left: var(--space-2);
+  color: var(--text-faint);
+}
+.palette-footer {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font: 450 12px/16px var(--font-mono);
 }
 .palette-empty {
   padding: var(--space-3);
@@ -904,7 +1133,7 @@ html[data-shell='macos'] body {
 /* Undo toast: a glass capsule, bottom-left (design §5.6, §6.1). */
 .toast {
   position: fixed;
-  left: var(--space-4);
+  left: calc(var(--rail-space) + var(--space-2));
   bottom: var(--space-4);
   max-width: min(560px, calc(100% - 32px));
   display: flex;

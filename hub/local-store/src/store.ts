@@ -38,6 +38,10 @@ export interface ThreadListItem {
   folderIds: string[]
 }
 
+export interface SnoozedListItem extends ThreadListItem {
+  snoozedUntil: number
+}
+
 export interface ListQuery {
   /** A built-in split id or a custom split rule id. */
   split: SplitKey
@@ -74,6 +78,8 @@ export interface StoreApi extends SyncSink {
   listThreads(q: ListQuery, offset: number, limit: number): ThreadListItem[]
   /** Position of a thread in a list, or -1 when it is not in it. */
   indexOfThread(q: ListQuery, threadId: string): number
+  /** Snoozed threads coming back in [from, to), soonest first (Today's "Coming back"). */
+  comingBack(from: number, to: number, limit: number): SnoozedListItem[]
   getThread(threadId: string): ThreadDetail | null
   /** Of the messages a thread view expands on open (latest + unread), those without a body. */
   bodiesMissing(threadIds: readonly string[]): { messageId: string; threadId: string }[]
@@ -223,11 +229,12 @@ export class SqlStore implements StoreApi {
       if (upserts.threads?.length) {
         this.db.run(
           `INSERT OR REPLACE INTO threads (id, account_id, subject, snippet, participants,
-             last_message_at, message_count, unread, starred, has_attachments, folder_ids)
+             last_message_at, message_count, unread, starred, has_attachments, folder_ids,
+             snoozed_until)
            SELECT value ->> 'id', value ->> 'accountId', value ->> 'subject',
              value ->> 'snippet', json(value -> 'participants'), value ->> 'lastMessageAt',
              value ->> 'messageCount', value ->> 'unread', value ->> 'starred',
-             value ->> 'hasAttachments', json(value -> 'folderIds')
+             value ->> 'hasAttachments', json(value -> 'folderIds'), value ->> 'snoozedUntil'
            FROM jsonb_each(?)`,
           [JSON.stringify(upserts.threads)],
         )
@@ -365,6 +372,21 @@ export class SqlStore implements StoreApi {
          AND (last_message_at > ? OR (last_message_at = ? AND id > ?))`,
       [...params, t.last_message_at, t.last_message_at, threadId],
     )[0]!.n
+  }
+
+  comingBack(from: number, to: number, limit: number): SnoozedListItem[] {
+    return this.json<SnoozedListItem[]>(
+      `SELECT json_group_array(json_object('id', id, 'accountId', account_id,
+         'subject', subject, 'snippet', snippet, 'participants', json(participants),
+         'lastMessageAt', last_message_at, 'messageCount', message_count,
+         'unread', json(iif(unread, 'true', 'false')),
+         'starred', json(iif(starred, 'true', 'false')),
+         'hasAttachments', json(iif(has_attachments, 'true', 'false')),
+         'folderIds', json(folder_ids), 'snoozedUntil', snoozed_until)) AS j
+       FROM (SELECT * FROM threads WHERE snoozed_until >= ? AND snoozed_until < ?
+             ORDER BY snoozed_until, id LIMIT ?)`,
+      [from, to, limit],
+    )
   }
 
   getThread(threadId: string): ThreadDetail | null {

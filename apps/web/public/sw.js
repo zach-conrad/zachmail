@@ -1,4 +1,4 @@
-// ZachMail service worker: Web Push only (no caching; the app shell is served by Vercel).
+// ZachHub service worker: Web Push only (no caching; the app shell is served by Vercel).
 // Payload contract: PushPayload in hub/core/src/sync/notify.ts.
 
 const ICON = '/favicon.svg'
@@ -20,7 +20,7 @@ async function handlePush(p) {
     await self.navigator.setAppBadge(p.badge).catch(() => {})
 
   if (!p || p.kind === 'test')
-    return self.registration.showNotification('ZachMail', {
+    return self.registration.showNotification('ZachHub', {
       body: 'Notifications are on for this browser.',
       icon: ICON,
       tag: 'test',
@@ -41,7 +41,7 @@ async function handlePush(p) {
   )
   if (p.more > 0)
     shown.push(
-      self.registration.showNotification('ZachMail', {
+      self.registration.showNotification('ZachHub', {
         body: `${p.more} more new conversation${p.more === 1 ? '' : 's'}`,
         icon: ICON,
         tag: 'more',

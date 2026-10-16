@@ -7,6 +7,7 @@ const BUDGET = {
   keyAction: 16,
   openPrefetched: 50,
   palette: 16,
+  moduleSwitch: 50,
   searchKey: 50,
   droppedFrames: 0.05,
 }
@@ -38,7 +39,9 @@ test.beforeAll(async ({ browser }) => {
   page = await (await browser.newContext()).newPage()
   // Third-party fonts are not part of the budget and vary with the network; keep runs stable.
   await page.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.abort())
-  await page.goto('/?demo=20000')
+  // ZachHub opens on Today, but the first visit lands in Mail so its top bodies are cached
+  // the way the mail budgets below have always assumed. Today has its own cold start test.
+  await page.goto('/inbox/important?demo=20000')
   // First visit seeds the local replica with the 20k-thread fixture.
   await page.waitForFunction(() => window.__zmPerf?.marks.synced !== undefined, null, {
     timeout: 90_000,
@@ -49,7 +52,21 @@ test.afterAll(() => {
   console.log('\nperf results\n' + JSON.stringify(report, null, 2))
 })
 
+test('cold start to Today (cached) < 1 s', async () => {
+  await page.keyboard.press('g')
+  await page.keyboard.press('h')
+  await expect(page.getByRole('main', { name: 'Today' })).toBeVisible()
+  await page.reload()
+  await page.waitForFunction(() => window.__zmPerf?.marks['today-ready'] !== undefined)
+  const ms = await page.evaluate(() => window.__zmPerf!.marks['today-ready']!)
+  report.todayColdStartMs = +ms.toFixed(1)
+  expect(ms).toBeLessThan(BUDGET.coldStart)
+})
+
 test('cold start to usable inbox (cached) < 1 s', async () => {
+  await page.keyboard.press('g')
+  await page.keyboard.press('m')
+  await expect(page.locator('.thread-list .row[id]').first()).toBeVisible()
   await page.reload()
   await page.waitForFunction(() => window.__zmPerf?.marks['inbox-ready'] !== undefined)
   const ms = await page.evaluate(() => window.__zmPerf!.marks['inbox-ready']!)
@@ -195,4 +212,19 @@ test('scrolling thousands of threads holds 60 fps', async () => {
   }
   expect(frames.rows).toBeGreaterThan(5000)
   expect(dropped).toBeLessThan(BUDGET.droppedFrames)
+})
+
+test('switch modules with G H / G M / G T / G D < 50 ms', async () => {
+  await clearSamples()
+  for (let i = 0; i < 5; i++)
+    for (const k of ['h', 't', 'd', 'm']) {
+      await page.keyboard.press('g')
+      await page.keyboard.press(k)
+      await page.waitForTimeout(50)
+    }
+  const ids = ['go.today', 'go.tasks', 'go.docs', 'go.mail']
+  const xs = (await Promise.all(ids.map(samples))).flat()
+  report.moduleSwitch = summary(xs)
+  expect(xs.length).toBe(20)
+  expect(pct(xs, 95)).toBeLessThan(BUDGET.moduleSwitch)
 })

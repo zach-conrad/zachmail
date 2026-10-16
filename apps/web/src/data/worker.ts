@@ -156,6 +156,7 @@ async function init(config: InitConfig) {
     ...outgoing,
     splitRules: () => store.splitRules(),
     getThread: (id) => store.getThread(id),
+    comingBack: (from, to, limit) => store.comingBack(from, to, limit),
     async ensureBodies(threadIds) {
       const missing = store.bodiesMissing(threadIds).filter((m) => !inflight.has(m.messageId))
       if (!missing.length) return 0

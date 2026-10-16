@@ -9,7 +9,8 @@ import type {
 import type { ListQuery, SearchListQuery, StoreApi, ThreadListItem } from '@zachhub/local-store'
 
 /** Store reads the UI may call over the worker boundary (writes stay inside the worker). */
-export type ReadMethod = 'accounts' | 'folders' | 'getThread' | 'unread' | 'splitRules'
+export type ReadMethod =
+  'accounts' | 'folders' | 'getThread' | 'unread' | 'splitRules' | 'comingBack'
 
 /** What a thread list shows: a split, or search results. */
 export type ViewQuery = ListQuery | SearchListQuery

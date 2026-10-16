@@ -13,7 +13,6 @@ export function AppHeader({
 }) {
   return (
     <header className="app-header">
-      <span className="brand">ZachMail</span>
       <nav className="splits" aria-label="Splits">
         {tabs.map((s) => (
           <Link

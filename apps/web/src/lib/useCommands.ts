@@ -45,8 +45,9 @@ function onKey(e: KeyboardEvent) {
   const chord = chordFromEvent(e, isApple)
   const hasMod = chord.includes('mod+')
   if (isTypingTarget(e.target) && !hasMod && e.key !== 'Escape') return
-  const id = matcher.press(chord)
-  if ((id && runCommand(id, e.timeStamp)) || matcher.isPending) e.preventDefault()
+  // A key bound in several modules runs in whichever one is on screen.
+  const ran = matcher.pressAll(chord).some((id) => runCommand(id, e.timeStamp))
+  if (ran || matcher.isPending) e.preventDefault()
 }
 
 // The macOS menu bar dispatches commands by id; handling them here skips the key replay.

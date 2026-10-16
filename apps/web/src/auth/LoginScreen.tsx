@@ -9,7 +9,7 @@ export function LoginScreen() {
   if (!supabase) {
     return (
       <main className="login">
-        <h1 className="display">ZachMail</h1>
+        <h1 className="display">ZachHub</h1>
         <p className="muted">This build has no Supabase configuration.</p>
       </main>
     )
@@ -26,7 +26,7 @@ export function LoginScreen() {
 
   return (
     <main className="login">
-      <h1 className="display">ZachMail</h1>
+      <h1 className="display">ZachHub</h1>
       <div className="login-actions">
         {/* Passkeys need a real browser; the macOS app signs in through Google. */}
         {!desktop && (

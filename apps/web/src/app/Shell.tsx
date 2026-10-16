@@ -1,60 +1,63 @@
 import { useNavigate } from '@tanstack/react-router'
-import {
-  lazy,
-  Suspense,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useState,
-  useSyncExternalStore,
-} from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { Composer } from '../compose/Composer'
 import { newDraft } from '../compose/draft'
 import { Inbox } from '../inbox/Inbox'
 import { SearchView } from '../search/SearchView'
-import { endInteraction } from '../lib/perf'
-import { keymap, splitTabs, type CommandId, type FolderRow, type SplitKey } from '@zachhub/core'
+import { splitTabs, type FolderRow, type SplitKey } from '@zachhub/core'
 import { useData } from '../data/DataProvider'
 import { SplitRulesEditor } from '../splits/SplitRulesEditor'
-import { canRun, useCommands } from '../lib/useCommands'
+import { runCommand, useCommands } from '../lib/useCommands'
 import { AppHeader } from './AppHeader'
-import { CheatSheet } from './CheatSheet'
-import { CommandPalette, type PaletteItem } from './CommandPalette'
+import { useHub } from './HubShell'
 import { UndoToast } from './UndoToast'
-import { usePushBridge } from '../notifications/usePushBridge'
+import { rememberMailSplit } from '../hub/modules'
+import { usePaletteItems, type PaletteItem } from '../hub/palette'
 
 // Settings panes load on first open so they never weigh on the initial bundle.
 const NotificationSettingsPane = lazy(() => import('../notifications/NotificationSettingsPane'))
 
-type Overlay = 'palette' | 'shortcuts' | 'rules' | 'notifications' | null
+type Overlay = 'rules' | 'notifications' | null
 
-export function Shell({ split, openThread }: { split: SplitKey; openThread: string | null }) {
+/** Mail: split tabs, the inbox or search, and mail's own settings panes. */
+export function Shell({
+  split,
+  openThread,
+  searchQuery,
+}: {
+  split: SplitKey
+  openThread: string | null
+  /** Search asked for from outside Mail (⌘K's "Search mail for …"). */
+  searchQuery: string | null
+}) {
   const navigate = useNavigate()
+  const hub = useHub()
   const { compose, accounts, client, splitRules, editSplitRule } = useData()
   useSyncExternalStore(compose.subscribe, compose.getVersion)
   const sheet = compose.sheet
   const tabs = useMemo(() => splitTabs(splitRules ?? []), [splitRules])
   const [folders, setFolders] = useState<FolderRow[]>([])
   const [overlay, setOverlay] = useState<Overlay>(null)
-  // Search replaces the list while open (design §3.5); null when not searching.
-  const [search, setSearch] = useState<string | null>(null)
-  // What the views underneath can run, captured before the overlay deactivates them.
-  const [available, setAvailable] = useState<CommandId[]>([])
-  const open = (o: Exclude<Overlay, null>) => {
-    if (overlay === o) return setOverlay(null)
-    setAvailable(keymap.map((b) => b.id).filter(canRun))
-    setOverlay(o)
+  // Search replaces the list while open (design §3.5); null when not searching. Each new
+  // search asked for from outside starts a fresh search view.
+  const [search, setSearch] = useState<{ text: string; n: number } | null>(
+    searchQuery === null ? null : { text: searchQuery, n: 0 },
+  )
+  const [asked, setAsked] = useState(searchQuery)
+  if (searchQuery !== asked) {
+    setAsked(searchQuery)
+    if (searchQuery !== null) setSearch((s) => ({ text: searchQuery, n: (s?.n ?? 0) + 1 }))
   }
-
-  useLayoutEffect(() => {
-    if (overlay === 'palette') endInteraction('app.palette')
-  }, [overlay])
+  const open = (o: Exclude<Overlay, null>) => setOverlay(overlay === o ? null : o)
+  const blocked = !!overlay || hub.overlayOpen
 
   const goSplit = (id: SplitKey) => void navigate({ to: '/inbox/$split', params: { split: id } })
-  usePushBridge(client, (threadId, toSplit) => {
-    setOverlay(null)
-    void navigate({ to: '/inbox/$split', params: { split: toSplit }, search: { thread: threadId } })
-  })
+  useEffect(() => rememberMailSplit(split), [split])
+  // Drop the asked-for query from the URL so a reload doesn't search again.
+  useEffect(() => {
+    if (searchQuery !== null)
+      void navigate({ to: '/inbox/$split', params: { split }, search: {}, replace: true })
+  }, [searchQuery, split, navigate])
   const cycle = (dir: 1 | -1) => {
     const i = tabs.findIndex((s) => s.key === split)
     goSplit(tabs[(i + dir + tabs.length) % tabs.length]!.key)
@@ -80,9 +83,7 @@ export function Shell({ split, openThread }: { split: SplitKey; openThread: stri
       setSearch(null)
       goSplit('important')
     },
-    'nav.search': () => setSearch(''),
-    'app.palette': () => open('palette'),
-    'app.shortcuts': () => open('shortcuts'),
+    'nav.search': () => setSearch((s) => ({ text: '', n: (s?.n ?? 0) + 1 })),
     'compose.new': () => {
       const first = accounts.keys().next().value
       if (first) compose.open(compose.resume(null) ?? newDraft(first))
@@ -106,27 +107,25 @@ export function Shell({ split, openThread }: { split: SplitKey; openThread: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [split, tabs],
   )
+  usePaletteItems(extra)
 
   return (
     <div className="shell">
-      <AppHeader split={split} tabs={tabs} onPalette={() => open('palette')} />
+      <AppHeader split={split} tabs={tabs} onPalette={() => runCommand('app.palette')} />
       <main className="main">
         {search !== null ? (
-          <SearchView initial={search} active={!overlay && !sheet} onExit={() => setSearch(null)} />
+          <SearchView
+            key={search.n}
+            initial={search.text}
+            active={!blocked && !sheet}
+            onExit={() => setSearch(null)}
+          />
         ) : (
-          <Inbox key={split} view={view} active={!overlay && !sheet} openThread={openThread} />
+          <Inbox key={split} view={view} active={!blocked && !sheet} openThread={openThread} />
         )}
       </main>
       {sheet && <Composer key={sheet.id} initial={sheet} />}
       <UndoToast />
-      {overlay === 'palette' && (
-        <CommandPalette
-          available={available}
-          extra={extra}
-          onSearch={(q) => setSearch(q)}
-          onClose={() => setOverlay(null)}
-        />
-      )}
       {overlay === 'rules' && (
         <SplitRulesEditor
           rules={splitRules ?? []}
@@ -145,9 +144,6 @@ export function Shell({ split, openThread }: { split: SplitKey; openThread: stri
             onClose={() => setOverlay(null)}
           />
         </Suspense>
-      )}
-      {overlay === 'shortcuts' && (
-        <CheatSheet available={available} onClose={() => setOverlay(null)} />
       )}
     </div>
   )

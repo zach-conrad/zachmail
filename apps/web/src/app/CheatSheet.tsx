@@ -2,6 +2,7 @@ import { keymap, type CommandGroup, type CommandId } from '@zachhub/core'
 import { Kbd } from './Kbd'
 
 const GROUPS: { id: CommandGroup; label: string }[] = [
+  { id: 'hub', label: 'ZachHub' },
   { id: 'navigation', label: 'Navigation' },
   { id: 'triage', label: 'Triage' },
   { id: 'compose', label: 'Compose' },

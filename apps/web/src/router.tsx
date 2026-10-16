@@ -5,11 +5,12 @@ import {
   createRouter,
   redirect,
 } from '@tanstack/react-router'
-import { Shell } from './app/Shell'
+import { HubShell } from './app/HubShell'
 import { isSplitKey } from './app/splits'
 import { LoginScreen } from './auth/LoginScreen'
 import { useAuth } from './auth/session'
 import { DataProvider } from './data/DataProvider'
+import { DocsRoute, MailRoute, TasksRoute, TodayRoute } from './hub/modules'
 
 function Root() {
   const auth = useAuth()
@@ -17,40 +18,65 @@ function Root() {
   if (auth.status === 'signedOut') return <LoginScreen />
   return (
     <DataProvider>
-      <Outlet />
+      <HubShell>
+        <Outlet />
+      </HubShell>
     </DataProvider>
   )
 }
 
 const rootRoute = createRootRoute({ component: Root })
 
+// ZachHub opens on Today on every platform (design H7).
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   beforeLoad: () => {
-    throw redirect({ to: '/inbox/$split', params: { split: 'important' } })
+    throw redirect({ to: '/today' })
   },
 })
+
+const todayRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/today',
+  component: TodayRoute,
+})
+
+export interface MailSearch {
+  /** Opens a conversation on arrival (a notification click, Today, ⌘K). */
+  thread?: string
+  /** Opens mail search with this query (⌘K's "Search mail for …"). */
+  q?: string
+}
 
 const inboxRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/inbox/$split',
-  // `thread` opens a conversation on arrival (a notification click in a fresh window).
-  validateSearch: (s: Record<string, unknown>): { thread?: string } =>
-    typeof s.thread === 'string' ? { thread: s.thread } : {},
+  validateSearch: (s: Record<string, unknown>): MailSearch => ({
+    ...(typeof s.thread === 'string' ? { thread: s.thread } : {}),
+    ...(typeof s.q === 'string' ? { q: s.q } : {}),
+  }),
   beforeLoad: ({ params }) => {
     if (!isSplitKey(params.split))
       throw redirect({ to: '/inbox/$split', params: { split: 'important' } })
   },
-  component: function InboxRoute() {
-    const { split } = inboxRoute.useParams()
-    const { thread } = inboxRoute.useSearch()
-    return <Shell split={isSplitKey(split) ? split : 'important'} openThread={thread ?? null} />
-  },
+  component: MailRoute,
+})
+
+const tasksRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/tasks',
+  component: TasksRoute,
+})
+
+const docsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/docs',
+  component: DocsRoute,
 })
 
 export const router = createRouter({
-  routeTree: rootRoute.addChildren([indexRoute, inboxRoute]),
+  routeTree: rootRoute.addChildren([indexRoute, todayRoute, inboxRoute, tasksRoute, docsRoute]),
   defaultPreload: 'intent',
 })
 
