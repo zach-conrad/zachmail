@@ -51,8 +51,7 @@ let db: Db
 let accountId: string
 let reply: (body: Record<string, unknown>) => FakeReply
 const fake = fakeAnthropic((b) => reply(b))
-// No SDK retries: a delayed retry of a failed request would land after a test resets the count.
-const ai = createAi({ apiKey: 'k', baseURL: FAKE_ANTHROPIC_URL, fetch: fake.fetch, maxRetries: 0 })
+const ai = createAi({ apiKey: 'k', baseURL: FAKE_ANTHROPIC_URL, fetch: fake.fetch })
 
 const apply = (messages: ProviderMessage[]) =>
   applySyncBatch(db, {

@@ -6,6 +6,5 @@ export function createAi(config: AiConfig): Ai {
     apiKey: config.apiKey,
     baseURL: config.baseURL,
     fetch: config.fetch,
-    maxRetries: config.maxRetries,
   })
 }
