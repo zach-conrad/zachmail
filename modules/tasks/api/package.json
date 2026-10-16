@@ -1,0 +1,20 @@
+{
+  "name": "@zachhub/tasks-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@zachhub/kernel": "workspace:*",
+    "@zachhub/tasks-db": "workspace:*"
+  },
+  "devDependencies": {
+    "@zachhub/config": "workspace:*"
+  }
+}

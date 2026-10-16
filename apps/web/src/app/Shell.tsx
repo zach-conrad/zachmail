@@ -101,7 +101,12 @@ export function Shell({ split, openThread }: { split: SplitKey; openThread: stri
           id: `split.${s.key}`,
           label: `Go to ${s.label}`,
           run: () => goSplit(s.key),
-        })),
+        }))
+        .concat({
+          id: 'go.tasks',
+          label: 'Go to Tasks',
+          run: () => void navigate({ to: '/tasks/$view', params: { view: 'today' } }),
+        }),
     // goSplit only closes over navigate, which is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [split, tabs],
