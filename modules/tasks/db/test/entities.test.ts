@@ -4,6 +4,7 @@ import {
   HUB_ENTITIES,
   applyEntityOps,
   readDelta,
+  searchHub,
   type Db,
 } from '@zachhub/db/server'
 import { USER, createTestDb, type TestDb } from '@zachhub/db/testing'
@@ -76,6 +77,22 @@ describe('tasks entities', () => {
     expect(row).toBeDefined()
     expect(taskFromEntity(row!)).toEqual(task)
     expect(delta.entities?.[LIST_KIND]?.upserts[0]).toMatchObject({ name: 'Home', color: 'green' })
+  })
+
+  it('shows up in hub search by title and notes', async () => {
+    await apply([
+      {
+        kind: 'put',
+        entity: TASK_KIND,
+        id: id(5),
+        hlc: stamp(),
+        fields: { title: 'Call the landlord', notes: 'about the radiator' },
+      },
+    ])
+    const hits = async (q: string) =>
+      (await searchHub(db, USER, q, { registry, tzOffset: 0 })).hits.map((h) => h.title)
+    expect(await hits('landlord')).toContain('Call the landlord')
+    expect(await hits('radiator')).toContain('Call the landlord')
   })
 
   it('merges per field: a stale title write keeps a newer completion', async () => {

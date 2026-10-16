@@ -24,6 +24,8 @@ function checkPosition(v: unknown): string | null {
 export const taskEntity: EntityTable = {
   kind: TASK_KIND,
   table: 'tasks.tasks',
+  // Hub search (⌘K, `in:tasks`) indexes the title and notes on every write.
+  search: { title: 'title', body: ['notes'] },
   fields: {
     listId: { column: 'list_id', type: 'uuid', nullable: true },
     parentId: { column: 'parent_id', type: 'uuid', nullable: true },
