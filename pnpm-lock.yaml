@@ -304,6 +304,9 @@ importers:
       '@zachhub/kernel':
         specifier: workspace:*
         version: link:../../hub/kernel
+      '@zachhub/tasks-api':
+        specifier: workspace:*
+        version: link:../tasks/api
     devDependencies:
       '@zachhub/config':
         specifier: workspace:*
@@ -332,6 +335,19 @@ importers:
         specifier: workspace:*
         version: link:../../../hub/config
 
+  modules/tasks/api:
+    dependencies:
+      '@zachhub/kernel':
+        specifier: workspace:*
+        version: link:../../../hub/kernel
+      '@zachhub/tasks-db':
+        specifier: workspace:*
+        version: link:../db
+    devDependencies:
+      '@zachhub/config':
+        specifier: workspace:*
+        version: link:../../../hub/config
+
   modules/tasks/core:
     dependencies:
       '@zachhub/core':
@@ -350,6 +366,25 @@ importers:
       '@zachhub/config':
         specifier: workspace:*
         version: link:../../../hub/config
+
+  modules/tasks/db:
+    dependencies:
+      '@zachhub/db':
+        specifier: workspace:*
+        version: link:../../../hub/db
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@electric-sql/pglite@0.5.9)(postgres@3.4.9)
+    devDependencies:
+      '@zachhub/config':
+        specifier: workspace:*
+        version: link:../../../hub/config
+      '@zachhub/core':
+        specifier: workspace:*
+        version: link:../../../hub/core
+      '@zachhub/tasks-core':
+        specifier: workspace:*
+        version: link:../core
 
   modules/tasks/web:
     dependencies:

@@ -11,7 +11,8 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@zachhub/kernel": "workspace:*"
+    "@zachhub/kernel": "workspace:*",
+    "@zachhub/tasks-api": "workspace:*"
   },
   "devDependencies": {
     "@zachhub/config": "workspace:*"

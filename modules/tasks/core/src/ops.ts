@@ -71,15 +71,15 @@ export function stateReader(state: TasksState): TasksReader {
   }
 }
 
-/** The rows `op` changes, given the state before it. `at` stamps updatedAt. */
-export function taskOpEffect(op: TaskOp, read: TasksReader, at: number): TaskEffect {
+/** The rows `op` changes, given the state before it. */
+export function taskOpEffect(op: TaskOp, read: TasksReader): TaskEffect {
   switch (op.kind) {
     case 'tasks.create':
       return effect({ putTasks: [op.task] })
     case 'tasks.update': {
       const t = read.task(op.id)
       if (!t) return effect({})
-      const next = { ...t, ...op.patch, updatedAt: at }
+      const next = { ...t, ...op.patch }
       // A due time without a date means nothing; clearing the date clears the time.
       if (next.dueDate === null) next.dueTime = null
       return effect({ putTasks: [next] })
@@ -88,7 +88,7 @@ export function taskOpEffect(op: TaskOp, read: TasksReader, at: number): TaskEff
       const t = read.task(op.id)
       if (!t || t.completedAt !== null) return effect({})
       // The finished instance drops its rule; the series lives on in `next`.
-      const done = { ...t, completedAt: op.at, rrule: op.next ? null : t.rrule, updatedAt: at }
+      const done = { ...t, completedAt: op.at, rrule: op.next ? null : t.rrule }
       return effect({ putTasks: op.next ? [done, op.next] : [done] })
     }
     case 'tasks.uncomplete': {
@@ -96,7 +96,7 @@ export function taskOpEffect(op: TaskOp, read: TasksReader, at: number): TaskEff
       if (!t) return effect({})
       const rrule = op.rrule !== undefined ? op.rrule : t.rrule
       return effect({
-        putTasks: [{ ...t, completedAt: null, rrule, updatedAt: at }],
+        putTasks: [{ ...t, completedAt: null, rrule }],
         removeTasks: op.removeId ? [op.removeId] : [],
       })
     }
@@ -111,19 +111,19 @@ export function taskOpEffect(op: TaskOp, read: TasksReader, at: number): TaskEff
       return effect({ putLists: [op.list] })
     case 'tasks.list.update': {
       const l = read.list(op.id)
-      return l ? effect({ putLists: [{ ...l, ...op.patch, updatedAt: at }] }) : effect({})
+      return l ? effect({ putLists: [{ ...l, ...op.patch }] }) : effect({})
     }
     case 'tasks.list.delete':
       return effect({
         removeLists: [op.id],
-        putTasks: read.tasksInList(op.id).map((t) => ({ ...t, listId: null, updatedAt: at })),
+        putTasks: read.tasksInList(op.id).map((t) => ({ ...t, listId: null })),
       })
     case 'tasks.list.restore':
       return effect({
         putLists: [op.list],
         putTasks: op.taskIds.flatMap((id) => {
           const t = read.task(id)
-          return t ? [{ ...t, listId: op.list.id, updatedAt: at }] : []
+          return t ? [{ ...t, listId: op.list.id }] : []
         }),
       })
   }
@@ -147,8 +147,8 @@ export function applyTaskEffect(state: TasksState, e: TaskEffect): TasksState {
   return tasks === state.tasks && lists === state.lists ? state : { tasks, lists }
 }
 
-export function applyTaskOp(state: TasksState, op: TaskOp, at: number): TasksState {
-  return applyTaskEffect(state, taskOpEffect(op, stateReader(state), at))
+export function applyTaskOp(state: TasksState, op: TaskOp): TasksState {
+  return applyTaskEffect(state, taskOpEffect(op, stateReader(state)))
 }
 
 /**
@@ -236,7 +236,6 @@ export function completeOp(
     alertAt,
     completedAt: null,
     createdAt: at,
-    updatedAt: at,
   }
   return { op: { kind: 'tasks.complete', id: task.id, at, next }, nextDue: n.dueDate }
 }

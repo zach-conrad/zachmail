@@ -28,6 +28,15 @@ const TITLES = [
   'Order printer ink',
 ]
 
+/** Deterministic UUIDs, so fixture rows pass the entity id check. */
+export const fixtureId = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
+
+export const FIXTURE_LISTS = {
+  home: fixtureId(900_000),
+  work: fixtureId(900_001),
+  errands: fixtureId(900_002),
+}
+
 /** A small PRNG so fixtures are stable across runs. */
 function mulberry32(seed: number) {
   return () => {
@@ -47,13 +56,12 @@ export function tasksFixture({ now, tasks: count = 40, seed = 7 }: FixtureOption
     ['home', 'Home', 'green'],
     ['work', 'Work', 'blue'],
     ['errands', 'Errands', 'orange'],
-  ].map(([id, name, color], i) => ({
-    id: `list-${id}`,
+  ].map(([, name, color], i) => ({
+    id: fixtureId(900_000 + i),
     name: name!,
     color: color!,
     position: `a${i}`,
     createdAt: at,
-    updatedAt: at,
   }))
   const out = new Map<string, Task>()
   let position: string | null = null
@@ -75,7 +83,7 @@ export function tasksFixture({ now, tasks: count = 40, seed = 7 }: FixtureOption
     const recurring = rand() < 0.12
     position = positionBetween(position, null)
     const t: Task = {
-      id: `task-${i}`,
+      id: fixtureId(i),
       listId: listPick < 0.25 ? null : lists[Math.floor(rand() * lists.length)]!.id,
       parentId: null,
       title: `${TITLES[i % TITLES.length]}${i >= TITLES.length ? ` ${Math.floor(i / TITLES.length) + 1}` : ''}`,
@@ -89,7 +97,6 @@ export function tasksFixture({ now, tasks: count = 40, seed = 7 }: FixtureOption
       position,
       completedAt: rand() < 0.1 ? at - 3_600_000 : null,
       createdAt: at - i * 60_000,
-      updatedAt: at - i * 60_000,
     }
     if (dueDate && dueTime) {
       const [y, m, d] = dueDate.split('-').map(Number) as [number, number, number]
@@ -102,7 +109,7 @@ export function tasksFixture({ now, tasks: count = 40, seed = 7 }: FixtureOption
   const parent = [...out.values()].find((t) => t.listId && t.completedAt === null)
   if (parent)
     for (let i = 0; i < 2; i++) {
-      const id = `${parent.id}-sub-${i}`
+      const id = fixtureId(800_000 + i)
       out.set(id, {
         ...parent,
         id,

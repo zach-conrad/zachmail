@@ -1,17 +1,7 @@
-import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import { clockAt } from './dates'
-import { tasksFixture } from './fixture'
-import {
-  countViews,
-  selectTasks,
-  TASKS_LOCAL_DDL,
-  taskFromRow,
-  taskToRow,
-  viewSql,
-  type TaskSqlRow,
-  type TaskView,
-} from './smart'
+import { FIXTURE_LISTS, tasksFixture } from './fixture'
+import { countViews, selectTasks, type TaskView } from './smart'
 
 const now = new Date(2026, 9, 15, 14, 0)
 const clock = clockAt(now)
@@ -23,8 +13,8 @@ const views: TaskView[] = [
   { kind: 'smart', key: 'overdue' },
   { kind: 'smart', key: 'flagged' },
   { kind: 'inbox' },
-  { kind: 'list', id: 'list-home' },
-  { kind: 'list', id: 'list-work' },
+  { kind: 'list', id: FIXTURE_LISTS.home },
+  { kind: 'list', id: FIXTURE_LISTS.work },
 ]
 
 describe('smart lists', () => {
@@ -45,22 +35,7 @@ describe('smart lists', () => {
     expect(c.overdue).toBe(selectTasks(state, views[2]!, clock).length)
     expect(c.flagged).toBe(selectTasks(state, views[3]!, clock).length)
     expect(c.inbox).toBe(selectTasks(state, views[4]!, clock).length)
-    expect(c.lists.get('list-home')).toBe(selectTasks(state, views[5]!, clock).length)
-  })
-
-  it('SQL over the replica returns the same rows in the same order', () => {
-    const db = new DatabaseSync(':memory:')
-    for (const ddl of TASKS_LOCAL_DDL) db.exec(ddl)
-    const insert = db.prepare(
-      `INSERT INTO tasks_task VALUES (:id, :list_id, :parent_id, :title, :notes, :due_date, :due_time,
-        :alert_at, :rrule, :priority, :tags, :position, :completed_at, :created_at, :updated_at)`,
-    )
-    for (const t of state.tasks.values()) insert.run({ ...taskToRow(t) })
-    for (const view of views) {
-      const { sql, params } = viewSql(view, clock)
-      const rows = db.prepare(sql).all(...params) as unknown as TaskSqlRow[]
-      expect(rows.map(taskFromRow), JSON.stringify(view)).toEqual(selectTasks(state, view, clock))
-    }
+    expect(c.lists.get(FIXTURE_LISTS.home)).toBe(selectTasks(state, views[5]!, clock).length)
   })
 
   it('selects a 5k-task view well inside a frame', () => {

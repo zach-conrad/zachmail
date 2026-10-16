@@ -30,7 +30,7 @@ import { endInteraction } from './perf'
 import { displayKeys, fuzzy, Picker, type PickerOption } from './Picker'
 import { dueOptions, listOptions, remindOptions } from './pickers'
 import { QuickAdd } from './QuickAdd'
-import { newId, TasksStore } from './store'
+import { newId, TasksStore, type TasksBackend } from './store'
 import { TaskDetail } from './TaskDetail'
 import { TaskRows, type RowItem } from './TaskRows'
 import './tasks.css'
@@ -40,6 +40,8 @@ export interface TasksScreenProps {
   view: string
   /** Seed a generated fixture of this many tasks and keep everything in memory (demo, perf CI). */
   demo: number | false
+  /** The hub replica to read and write (ignored in demo). */
+  backend?: TasksBackend
   onNavigate: (view: string) => void
   onGoMail: () => void
 }
@@ -49,10 +51,10 @@ type Overlay = 'due' | 'remind' | 'move' | 'palette' | 'shortcuts' | null
 const LEAVE_MS = 180
 
 let shared: TasksStore | null = null
-function getStore(demo: number | false): TasksStore {
+function getStore(demo: number | false, backend: TasksBackend | undefined): TasksStore {
   shared ??= demo
-    ? new TasksStore(tasksFixture({ now: new Date(), tasks: demo }), false)
-    : new TasksStore()
+    ? new TasksStore(tasksFixture({ now: new Date(), tasks: demo }))
+    : new TasksStore(undefined, backend)
   return shared
 }
 
@@ -80,8 +82,14 @@ function useClock(): Clock {
 }
 
 /** Tasks (design H4): lists column, quick add, the task rows, and the detail pane. */
-export function TasksScreen({ view: viewParam, demo, onNavigate, onGoMail }: TasksScreenProps) {
-  const store = getStore(demo)
+export function TasksScreen({
+  view: viewParam,
+  demo,
+  backend,
+  onNavigate,
+  onGoMail,
+}: TasksScreenProps) {
+  const store = getStore(demo, backend)
   const state = useSyncExternalStore(store.subscribe, store.getState)
   const toast = useSyncExternalStore(store.subscribe, store.getToast)
   const clock = useClock()
@@ -179,7 +187,6 @@ export function TasksScreen({ view: viewParam, demo, onNavigate, onGoMail }: Tas
       color: LIST_COLORS[lists.length % LIST_COLORS.length]!,
       position: positionAtEnd(lists),
       createdAt: now,
-      updatedAt: now,
     }
     store.run({ kind: 'tasks.list.create', list })
     return list
@@ -207,7 +214,6 @@ export function TasksScreen({ view: viewParam, demo, onNavigate, onGoMail }: Tas
       position: positionAtEnd(siblings),
       completedAt: null,
       createdAt: now,
-      updatedAt: now,
     }
     // A task that lands outside this view would vanish silently; say where it went.
     const where = listId ? (state.lists.get(listId)?.name ?? p.listName) : 'Inbox'
@@ -238,7 +244,6 @@ export function TasksScreen({ view: viewParam, demo, onNavigate, onGoMail }: Tas
         position: positionAtEnd(selectSubtasks(state, parent.id)),
         completedAt: null,
         createdAt: now,
-        updatedAt: now,
       },
     })
   }

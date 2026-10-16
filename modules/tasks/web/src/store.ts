@@ -1,25 +1,29 @@
 /**
- * The tasks replica on this device. Ops apply to in-memory state in the same frame (optimistic),
- * queue in `pending` for the sync drain, and push their inverse on the undo stack. Until the
- * server tables and sync land, state persists to localStorage so tasks survive a reload; the
- * pending queue is what will be sent once /api/ops accepts `tasks.*` ops.
+ * The tasks state on screen. Ops apply to in-memory state in the same frame (optimistic) and push
+ * their inverse on the undo stack. With a backend, each op's effect also becomes entity writes
+ * on the hub replica (changed fields only, so per-field merge keeps other devices' edits), and
+ * the replica is re-read whenever it changes: sync deltas, other tabs, our own writes landing.
+ * Without one (demo fixture, tests) everything stays in memory.
  */
 import {
-  applyTaskOp,
+  applyTaskEffect,
+  effectToWrites,
   emptyTasksState,
   invertTaskOp,
+  listFromEntity,
   stateReader,
+  taskFromEntity,
+  taskOpEffect,
+  LIST_ENTITY,
+  LIST_FIELDS,
+  TASK_ENTITY,
+  TASK_FIELDS,
   type Task,
+  type TaskEntityWrite,
   type TaskList,
   type TaskOp,
   type TasksState,
 } from '@zachhub/tasks-core'
-
-export interface PendingTaskOp {
-  id: string
-  op: TaskOp
-  at: number
-}
 
 export interface TasksToast {
   key: number
@@ -27,25 +31,33 @@ export interface TasksToast {
   undo: boolean
 }
 
-const STORAGE_KEY = 'zh.tasks.v1'
+type Row = { id: string; [field: string]: unknown }
+
+/** Where tasks live: the hub replica (web: the data worker's `entities` / `entityWrite`). */
+export interface TasksBackend {
+  /** Every row of `kind`, unsent local writes included. */
+  read(kind: string): Promise<Row[]>
+  /** Applies to the replica and queues for the server, in call order. Rejects if refused. */
+  write(writes: TaskEntityWrite[]): Promise<unknown>
+  /** Calls `fn` when replica rows may have changed. Returns the unsubscribe. */
+  onChange(fn: () => void): () => void
+}
+
 const MAX_UNDO = 50
 const TOAST_MS = 6000
 
-interface Persisted {
-  tasks: Task[]
-  lists: TaskList[]
-  pending: PendingTaskOp[]
-}
-
 export const newId = () => crypto.randomUUID()
 
-function load(): Persisted | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as Persisted) : null
-  } catch {
-    return null
-  }
+const same = (a: unknown, b: unknown) =>
+  a === b || (Array.isArray(a) && Array.isArray(b) && a.join('\u0000') === b.join('\u0000'))
+
+/** Keeps `old` when nothing in it changed, so memoized rows don't re-render on a re-read. */
+function keep<T extends object>(old: T | undefined, next: T, fields: readonly string[]): T {
+  if (!old) return next
+  const o = old as Record<string, unknown>
+  const n = next as Record<string, unknown>
+  for (const f of fields) if (!same(o[f], n[f])) return next
+  return old
 }
 
 export class TasksStore {
@@ -54,24 +66,25 @@ export class TasksStore {
   private listeners = new Set<() => void>()
   private undoStack: TaskOp[] = []
   private toastTimer: ReturnType<typeof setTimeout> | null = null
-  private saveTimer: ReturnType<typeof setTimeout> | null = null
   private toastKey = 0
+  /** Bumped on every local write; a re-read issued before the latest write is stale. */
+  private writes = 0
+  private reading = false
+  private rereadAfter = false
   toast: TasksToast | null = null
-  pending: PendingTaskOp[] = []
+  /** False until a backend's first read lands (always true in memory). */
+  loaded: boolean
 
-  /** `persist: false` keeps everything in memory (demo fixture, tests). */
   constructor(
     initial?: TasksState,
-    private persist = initial === undefined,
+    private backend?: TasksBackend,
   ) {
-    const saved = persist ? load() : null
-    if (saved) {
-      this.state = {
-        tasks: new Map(saved.tasks.map((t) => [t.id, t])),
-        lists: new Map(saved.lists.map((l) => [l.id, l])),
-      }
-      this.pending = saved.pending
-    } else this.state = initial ?? emptyTasksState()
+    this.state = initial ?? emptyTasksState()
+    this.loaded = !backend
+    if (backend) {
+      backend.onChange(() => this.reread())
+      this.reread()
+    }
   }
 
   subscribe = (fn: () => void) => {
@@ -89,32 +102,92 @@ export class TasksStore {
 
   /** Applies `op` now. With `toast`, shows it with Undo. Returns false if nothing changed. */
   run(op: TaskOp, toast?: string): boolean {
-    const inverse = invertTaskOp(op, stateReader(this.state))
-    const at = Date.now()
-    const next = applyTaskOp(this.state, op, at)
-    if (next === this.state) return false
-    this.state = next
-    this.pending.push({ id: newId(), op, at })
+    const read = stateReader(this.state)
+    const inverse = invertTaskOp(op, read)
+    if (!this.apply(op)) return false
     if (inverse) {
       this.undoStack.push(inverse)
       if (this.undoStack.length > MAX_UNDO) this.undoStack.shift()
     }
     if (toast) this.showToast(toast, !!inverse)
     this.emit()
-    this.scheduleSave()
     return true
   }
 
   undo(): boolean {
     const inverse = this.undoStack.pop()
     if (!inverse) return false
-    const at = Date.now()
-    this.state = applyTaskOp(this.state, inverse, at)
-    this.pending.push({ id: newId(), op: inverse, at })
+    this.apply(inverse)
     this.showToast('Undone', false)
     this.emit()
-    this.scheduleSave()
     return true
+  }
+
+  private apply(op: TaskOp): boolean {
+    const read = stateReader(this.state)
+    const effect = taskOpEffect(op, read)
+    const next = applyTaskEffect(this.state, effect)
+    if (next === this.state) return false
+    this.state = next
+    if (this.backend) {
+      const writes = effectToWrites(effect, read)
+      if (writes.length) {
+        this.writes++
+        // A refused write never reached the replica: put the screen back to what it holds.
+        this.backend.write(writes).catch(() => this.reread())
+      }
+    }
+    return true
+  }
+
+  /** Re-reads the replica, one read at a time; a read raced by a local write is dropped. */
+  private reread() {
+    const backend = this.backend
+    if (!backend) return
+    if (this.reading) {
+      this.rereadAfter = true
+      return
+    }
+    this.reading = true
+    const issuedAt = this.writes
+    void Promise.all([backend.read(TASK_ENTITY), backend.read(LIST_ENTITY)])
+      .then(([tasks, lists]) => {
+        // A newer local write is in state but not in this read; the read after it will be.
+        if (issuedAt !== this.writes && this.loaded) return
+        const before = this.state
+        const nextTasks = new Map<string, Task>()
+        for (const row of tasks) {
+          const t = taskFromEntity(row)
+          if (t) nextTasks.set(t.id, keep(before.tasks.get(t.id), t, TASK_FIELDS))
+        }
+        const nextLists = new Map<string, TaskList>()
+        for (const row of lists) {
+          const l = listFromEntity(row)
+          if (l) nextLists.set(l.id, keep(before.lists.get(l.id), l, LIST_FIELDS))
+        }
+        const unchanged = <V>(a: ReadonlyMap<string, V>, b: ReadonlyMap<string, V>) =>
+          a.size === b.size && [...b].every(([id, v]) => a.get(id) === v)
+        const tasksSame = unchanged(before.tasks, nextTasks)
+        const listsSame = unchanged(before.lists, nextLists)
+        const firstLoad = !this.loaded
+        this.loaded = true
+        if (tasksSame && listsSame && !firstLoad) return
+        this.state = {
+          tasks: tasksSame ? before.tasks : nextTasks,
+          lists: listsSame ? before.lists : nextLists,
+        }
+        this.emit()
+      })
+      .catch(() => {
+        // The replica is unavailable (worker restarting); the next change event retries.
+      })
+      .finally(() => {
+        this.reading = false
+        if (this.rereadAfter) {
+          this.rereadAfter = false
+          this.reread()
+        }
+      })
   }
 
   private showToast(text: string, undo: boolean) {
@@ -124,27 +197,5 @@ export class TasksStore {
       this.toast = null
       this.emit()
     }, TOAST_MS)
-  }
-
-  // Writes happen off the interaction: a 5k-task JSON write must never land in a keypress.
-  private scheduleSave() {
-    if (!this.persist || this.saveTimer) return
-    this.saveTimer = setTimeout(() => {
-      this.saveTimer = null
-      const save = () => {
-        try {
-          const data: Persisted = {
-            tasks: [...this.state.tasks.values()],
-            lists: [...this.state.lists.values()],
-            pending: this.pending,
-          }
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-        } catch {
-          // Storage full or blocked: state still lives in memory for this session.
-        }
-      }
-      if ('requestIdleCallback' in window) requestIdleCallback(save, { timeout: 2000 })
-      else save()
-    }, 300)
   }
 }

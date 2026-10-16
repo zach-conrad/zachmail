@@ -28,7 +28,6 @@ export interface Task {
   position: string
   completedAt: number | null
   createdAt: number
-  updatedAt: number
 }
 
 export interface TaskList {
@@ -38,7 +37,6 @@ export interface TaskList {
   color: string
   position: string
   createdAt: number
-  updatedAt: number
 }
 
 /** Fields an update op may change. */

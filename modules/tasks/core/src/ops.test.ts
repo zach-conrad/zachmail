@@ -10,7 +10,6 @@ import {
 } from './ops'
 import type { Task, TaskList } from './types'
 
-const AT = 1_000
 const task = (over: Partial<Task> = {}): Task => ({
   id: 't1',
   listId: null,
@@ -26,7 +25,6 @@ const task = (over: Partial<Task> = {}): Task => ({
   position: 'a0',
   completedAt: null,
   createdAt: 0,
-  updatedAt: 0,
   ...over,
 })
 const list = (over: Partial<TaskList> = {}): TaskList => ({
@@ -35,7 +33,6 @@ const list = (over: Partial<TaskList> = {}): TaskList => ({
   color: 'green',
   position: 'a0',
   createdAt: 0,
-  updatedAt: 0,
   ...over,
 })
 const stateOf = (tasks: Task[], lists: TaskList[] = []): TasksState => ({
@@ -43,19 +40,15 @@ const stateOf = (tasks: Task[], lists: TaskList[] = []): TasksState => ({
   lists: new Map(lists.map((l) => [l.id, l])),
 })
 
-/** Applies op, then its inverse, and expects the original state back (ignoring updatedAt). */
+/** Applies op, then its inverse, and expects the original state back. */
 function roundTrip(state: TasksState, op: TaskOp) {
   const inverse = invertTaskOp(op, stateReader(state))
   expect(inverse).not.toBeNull()
-  const after = applyTaskOp(state, op, AT)
-  const back = applyTaskOp(after, inverse!, AT)
+  const after = applyTaskOp(state, op)
+  const back = applyTaskOp(after, inverse!)
   const strip = (s: TasksState) => ({
-    tasks: [...s.tasks.values()]
-      .map((t) => ({ ...t, updatedAt: 0 }))
-      .sort((a, b) => (a.id < b.id ? -1 : 1)),
-    lists: [...s.lists.values()]
-      .map((l) => ({ ...l, updatedAt: 0 }))
-      .sort((a, b) => (a.id < b.id ? -1 : 1)),
+    tasks: [...s.tasks.values()].sort((a, b) => (a.id < b.id ? -1 : 1)),
+    lists: [...s.lists.values()].sort((a, b) => (a.id < b.id ? -1 : 1)),
   })
   expect(strip(back)).toEqual(strip(state))
   return after
@@ -74,7 +67,6 @@ describe('task ops', () => {
     expect(s2.tasks.get('t1')).toMatchObject({
       title: 'Pay rent!',
       dueDate: '2026-11-01',
-      updatedAt: AT,
     })
     roundTrip(s1, { kind: 'tasks.delete', id: 't1' })
   })
@@ -98,7 +90,7 @@ describe('task ops', () => {
     const after = roundTrip(s, op)
     expect(after.tasks.get('t1')?.completedAt).toBe(new Date(2026, 9, 15, 14).getTime())
     // Completing twice changes nothing.
-    expect(applyTaskOp(after, op, AT)).toBe(after)
+    expect(applyTaskOp(after, op)).toBe(after)
   })
 
   it('completing a recurring task creates the next instance in the same op', () => {
@@ -134,7 +126,7 @@ describe('task ops', () => {
   it('ends a finished series without a next instance', () => {
     const s = stateOf([task({ rrule: 'FREQ=DAILY;COUNT=1', dueDate: '2026-10-15' })])
     const { op } = completeOp(s.tasks.get('t1')!, new Date(2026, 9, 15, 14), () => 'n')
-    const after = applyTaskOp(s, op, AT)
+    const after = applyTaskOp(s, op)
     expect(after.tasks.size).toBe(1)
     expect(after.tasks.get('t1')?.rrule).toBe('FREQ=DAILY;COUNT=1')
   })
@@ -160,7 +152,7 @@ describe('task ops', () => {
       { kind: 'tasks.delete', id: 'x' },
       { kind: 'tasks.list.update', id: 'x', patch: { name: 'y' } },
     ] as TaskOp[]) {
-      expect(applyTaskOp(s, op, AT)).toBe(s)
+      expect(applyTaskOp(s, op)).toBe(s)
       expect(invertTaskOp(op, stateReader(s))).toBeNull()
     }
   })
