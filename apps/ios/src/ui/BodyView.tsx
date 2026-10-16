@@ -1,5 +1,5 @@
-import type { MessageBody } from '@zachmail/core'
-import { tokens } from '@zachmail/tokens'
+import type { MessageBody } from '@zachhub/core'
+import { tokens } from '@zachhub/tokens'
 import * as Linking from 'expo-linking'
 import { useState } from 'react'
 import { Pressable, StyleSheet, Text, View } from 'react-native'

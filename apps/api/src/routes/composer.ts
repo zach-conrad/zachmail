@@ -1,4 +1,4 @@
-import { InvalidSnippetError, parseSnippetInput } from '@zachmail/core'
+import { InvalidSnippetError, parseSnippetInput } from '@zachhub/core'
 import {
   SnippetConflictError,
   deleteSnippet,
@@ -6,7 +6,7 @@ import {
   nudge,
   restoreNudges,
   upsertSnippet,
-} from '@zachmail/db/server'
+} from '@zachhub/db/server'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import type { AuthVariables } from '../auth'

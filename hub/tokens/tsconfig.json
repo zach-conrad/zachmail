@@ -1,0 +1,1 @@
+{ "extends": "@zachhub/config/tsconfig.base.json", "include": ["src"] }

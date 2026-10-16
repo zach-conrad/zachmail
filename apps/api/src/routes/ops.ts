@@ -8,7 +8,7 @@ import {
   type OpsResponse,
   type SendResponse,
   type UploadResponse,
-} from '@zachmail/core'
+} from '@zachhub/core'
 import {
   SendRejectedError,
   acceptOps,
@@ -18,8 +18,8 @@ import {
   deleteDraft,
   nudge,
   saveDraft,
-} from '@zachmail/db/server'
-import { enqueueDraftSync, enqueueOutboxFlush } from '@zachmail/engine'
+} from '@zachhub/db/server'
+import { enqueueDraftSync, enqueueOutboxFlush } from '@zachhub/engine'
 import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { HTTPException } from 'hono/http-exception'

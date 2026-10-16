@@ -1,5 +1,5 @@
 {
-  "name": "@zachmail/ios",
+  "name": "@zachhub/ios",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,9 +14,9 @@
   },
   "dependencies": {
     "@shopify/flash-list": "2.0.2",
-    "@zachmail/core": "workspace:*",
-    "@zachmail/local-store": "workspace:*",
-    "@zachmail/tokens": "workspace:*",
+    "@zachhub/core": "workspace:*",
+    "@zachhub/local-store": "workspace:*",
+    "@zachhub/tokens": "workspace:*",
     "expo": "~57.0.28",
     "expo-build-properties": "~57.0.22",
     "expo-constants": "~57.0.21",
@@ -39,7 +39,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.0",
-    "@zachmail/config": "workspace:*",
+    "@zachhub/config": "workspace:*",
     "eslint-plugin-react-hooks": "^7.1.1",
     "react-dom": "19.2.3"
   }

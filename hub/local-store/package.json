@@ -1,0 +1,22 @@
+{
+  "name": "@zachhub/local-store",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./sqlite-wasm": "./src/sqlite-wasm.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@sqlite.org/sqlite-wasm": "3.53.4-build2",
+    "@zachhub/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@zachhub/config": "workspace:*"
+  }
+}

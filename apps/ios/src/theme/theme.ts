@@ -1,8 +1,8 @@
 /**
- * The iOS theme, generated at startup from packages/tokens/tokens.json (the same source as the web
+ * The iOS theme, generated at startup from hub/tokens/tokens.json (the same source as the web
  * CSS variables), so web, macOS and iOS never drift. Pure: no React Native imports, so it's testable.
  */
-import { tokens } from '@zachmail/tokens'
+import { tokens } from '@zachhub/tokens'
 
 export type Scheme = 'light' | 'dark'
 type ColorName = keyof typeof tokens.color

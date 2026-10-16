@@ -1,4 +1,4 @@
-import type { SqlDriver, SqlValue } from '@zachmail/local-store'
+import type { SqlDriver, SqlValue } from '@zachhub/local-store'
 import { openDatabaseSync, type SQLiteBindValue, type SQLiteStatement } from 'expo-sqlite'
 
 /**

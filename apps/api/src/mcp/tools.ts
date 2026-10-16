@@ -10,7 +10,7 @@ import {
   parseOpsRequest,
   parseSendRequest,
   type Address,
-} from '@zachmail/core'
+} from '@zachhub/core'
 import {
   SendRejectedError,
   acceptOps,
@@ -18,9 +18,9 @@ import {
   cancelSend,
   nudge,
   saveDraft,
-} from '@zachmail/db/server'
-import { enqueueDraftSync, enqueueOutboxFlush, getMessageBody } from '@zachmail/engine'
-import { htmlToText, parseAddressList, replySubject, textToHtml } from '@zachmail/mime'
+} from '@zachhub/db/server'
+import { enqueueDraftSync, enqueueOutboxFlush, getMessageBody } from '@zachhub/engine'
+import { htmlToText, parseAddressList, replySubject, textToHtml } from '@zachhub/mime'
 import { randomUUID } from 'node:crypto'
 import type { Deps } from '../deps'
 

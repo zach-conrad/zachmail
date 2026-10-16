@@ -1,5 +1,5 @@
-import { DEFAULT_UNDO_MS, type Address, type ContactRow } from '@zachmail/core'
-import { accountColor } from '@zachmail/tokens'
+import { DEFAULT_UNDO_MS, type Address, type ContactRow } from '@zachhub/core'
+import { accountColor } from '@zachhub/tokens'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Kbd } from '../app/Kbd'
 import { useData } from '../data/DataProvider'

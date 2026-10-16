@@ -1,4 +1,4 @@
-import type { ThreadDetail } from '@zachmail/local-store'
+import type { ThreadDetail } from '@zachhub/local-store'
 import type { DataClient } from './client'
 
 const MAX = 64

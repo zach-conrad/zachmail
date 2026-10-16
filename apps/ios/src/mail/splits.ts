@@ -1,4 +1,4 @@
-import { SPLIT_IDS, type SplitId } from '@zachmail/core'
+import { SPLIT_IDS, type SplitId } from '@zachhub/core'
 
 export type { SplitId }
 
@@ -9,5 +9,5 @@ const LABELS: Record<SplitId, string> = {
   notifications: 'Notifications',
 }
 
-/** Built-in splits (design §2); classification is shared with web in `@zachmail/core` (`classifySplit`). */
+/** Built-in splits (design §2); classification is shared with web in `@zachhub/core` (`classifySplit`). */
 export const splits = SPLIT_IDS.map((id) => ({ id, label: LABELS[id] }))

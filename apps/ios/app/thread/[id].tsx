@@ -1,4 +1,4 @@
-import type { MessageBody, MessageRow } from '@zachmail/core'
+import type { MessageBody, MessageRow } from '@zachhub/core'
 import * as Haptics from 'expo-haptics'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useState } from 'react'

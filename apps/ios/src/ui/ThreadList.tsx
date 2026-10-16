@@ -1,5 +1,5 @@
 import { FlashList, type FlashListRef } from '@shopify/flash-list'
-import type { ThreadListItem as Thread } from '@zachmail/local-store'
+import type { ThreadListItem as Thread } from '@zachhub/local-store'
 import * as Haptics from 'expo-haptics'
 import { Link, useRouter } from 'expo-router'
 import { useRef, type ReactElement } from 'react'

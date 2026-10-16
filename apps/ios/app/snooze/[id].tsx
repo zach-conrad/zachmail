@@ -1,4 +1,4 @@
-import { parseSnoozeTime, snoozeOptions } from '@zachmail/core'
+import { parseSnoozeTime, snoozeOptions } from '@zachhub/core'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'

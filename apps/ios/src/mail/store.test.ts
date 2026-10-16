@@ -1,4 +1,4 @@
-import { openSqliteWasm } from '@zachmail/local-store/sqlite-wasm'
+import { openSqliteWasm } from '@zachhub/local-store/sqlite-wasm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { demoMailbox } from './fixture'
 import { MailStore, parseAddresses, UNDO_MS, UNDO_SEND_MS, type MailState } from './store'

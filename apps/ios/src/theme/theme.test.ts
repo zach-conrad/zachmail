@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { tokens } from '@zachmail/tokens'
+import { tokens } from '@zachhub/tokens'
 import { accountColor, themes, toWeight } from './theme'
 
 describe('theme', () => {

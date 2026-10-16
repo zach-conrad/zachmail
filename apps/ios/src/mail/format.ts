@@ -1,4 +1,4 @@
-import type { Address } from '@zachmail/core'
+import type { Address } from '@zachhub/core'
 
 const fmtTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 const fmtDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })

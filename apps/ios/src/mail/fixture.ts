@@ -1,5 +1,5 @@
 /**
- * Demo mailbox shaped exactly like the sync protocol (packages/core/src/sync/protocol.ts), used until
+ * Demo mailbox shaped exactly like the sync protocol (hub/core/src/sync/protocol.ts), used until
  * the iOS replica pulls from /api/bootstrap. Times are relative to `now` so the demo always looks fresh.
  */
 import type {
@@ -11,7 +11,7 @@ import type {
   MessageRow,
   Rows,
   ThreadRow,
-} from '@zachmail/core'
+} from '@zachhub/core'
 
 const MIN = 60_000
 const HOUR = 60 * MIN

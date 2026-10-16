@@ -1,11 +1,11 @@
-import type { AssistInput } from '@zachmail/ai'
+import type { AssistInput } from '@zachhub/ai'
 import {
   InvalidAssistError,
   parseAssistRequest,
   type AssistEvent,
   type AssistRequest,
-} from '@zachmail/core'
-import { threadForAssist } from '@zachmail/engine'
+} from '@zachhub/core'
+import { threadForAssist } from '@zachhub/engine'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import type { AuthVariables } from '../auth'
@@ -33,7 +33,7 @@ export function aiRoutes(deps: Deps) {
     const user = c.get('user')
     const input = await assistInput(deps, user, req)
 
-    const { streamAssist, AssistDeclinedError } = await import('@zachmail/ai')
+    const { streamAssist, AssistDeclinedError } = await import('@zachhub/ai')
     const abort = new AbortController()
     c.req.raw.signal.addEventListener('abort', () => abort.abort())
     const enc = new TextEncoder()

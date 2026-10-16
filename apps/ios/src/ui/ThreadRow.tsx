@@ -1,5 +1,5 @@
-import type { AccountRow } from '@zachmail/core'
-import type { ThreadListItem as Thread } from '@zachmail/local-store'
+import type { AccountRow } from '@zachhub/core'
+import type { ThreadListItem as Thread } from '@zachhub/local-store'
 import { memo } from 'react'
 import { Pressable, StyleSheet, Text, View, type PressableProps } from 'react-native'
 import { displayName, rowTime } from '../mail/format'

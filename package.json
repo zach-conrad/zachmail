@@ -11,14 +11,14 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "test": "turbo run test",
-    "size": "pnpm --filter @zachmail/web size",
+    "size": "pnpm --filter @zachhub/web size",
     "format": "prettier --write .",
-    "build:vercel": "turbo run build --filter=@zachmail/web --filter=@zachmail/api && node infra/vercel-build.mjs"
+    "build:vercel": "turbo run build --filter=@zachhub/web --filter=@zachhub/api && node infra/vercel-build.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.20.5",
-    "@zachmail/config": "workspace:*",
+    "@zachhub/config": "workspace:*",
     "eslint": "^10.12.0",
     "globals": "^17.13.0",
     "prettier": "^3.9.10",

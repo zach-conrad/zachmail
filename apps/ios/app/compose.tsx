@@ -1,4 +1,4 @@
-import type { Address } from '@zachmail/core'
+import type { Address } from '@zachhub/core'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'

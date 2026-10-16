@@ -1,4 +1,4 @@
-import base from '@zachmail/config/eslint'
+import base from '@zachhub/config/eslint'
 import reactHooks from 'eslint-plugin-react-hooks'
 
 export default [

@@ -1,5 +1,5 @@
 /**
- * The iOS mail replica: the shared `SqlStore` (packages/local-store) on expo-sqlite, plus the
+ * The iOS mail replica: the shared `SqlStore` (hub/local-store) on expo-sqlite, plus the
  * command layer. Triage verbs become shared ops (core `MailOp`): `enqueueOp` overlays the effect
  * on the replica in the same frame and persists it, and `OpDrain` sends it to /api/ops, or in the
  * demo settles it at once. Undo enqueues `invertOp` (design §3.1, architecture §1a, §6.5).
@@ -17,14 +17,14 @@ import {
   type MessageRow,
   type Rows,
   type ThreadRow,
-} from '@zachmail/core'
+} from '@zachhub/core'
 import {
   SqlStore,
   type SqlDriver,
   type SqlValue,
   type ThreadDetail,
   type ThreadListItem,
-} from '@zachmail/local-store'
+} from '@zachhub/local-store'
 import type { SplitId } from './splits'
 
 export type { ThreadListItem }
