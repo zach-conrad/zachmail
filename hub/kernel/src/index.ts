@@ -3,8 +3,19 @@
  * router mounted at /api/<name>, and worker job handlers; the apps assemble whatever
  * @zachhub/modules lists. Kinds are namespaced by module name so two modules can't collide.
  */
-import type { EntityKind } from '@zachhub/core'
-import { EntityRegistry, HUB_ENTITIES, type Db, type EntityTable } from '@zachhub/db/server'
+import {
+  InvalidHubNoticeError,
+  parseHubNotice,
+  type EntityKind,
+  type HubNotice,
+} from '@zachhub/core'
+import {
+  EntityRegistry,
+  HUB_ENTITIES,
+  enqueueJob,
+  type Db,
+  type EntityTable,
+} from '@zachhub/db/server'
 import type { Hono } from 'hono'
 
 export interface ModuleRouteContext {
@@ -15,6 +26,12 @@ export interface ModuleRouteContext {
 export interface ModuleJobContext {
   db: Db
   entities: EntityRegistry
+  /**
+   * The hub notifier (engine/notify.ts): pushes `notice` to the user's devices, honoring their
+   * notification switch. Resolves to how many devices it reached (0 when push isn't set up).
+   * Throws InvalidHubNoticeError on a malformed notice.
+   */
+  notify(userId: string, notice: HubNotice): Promise<number>
 }
 
 export interface ModuleJob {
@@ -36,8 +53,42 @@ export interface HubModule {
   jobs?: (ctx: ModuleJobContext) => Record<string, ModuleJobHandler>
 }
 
-/** The hub's own entities ('hub.link'). Always installed. */
-export const hubModule: HubModule = { name: 'hub', entities: HUB_ENTITIES }
+export const HUB_NOTIFY_JOB = 'hub.notify'
+
+/**
+ * Queues a notice for the worker to push, for API routes (which never send themselves).
+ * Validated here so a bad notice fails the request, not a job. A tagged notice still waiting
+ * in the queue absorbs a repeat with the same kind and tag.
+ */
+export async function enqueueHubNotify(db: Db, userId: string, notice: HubNotice) {
+  const n = parseHubNotice(notice)
+  await enqueueJob(db, {
+    userId,
+    kind: HUB_NOTIFY_JOB,
+    payload: { notice: n },
+    dedupeKey: n.tag ? `hub-notify:${userId}:${n.kind}:${n.tag}` : undefined,
+  })
+}
+
+/** The hub's own entities ('hub.link') and queued notices. Always installed. */
+export const hubModule: HubModule = {
+  name: 'hub',
+  entities: HUB_ENTITIES,
+  jobs: (ctx) => ({
+    async [HUB_NOTIFY_JOB](job) {
+      let notice: HubNotice
+      try {
+        notice = parseHubNotice(job.payload.notice)
+      } catch (err) {
+        // Retrying can't fix a malformed notice; drop it.
+        if (!(err instanceof InvalidHubNoticeError)) throw err
+        console.error(JSON.stringify({ msg: 'bad hub notice', error: err.message }))
+        return
+      }
+      await ctx.notify(job.userId, notice)
+    },
+  }),
+}
 
 export interface InstalledModules {
   modules: HubModule[]

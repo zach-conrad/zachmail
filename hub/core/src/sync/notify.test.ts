@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_NOTIFICATION_SETTINGS,
+  InvalidHubNoticeError,
   InvalidNotificationSettingsError,
   compileNotifyRules,
+  isAppPath,
   isVip,
   normalizeVip,
+  parseHubNotice,
   parseNotificationSettings,
   type NotificationSettings,
   type NotifyCandidate,
@@ -105,5 +108,38 @@ describe('parseNotificationSettings', () => {
       { ...ok, splits: [''] },
     ])
       expect(() => parseNotificationSettings(bad)).toThrow(InvalidNotificationSettingsError)
+  })
+})
+
+describe('parseHubNotice', () => {
+  const ok = { kind: 'tasks.alert', title: ' Pay rent ', body: '', deepLink: '/tasks/t1?x=1' }
+
+  it('keeps a valid notice, tag optional', () => {
+    expect(parseHubNotice(ok)).toEqual({ ...ok, title: 'Pay rent' })
+    expect(parseHubNotice({ ...ok, tag: 't1', extra: 1 })).toEqual({
+      ...ok,
+      title: 'Pay rent',
+      tag: 't1',
+    })
+  })
+
+  it('rejects bad input', () => {
+    for (const bad of [
+      null,
+      { ...ok, kind: 'alert' },
+      { ...ok, kind: 'Tasks.alert' },
+      { ...ok, title: '  ' },
+      { ...ok, body: null },
+      { ...ok, deepLink: 'https://evil.example/' },
+      { ...ok, tag: '' },
+      { ...ok, tag: 7 },
+    ])
+      expect(() => parseHubNotice(bad)).toThrow(InvalidHubNoticeError)
+  })
+
+  it('takes same-origin app paths only', () => {
+    expect(isAppPath('/inbox/important?thread=a#b')).toBe(true)
+    for (const p of ['', 'tasks/1', '//evil.example', '/\\evil.example', '/a b', 'javascript:x'])
+      expect(isAppPath(p)).toBe(false)
   })
 })
