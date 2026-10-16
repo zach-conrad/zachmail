@@ -37,6 +37,11 @@ export interface EntityTable {
   fields: Record<string, FieldSpec>
   /** Extra checks on a put's fields (after type checks); return an error to reject. */
   validate?: (fields: Record<string, unknown>, creating: boolean) => string | null
+  /**
+   * Text fields (names from `fields`) copied into hub.search_index on every write, so the kind
+   * shows up in hub search (hubSearch.ts); deletes drop its entry. Leave out to stay unindexed.
+   */
+  search?: { title: string; body?: string[] }
 }
 
 const IDENT = /^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)?$/
@@ -50,6 +55,8 @@ export function checkEntityTable(t: EntityTable): EntityTable {
   for (const [name, f] of Object.entries(t.fields))
     if (!IDENT.test(f.column) || !/^[a-z][A-Za-z0-9]*$/.test(name) || name === 'id')
       throw new Error(`Bad field ${t.kind}.${name}`)
+  for (const name of t.search ? [t.search.title, ...(t.search.body ?? [])] : [])
+    if (t.fields[name]?.type !== 'text') throw new Error(`Bad search field ${t.kind}.${name}`)
   return t
 }
 
@@ -182,8 +189,37 @@ export async function applyEntityOps(
   for (const [kind, c] of changed) {
     await recordChanges(tx, userId, kind, [...c.upsert], 'upsert')
     await recordChanges(tx, userId, kind, [...c.delete], 'delete')
+    await indexSearch(tx, userId, registry.get(kind)!, [...c.upsert], [...c.delete])
   }
   return res
+}
+
+/** Copies changed rows' searchable text into hub.search_index and drops deleted ones'. */
+async function indexSearch(
+  tx: Queryable,
+  userId: string,
+  t: EntityTable,
+  upserts: string[],
+  deletes: string[],
+) {
+  if (!t.search) return
+  if (deletes.length)
+    await tx.query(
+      `DELETE FROM hub.search_index WHERE entity_kind = $1 AND entity_id = ANY($2::uuid[])`,
+      [t.kind, deletes],
+    )
+  if (!upserts.length) return
+  const col = (name: string) => t.fields[name]!.column
+  const body = (t.search.body ?? []).map(col)
+  await tx.query(
+    `INSERT INTO hub.search_index (entity_kind, entity_id, user_id, title, body, updated_at)
+     SELECT $1, id, user_id, COALESCE(${col(t.search.title)}, ''),
+       ${body.length ? `concat_ws(' ', ${body.join(', ')})` : `''`}, updated_at
+     FROM ${t.table} WHERE user_id = $2 AND id = ANY($3::uuid[])
+     ON CONFLICT (entity_kind, entity_id) DO UPDATE
+       SET title = excluded.title, body = excluded.body, updated_at = excluded.updated_at`,
+    [t.kind, userId, upserts],
+  )
 }
 
 async function applyOne(

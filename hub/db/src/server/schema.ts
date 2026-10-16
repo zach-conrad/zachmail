@@ -564,7 +564,41 @@ export const tombstones = hub
   )
   .enableRLS()
 
+/**
+ * One full-text index over every module's searchable rows (ZACHHUB_PLAN.md §5), written by
+ * applyEntityOps for kinds that declare `search`. Mail keeps its per-message index and is
+ * unioned in at query time (hubSearch.ts). Server only: clients keep their own FTS5 table.
+ * `tsv` uses the mail tokenizer (public.search_words, migration 0014): A title, D body. The
+ * trigram index (pg_trgm, migration 0016) catches typos in titles.
+ */
+export const searchIndex = hub
+  .table(
+    'search_index',
+    {
+      entityKind: text('entity_kind').notNull(),
+      entityId: uuid('entity_id').notNull(),
+      userId: ownerId(),
+      title: text('title').notNull().default(''),
+      body: text('body').notNull().default(''),
+      updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+      tsv: tsvector('tsv')
+        .notNull()
+        .generatedAlwaysAs(
+          sql`setweight(to_tsvector('simple'::regconfig, public.search_words(title)), 'A') || setweight(to_tsvector('simple'::regconfig, public.search_words(left(body, 100000))), 'D')`,
+        ),
+    },
+    (t) => [
+      primaryKey({ columns: [t.entityKind, t.entityId] }),
+      index('search_index_user_updated').on(t.userId, t.updatedAt),
+      index('search_index_tsv').using('gin', t.tsv),
+      index('search_index_title_trgm').using('gin', t.title.op('extensions.gin_trgm_ops')),
+      ownRowsReadOnly('search_index'),
+    ],
+  )
+  .enableRLS()
+
 export type Account = typeof accounts.$inferSelect
+export type SearchIndexRow = typeof searchIndex.$inferSelect
 export type Change = typeof changes.$inferSelect
 export type Job = typeof jobs.$inferSelect
 export type OutboxRow = typeof outbox.$inferSelect

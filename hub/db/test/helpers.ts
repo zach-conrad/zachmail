@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite'
+import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import postgres from 'postgres'
@@ -55,7 +56,8 @@ export async function createTestDb(): Promise<TestDb> {
 }
 
 async function pglite(): Promise<TestDb> {
-  const pg = new PGlite()
+  // pg_trgm ships with Supabase; PGlite loads it as a bundled extension.
+  const pg = new PGlite({ extensions: { pg_trgm } })
   return { db: fromPGlite(pg), exec: async (s) => void (await pg.exec(s)), close: () => pg.close() }
 }
 
