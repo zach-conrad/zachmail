@@ -80,7 +80,7 @@ export function buildMenuSpec(bindings: readonly KeyBinding[] = keymap): MenuSpe
   return {
     app: mac.filter((b) => APP_MENU.has(b.id)).map(item),
     menus: [
-      { title: 'Go', items: items('navigation') },
+      { title: 'Go', items: [...items('hub'), { separator: true }, ...items('navigation')] },
       { title: 'Thread', items: [...items('triage'), { separator: true }, ...items('selection')] },
       { title: 'Message', items: items('compose') },
       { title: 'View', items: items('app') },

@@ -11,6 +11,25 @@
       "title": "Go",
       "items": [
         {
+          "id": "go.today",
+          "label": "Go to Today"
+        },
+        {
+          "id": "go.mail",
+          "label": "Go to Mail"
+        },
+        {
+          "id": "go.tasks",
+          "label": "Go to Tasks"
+        },
+        {
+          "id": "go.docs",
+          "label": "Go to Docs"
+        },
+        {
+          "separator": true
+        },
+        {
           "id": "nav.next",
           "label": "Next thread"
         },
@@ -184,6 +203,10 @@
         {
           "id": "compose.new",
           "label": "Compose"
+        },
+        {
+          "id": "tasks.new",
+          "label": "New task"
         },
         {
           "id": "compose.reply",

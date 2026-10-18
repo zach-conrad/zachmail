@@ -19,9 +19,11 @@ describe('keyEventsFor', () => {
         expect(events).toEqual([])
         continue
       }
-      let hit: string | null = null
-      for (const e of events) hit = matcher.press(chordFromEvent(asEvent(e), true))
-      expect(hit, b.id).toBe(b.id)
+      // Module-scoped bindings can share a key (C is compose in Mail, new task in Tasks); the
+      // web handler runs whichever of them is on screen.
+      let hits: readonly string[] = []
+      for (const e of events) hits = matcher.pressAll(chordFromEvent(asEvent(e), true))
+      expect(hits, b.id).toContain(b.id)
     }
   })
 })
