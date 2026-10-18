@@ -1,5 +1,5 @@
 import { markOnce } from '../lib/perf'
-import type { OpEnvelope, SplitRuleRow } from '@zachhub/core'
+import type { OpEnvelope, SnippetRow, SplitRuleRow } from '@zachhub/core'
 import type { DataApi, FromWorker, InitConfig, Method, ToWorker, WorkerStatus } from './protocol'
 
 type Remote<T> = {
@@ -52,6 +52,16 @@ export class DataClient {
   /** Saves (rule) or deletes (null) a split rule; a 'changed' event follows. */
   editSplitRule(id: string, rule: SplitRuleRow | null) {
     this.send({ type: 'splitRule', id, rule })
+  }
+
+  /** Saves (snippet) or deletes (null) a snippet; a 'changed' event follows. */
+  editSnippet(id: string, snippet: SnippetRow | null) {
+    this.send({ type: 'snippet', id, snippet })
+  }
+
+  /** Hides (dismiss) or restores follow-up nudges; a 'changed' event follows. */
+  dismissNudges(threadIds: string[], dismiss: boolean) {
+    this.send({ type: 'nudges', threadIds, dismiss })
   }
 
   /** Ask the worker to pull now (focus, Realtime nudge). */

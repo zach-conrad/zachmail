@@ -4,10 +4,13 @@ import {
   EntityDrain,
   OpDrain,
   SyncClient,
+  composerHttp,
+  flushComposerEdits,
   flushSplitRules,
   httpTransport,
   splitRuleHttp,
   startSyncLoop,
+  type ComposerRemote,
   type ContactRow,
   type EntityOpsRequest,
   type EntityOpsResponse,
@@ -36,6 +39,7 @@ let sync: { pull(): Promise<void> } | null = null
 let api: DataApi | null = null
 let enqueue: ((env: OpEnvelope) => void) | null = null
 let editRule: ((id: string, rule: SplitRuleRow | null) => void) | null = null
+let local: ((m: Extract<ToWorker, { type: 'snippet' | 'nudges' }>) => void) | null = null
 let drain = () => {}
 const queue: ToWorker[] = []
 const status: WorkerStatus = { storage: 'memory', syncing: false, error: null }
@@ -58,6 +62,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
   } else if (!api || !enqueue) queue.push(m)
   else if (m.type === 'op') enqueue(m.env)
   else if (m.type === 'splitRule') editRule!(m.id, m.rule)
+  else if (m.type === 'snippet' || m.type === 'nudges') local!(m)
   else void call(m)
 }
 
@@ -93,6 +98,7 @@ async function init(config: InitConfig) {
   })
   let outgoing: Pick<DataApi, 'send' | 'unsend' | 'saveDraft' | 'deleteDraft' | 'contacts'>
   let rulesRemote: SplitRuleRemote | null = null
+  let composerRemote: ComposerRemote | null = null
   if (config.mode === 'demo') {
     const fx = await import('./fixture')
     transport = fx.fixtureTransport(config.threads)
@@ -131,6 +137,7 @@ async function init(config: InitConfig) {
         })),
     }
     rulesRemote = splitRuleHttp({ baseUrl: config.apiBase, token: () => token })
+    composerRemote = composerHttp({ baseUrl: config.apiBase, token: () => token })
   }
 
   const inflight = new Set<string>()
@@ -164,7 +171,10 @@ async function init(config: InitConfig) {
     folders: () => store.folders(),
     ...outgoing,
     splitRules: () => store.splitRules(),
+    snippets: () => store.snippets(),
+    followUps: (now, opts, limit) => store.followUps(now, opts, limit),
     getThread: (id) => store.getThread(id),
+    comingBack: (from, to, limit) => store.comingBack(from, to, limit),
     async ensureBodies(threadIds) {
       const missing = store.bodiesMissing(threadIds).filter((m) => !inflight.has(m.messageId))
       if (!missing.length) return 0
@@ -271,16 +281,46 @@ async function init(config: InitConfig) {
     void resplit()
     void flushRules()
   }
+  // Snippet and nudge edits: same shape as rule edits, in their own ordered queue.
+  let flushingComposer = false
+  const composerOutbox = {
+    pending: () => store.composerEdits(),
+    ack: (e: Parameters<typeof store.ackComposerEdit>[0]) => store.ackComposerEdit(e),
+    reject: (e: Parameters<typeof store.rejectComposerEdit>[0]) => {
+      store.rejectComposerEdit(e)
+      post({ type: 'changed' })
+    },
+  }
+  const flushComposer = async () => {
+    if (flushingComposer || (config.mode === 'live' && !token)) return
+    flushingComposer = true
+    try {
+      if (!composerRemote) for (const e of store.composerEdits()) store.ackComposerEdit(e)
+      else await flushComposerEdits(composerOutbox, composerRemote)
+    } catch (err) {
+      console.warn('snippet/nudge sync failed; will retry', err)
+    } finally {
+      flushingComposer = false
+    }
+  }
+  local = (m) => {
+    if (m.type === 'snippet') store.editSnippet(m.id, m.snippet)
+    else store.dismissNudges(m.threadIds, m.dismiss)
+    post({ type: 'changed' })
+    void flushComposer()
+  }
   drain = () => {
     void ops.run()
     void entityOps.run()
     void flushRules()
+    void flushComposer()
   }
 
   for (const m of queue.splice(0)) {
     if (m.type === 'call') void call(m)
     else if (m.type === 'op') enqueue(m.env)
     else if (m.type === 'splitRule') editRule(m.id, m.rule)
+    else if (m.type === 'snippet' || m.type === 'nudges') local(m)
   }
 
   const sink: SyncSink = {

@@ -79,6 +79,30 @@ beforeEach(async () => {
 })
 
 describe('SqlStore', () => {
+  it('lists snoozed threads coming back in a window, soonest first', () => {
+    store.apply(
+      {
+        threads: [
+          { ...thread('s1', 1, []), snoozedUntil: 5_000 },
+          { ...thread('s2', 2, []), snoozedUntil: 3_000 },
+          { ...thread('s3', 3, []), snoozedUntil: 90_000 },
+          thread('t1', 4),
+        ],
+      },
+      null,
+      1,
+    )
+    const back = store.comingBack(1_000, 10_000, 10)
+    expect(back.map((t) => [t.id, t.snoozedUntil])).toEqual([
+      ['s2', 3_000],
+      ['s1', 5_000],
+    ])
+    expect(back[0]).toMatchObject({ subject: 'Subject s2', unread: true, folderIds: [] })
+    // Woken by the server (snoozedUntil cleared): gone from the list.
+    store.apply({ threads: [{ ...thread('s2', 2), snoozedUntil: null }] }, null, 2)
+    expect(store.comingBack(1_000, 10_000, 10).map((t) => t.id)).toEqual(['s1'])
+  })
+
   it('applies rows, records seq and lists threads newest first', () => {
     expect(store.getSeq()).toBeNull()
     store.apply(
