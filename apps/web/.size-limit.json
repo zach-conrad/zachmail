@@ -4,5 +4,11 @@
     "path": "dist/assets/index-*.js",
     "limit": "200 KB",
     "gzip": true
+  },
+  {
+    "name": "tasks module chunk (gzip)",
+    "path": "dist/assets/tasks-*.js",
+    "limit": "60 KB",
+    "gzip": true
   }
 ]

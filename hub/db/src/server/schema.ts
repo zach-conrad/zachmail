@@ -13,7 +13,7 @@ import {
   integer,
   jsonb,
   pgEnum,
-  pgPolicy,
+  pgSchema,
   pgTable,
   primaryKey,
   text,
@@ -21,24 +21,10 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
-import { authUid, authUsers, authenticatedRole } from 'drizzle-orm/supabase'
+import { firstPartyColumns, ownRowsReadOnly, ownerId } from './tables'
 
 /** Maintained by triggers (migration 0014_search_triggers): subject A, sender B, recipients C, body D. */
 const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
-
-const ownerId = () =>
-  uuid('user_id')
-    .notNull()
-    .default(sql`auth.uid()`)
-    .references(() => authUsers.id, { onDelete: 'cascade' })
-
-/** Read-only for clients; only server code (service role, bypasses RLS) writes. */
-const ownRowsReadOnly = (table: string) =>
-  pgPolicy(`${table}_owner_read`, {
-    for: 'select',
-    to: authenticatedRole,
-    using: sql`${authUid} = user_id`,
-  })
 
 export const providerEnum = pgEnum('provider', ['gmail', 'graph', 'imap'])
 export const accountStatusEnum = pgEnum('account_status', [
@@ -536,7 +522,83 @@ export const allowedUsers = pgTable('allowed_users', {
   addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
 }).enableRLS()
 
+/** Hub kernel tables (ZACHHUB_PLAN.md §2.3, §4). */
+export const hub = pgSchema('hub')
+
+/** Cross-module references, entity 'hub.link' (core LinkRow). No FKs: either side may be any module. */
+export const links = hub
+  .table(
+    'links',
+    {
+      ...firstPartyColumns(),
+      fromKind: text('from_kind').notNull(),
+      fromId: text('from_id').notNull(),
+      toKind: text('to_kind').notNull(),
+      toId: text('to_id').notNull(),
+      title: text('title').notNull().default(''),
+      createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    },
+    (t) => [
+      index('links_from').on(t.userId, t.fromKind, t.fromId),
+      index('links_to').on(t.userId, t.toKind, t.toId),
+      ownRowsReadOnly('links'),
+    ],
+  )
+  .enableRLS()
+
+/**
+ * Deleted first-party rows, for every module. The row itself is gone; this keeps a late or
+ * replayed put for the same id from bringing it back.
+ */
+export const tombstones = hub
+  .table(
+    'tombstones',
+    {
+      kind: text('kind').notNull(),
+      id: uuid('id').notNull(),
+      userId: ownerId(),
+      hlc: text('hlc').notNull(),
+      deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull().defaultNow(),
+    },
+    (t) => [primaryKey({ columns: [t.kind, t.id] }), ownRowsReadOnly('tombstones')],
+  )
+  .enableRLS()
+
+/**
+ * One full-text index over every module's searchable rows (ZACHHUB_PLAN.md §5), written by
+ * applyEntityOps for kinds that declare `search`. Mail keeps its per-message index and is
+ * unioned in at query time (hubSearch.ts). Server only: clients keep their own FTS5 table.
+ * `tsv` uses the mail tokenizer (public.search_words, migration 0014): A title, D body. The
+ * trigram index (pg_trgm, migration 0016) catches typos in titles.
+ */
+export const searchIndex = hub
+  .table(
+    'search_index',
+    {
+      entityKind: text('entity_kind').notNull(),
+      entityId: uuid('entity_id').notNull(),
+      userId: ownerId(),
+      title: text('title').notNull().default(''),
+      body: text('body').notNull().default(''),
+      updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+      tsv: tsvector('tsv')
+        .notNull()
+        .generatedAlwaysAs(
+          sql`setweight(to_tsvector('simple'::regconfig, public.search_words(title)), 'A') || setweight(to_tsvector('simple'::regconfig, public.search_words(left(body, 100000))), 'D')`,
+        ),
+    },
+    (t) => [
+      primaryKey({ columns: [t.entityKind, t.entityId] }),
+      index('search_index_user_updated').on(t.userId, t.updatedAt),
+      index('search_index_tsv').using('gin', t.tsv),
+      index('search_index_title_trgm').using('gin', t.title.op('extensions.gin_trgm_ops')),
+      ownRowsReadOnly('search_index'),
+    ],
+  )
+  .enableRLS()
+
 export type Account = typeof accounts.$inferSelect
+export type SearchIndexRow = typeof searchIndex.$inferSelect
 export type Change = typeof changes.$inferSelect
 export type Job = typeof jobs.$inferSelect
 export type OutboxRow = typeof outbox.$inferSelect

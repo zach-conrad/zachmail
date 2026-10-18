@@ -7,18 +7,26 @@ import {
   type ComposerEdit,
   inboundSender,
   opEffect,
+  parseEntityOpsRequest,
+  tick,
   type AccountRow,
   type Address,
   type Deletes,
+  type EntityDeltas,
+  type EntityKind,
+  type EntityOp,
+  type EntityRow,
   type FolderKind,
   type FolderRow,
   type FollowUpNudge,
+  type HlcClock,
   type MessageBody,
   type MessageRow,
   type NudgeDismissalRow,
   type NudgeOptions,
   type OpEnvelope,
   type OpStatusRow,
+  type PendingEntityOp,
   type Rows,
   type CompiledSplitRules,
   type SnippetRow,
@@ -67,6 +75,11 @@ export interface ThreadDetail {
   bodies: Record<string, MessageBody>
 }
 
+/** A first-party entity write before the store stamps it; see `StoreApi.entityWrite`. */
+export type EntityWrite =
+  | { kind: 'put'; entity: EntityKind; id: string; fields: Record<string, unknown> }
+  | { kind: 'delete'; entity: EntityKind; id: string }
+
 /**
  * Everything the app reads from or writes to the local replica. The web app calls it over
  * postMessage (each method becomes async); iOS can call it directly.
@@ -79,6 +92,7 @@ export interface StoreApi extends SyncSink {
     deletes: Partial<Deletes> | null,
     seq: number | null,
     ops?: readonly OpStatusRow[],
+    entities?: EntityDeltas,
   ): void
   accounts(): AccountRow[]
   folders(): FolderRow[]
@@ -136,6 +150,20 @@ export interface StoreApi extends SyncSink {
   composerEdits(): ComposerEdit[]
   ackComposerEdit(sent: ComposerEdit): void
   rejectComposerEdit(sent: ComposerEdit): void
+  // ---- First-party entities -------------------------------------------------------------
+  /**
+   * Stamps each write with this device's clock, applies it to the replica (a put merges its
+   * fields into the row, creating it if missing; a delete removes it) and queues it for the
+   * server, in one transaction. Returns the stamped ops.
+   */
+  entityWrite(writes: readonly EntityWrite[]): EntityOp[]
+  /** Every row of a kind, unsent local writes included. */
+  entities(kind: EntityKind): EntityRow[]
+  entity(kind: EntityKind, id: string): EntityRow | null
+  /** Queued entity writes, oldest first. */
+  pendingEntityOps(limit: number): PendingEntityOp[]
+  /** The server has these (accepted or refused for good): stop overlaying and sending them. */
+  ackEntityOps(seqs: readonly number[]): void
 }
 
 /** The fields of a thread that ops change; `srv` holds the server's copy while overlaid. */
@@ -179,6 +207,8 @@ export class SqlStore implements StoreApi {
   private compiled: CompiledSplitRules = compileSplitRules([])
   /** Threads a rules change moves, written a chunk at a time by `resplitStep`. */
   private resplitIds: string[] = []
+  private entityOps: PendingEntityOp[] = []
+  private clock: HlcClock
 
   constructor(private db: SqlDriver) {
     db.exec('PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY; PRAGMA cache_size = -64000;')
@@ -200,6 +230,10 @@ export class SqlStore implements StoreApi {
         `SELECT envelope, sent FROM pending_ops ORDER BY seq`,
       )
       .map((r) => queued(JSON.parse(r.envelope) as OpEnvelope, !!r.sent))
+    this.clock = this.loadClock()
+    this.entityOps = this.db
+      .all<{ seq: number; op: string }>(`SELECT seq, op FROM hub_entity_ops ORDER BY seq`)
+      .map((r) => ({ seq: r.seq, op: JSON.parse(r.op) as EntityOp }))
   }
 
   // ---- Sync sink -------------------------------------------------------------------------
@@ -221,6 +255,10 @@ export class SqlStore implements StoreApi {
       this.rules.clearSynced()
       this.snippetRows.clearSynced()
       this.dismissals.clearSynced()
+      // Unacked entity writes stay queued and on screen, rows created offline included; the
+      // snapshot's rows get them re-applied as they arrive.
+      this.db.run(`DELETE FROM hub_entities`)
+      for (const [entity, id, ops] of groupOps(this.entityOps)) this.replay(entity, id, ops)
     })
     this.ops = this.ops.filter((o) => !o.sent)
     this.loadLookups()
@@ -231,8 +269,10 @@ export class SqlStore implements StoreApi {
     deletes: Partial<Deletes> | null,
     seq: number | null,
     ops: readonly OpStatusRow[] = [],
+    entities?: EntityDeltas,
   ): void {
     this.tx(() => {
+      if (entities) this.applyEntities(entities)
       const touched = new Set<string>()
       let lookupsChanged = false
       // Rows go in as one JSON array per table and SQLite unpacks them in C: an order of
@@ -493,6 +533,58 @@ export class SqlStore implements StoreApi {
     this.tx(() => this.classify(this.settle(ids, keep)))
   }
 
+  // ---- First-party entities -------------------------------------------------------------
+
+  entityWrite(writes: readonly EntityWrite[]): EntityOp[] {
+    // Stamps ascend with seq, so replaying queued ops in order is the per-field HLC merge.
+    const ops = writes.map((w): EntityOp => ({ ...w, hlc: tick(this.clock) }) as EntityOp)
+    // Fail here rather than have the server refuse the whole batch later.
+    parseEntityOpsRequest({ ops })
+    const queuedNow: PendingEntityOp[] = []
+    this.tx(() => {
+      for (const op of ops) {
+        const seq = this.db.all<{ seq: number }>(
+          `INSERT INTO hub_entity_ops (op) VALUES (?) RETURNING seq`,
+          [JSON.stringify(op)],
+        )[0]!.seq
+        this.replay(op.entity, op.id, [op])
+        queuedNow.push({ seq, op })
+      }
+      this.db.run(`UPDATE hub_clock SET ms = ?, counter = ?`, [this.clock.ms, this.clock.counter])
+    })
+    this.entityOps.push(...queuedNow)
+    return ops
+  }
+
+  entities(kind: EntityKind): EntityRow[] {
+    return this.json<EntityRow[]>(
+      `SELECT json_group_array(json(data)) AS j
+       FROM (SELECT data FROM hub_entities WHERE kind = ? ORDER BY id)`,
+      [kind],
+    )
+  }
+
+  entity(kind: EntityKind, id: string): EntityRow | null {
+    const r = this.db.all<{ data: string }>(
+      `SELECT data FROM hub_entities WHERE kind = ? AND id = ?`,
+      [kind, id],
+    )[0]
+    return r ? (JSON.parse(r.data) as EntityRow) : null
+  }
+
+  pendingEntityOps(limit: number): PendingEntityOp[] {
+    return this.entityOps.slice(0, limit)
+  }
+
+  ackEntityOps(seqs: readonly number[]): void {
+    // The row keeps the acked values until a delta brings the server's merge of them.
+    const set = new Set(seqs)
+    this.db.run(`DELETE FROM hub_entity_ops WHERE seq IN (SELECT value FROM json_each(?))`, [
+      JSON.stringify(seqs),
+    ])
+    this.entityOps = this.entityOps.filter((p) => !set.has(p.seq))
+  }
+
   close(): void {
     this.db.close()
   }
@@ -565,6 +657,54 @@ export class SqlStore implements StoreApi {
          FROM jsonb_each(?) AS c WHERE threads.id = c.value ->> 0`,
         [JSON.stringify(out)],
       )
+  }
+
+  /**
+   * Server rows replace local ones wholesale (they carry no stamps, so there is nothing to
+   * fold into the clock), then unacked local writes go back on top of the rows they touch, so
+   * an optimistic edit isn't undone by a row from before it. A server delete is final: queued
+   * puts for that id are not replayed, which would resurrect it.
+   */
+  private applyEntities(entities: EntityDeltas) {
+    for (const [kind, d] of Object.entries(entities)) {
+      if (d.upserts.length)
+        this.db.run(
+          `INSERT OR REPLACE INTO hub_entities (kind, id, data)
+           SELECT ?, value ->> 'id', json(value) FROM jsonb_each(?)`,
+          [kind, JSON.stringify(d.upserts)],
+        )
+      if (d.deletes.length)
+        this.db.run(
+          `DELETE FROM hub_entities WHERE kind = ? AND id IN (SELECT value FROM json_each(?))`,
+          [kind, JSON.stringify(d.deletes)],
+        )
+      if (!d.upserts.length || !this.entityOps.length) continue
+      const gone = new Set(d.deletes)
+      const fresh = new Set(d.upserts.map((r) => r.id).filter((id) => !gone.has(id)))
+      const mine = this.entityOps.filter((p) => p.op.entity === kind && fresh.has(p.op.id))
+      for (const [entity, id, ops] of groupOps(mine)) this.replay(entity, id, ops)
+    }
+  }
+
+  /** Applies entity ops, in order, to the row as it stands. */
+  private replay(entity: EntityKind, id: string, ops: readonly EntityOp[]) {
+    let row = this.entity(entity, id)
+    for (const op of ops) row = op.kind === 'delete' ? null : { ...row, ...op.fields, id }
+    if (row)
+      this.db.run(`INSERT OR REPLACE INTO hub_entities (kind, id, data) VALUES (?, ?, ?)`, [
+        entity,
+        id,
+        JSON.stringify(row),
+      ])
+    else this.db.run(`DELETE FROM hub_entities WHERE kind = ? AND id = ?`, [entity, id])
+  }
+
+  private loadClock(): HlcClock {
+    const r = this.db.all<HlcClock>(`SELECT node, ms, counter FROM hub_clock LIMIT 1`)[0]
+    if (r) return { node: r.node, ms: r.ms, counter: r.counter }
+    const clock: HlcClock = { node: nodeId(), ms: 0, counter: 0 }
+    this.db.run(`INSERT INTO hub_clock (node, ms, counter) VALUES (?, 0, 0)`, [clock.node])
+    return clock
   }
 
   private loadLookups() {
@@ -840,6 +980,22 @@ const pick = ({ folderIds, unread, starred }: Overlayable): Overlayable => ({
   unread,
   starred,
 })
+
+/** Queued ops grouped by row, each group in queue order. */
+function groupOps(queue: readonly PendingEntityOp[]): [EntityKind, string, EntityOp[]][] {
+  const byRow = new Map<string, [EntityKind, string, EntityOp[]]>()
+  for (const { op } of queue) {
+    const key = `${op.entity}\0${op.id}`
+    let g = byRow.get(key)
+    if (!g) byRow.set(key, (g = [op.entity, op.id, []]))
+    g[2].push(op)
+  }
+  return [...byRow.values()]
+}
+
+/** A random 8-character base36 device id for HLC stamps. */
+const nodeId = () =>
+  Array.from({ length: 8 }, () => Math.floor(Math.random() * 36).toString(36)).join('')
 
 const marks = (n: number) => Array.from({ length: n }, () => '?').join(', ')
 

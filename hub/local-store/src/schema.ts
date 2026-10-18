@@ -56,10 +56,26 @@ CREATE TABLE IF NOT EXISTS bodies (
   has_remote_images INTEGER NOT NULL,
   fetched_at INTEGER NOT NULL
 );
+-- First-party entities (tasks, links, ...) as the server last sent them, with unsent local
+-- writes applied on top. data is the row as JSON, id included.
+CREATE TABLE IF NOT EXISTS hub_entities (
+  kind TEXT NOT NULL,
+  id TEXT NOT NULL,
+  data TEXT NOT NULL,
+  PRIMARY KEY (kind, id)
+) WITHOUT ROWID;
+-- Stamped entity writes (JSON EntityOp) not yet acked by the server, in the order they were made.
+CREATE TABLE IF NOT EXISTS hub_entity_ops (seq INTEGER PRIMARY KEY AUTOINCREMENT, op TEXT NOT NULL);
+-- This device's HLC (one row), so stamps keep increasing across restarts.
+CREATE TABLE IF NOT EXISTS hub_clock (node TEXT NOT NULL, ms INTEGER NOT NULL, counter INTEGER NOT NULL);
 ${SPLIT_RULES_SCHEMA}
 ${editableSchema('snippets')}
 ${editableSchema('nudge_dismissals')}`
 
+/**
+ * Drops the replica for a schema change. hub_entity_ops and hub_clock survive: they hold
+ * writes the server has never seen and this device's identity, not copies of server state.
+ */
 export const DROP_ALL = /* sql */ `
 DROP TABLE IF EXISTS meta;
 DROP TABLE IF EXISTS accounts;
@@ -68,6 +84,7 @@ DROP TABLE IF EXISTS threads;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS bodies;
 DROP TABLE IF EXISTS pending_ops;
+DROP TABLE IF EXISTS hub_entities;
 ${SPLIT_RULES_DROP}
 ${editableDrop('snippets')}
 ${editableDrop('nudge_dismissals')}`

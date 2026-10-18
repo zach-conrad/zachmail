@@ -4,6 +4,7 @@ import { readAssistStream } from '@zachhub/core'
 import { applySyncBatch, saveCredentials, type Db } from '@zachhub/db/server'
 import { USER, createTestDb, type TestDb } from '@zachhub/db/testing'
 import { graphClientState, proxiedImageUrl } from '@zachhub/engine'
+import { installModules } from '@zachhub/kernel'
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair, type CryptoKey } from 'jose'
 import { randomBytes } from 'node:crypto'
 import { gunzipSync } from 'node:zlib'
@@ -473,6 +474,33 @@ describe('sync endpoints', () => {
     expect((await authed('/api/sync?since=-1')).status).toBe(400)
   })
 
+  it('writes first-party entities and syncs them back', async () => {
+    const json = (method: string, body: unknown) => ({
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const id = '00000000-0000-4000-8000-0000000000e1'
+    const op = {
+      kind: 'put',
+      entity: 'hub.link',
+      id,
+      hlc: '1700000000000-0000-dev1',
+      fields: { fromKind: 'tasks.task', fromId: 't', toKind: 'mail.thread', toId: 'm', title: 'x' },
+    }
+    const res = await authed('/api/entities', json('POST', { ops: [op] }))
+    expect(await res.json()).toEqual({ accepted: [0], rejected: [] })
+    const delta = (await (await authed('/api/sync?since=0')).json()) as {
+      entities: Record<string, { upserts: { id: string; title: string }[] }>
+    }
+    expect(delta.entities['hub.link']!.upserts).toEqual([
+      expect.objectContaining({ id, title: 'x' }),
+    ])
+    expect(
+      (await authed('/api/entities', json('POST', { ops: [{ ...op, hlc: 'x' }] }))).status,
+    ).toBe(400)
+  })
+
   it('searches the mirror and validates its parameters', async () => {
     const r = (await (await authed('/api/search?q=from%3Aana%20hel')).json()) as {
       threads: { subject: string }[]
@@ -487,6 +515,77 @@ describe('sync endpoints', () => {
     expect((await authed('/api/search?q=x&cursor=junk')).status).toBe(400)
     expect((await authed('/api/search?q=x&tz=9999')).status).toBe(400)
     expect((await authed('/api/search?q=x&limit=abc')).status).toBe(400)
+  })
+
+  it('searches module rows and mail together at /api/search/hub', async () => {
+    // A module whose rows are indexed; the installed ones don't declare `search` yet.
+    await t.exec(`
+      CREATE SCHEMA notes;
+      CREATE TABLE notes.notes (id uuid PRIMARY KEY, user_id uuid NOT NULL,
+        field_hlc jsonb NOT NULL DEFAULT '{}', updated_at timestamptz NOT NULL DEFAULT now(),
+        title text NOT NULL DEFAULT '', body text);
+    `)
+    const notes = createApp(env, {
+      ...overrides,
+      modules: installModules([
+        {
+          name: 'notes',
+          entities: [
+            {
+              kind: 'notes.note',
+              table: 'notes.notes',
+              fields: {
+                title: { column: 'title', type: 'text' },
+                body: { column: 'body', type: 'text', nullable: true },
+              },
+              search: { title: 'title', body: ['body'] },
+            },
+          ],
+        },
+      ]),
+    })
+    const get = (path: string, init: RequestInit = {}) =>
+      notes.request(path, {
+        ...init,
+        headers: { authorization: `Bearer ${userToken}`, ...init.headers },
+      })
+    const id = '00000000-0000-4000-8000-0000000000f1'
+    const put = await get('/api/entities', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ops: [
+          {
+            kind: 'put',
+            entity: 'notes.note',
+            id,
+            hlc: '1700000000000-0000-dev1',
+            fields: { title: 'Hello world', body: 'first note' },
+          },
+        ],
+      }),
+    })
+    expect((await put.json()) as unknown).toEqual({ accepted: [0], rejected: [] })
+
+    type Hits = { hits: { kind: string; id: string; title: string }[]; highlight: string[] }
+    const search = async (q: string) =>
+      (await (await get(`/api/search/hub?q=${encodeURIComponent(q)}`)).json()) as Hits
+    const all = await search('hel')
+    expect(all.hits.map((h) => [h.kind, h.title]).sort()).toEqual([
+      ['mail.thread', 'Hello'],
+      ['notes.note', 'Hello world'],
+    ])
+    expect(all.highlight).toEqual(['hel'])
+    expect((await search('in:notes hel')).hits).toEqual([
+      expect.objectContaining({ kind: 'notes.note', id, title: 'Hello world' }),
+    ])
+    expect((await search('in:mail hel')).hits.map((h) => h.kind)).toEqual(['mail.thread'])
+    // The default app has no searchable module: mail only.
+    const mailOnly = (await (await authed('/api/search/hub?q=hel')).json()) as Hits
+    expect(mailOnly.hits.map((h) => h.kind)).toEqual(['mail.thread'])
+    expect((await get('/api/search/hub?q=x&tz=9999')).status).toBe(400)
+    expect((await get('/api/search/hub?q=x&limit=abc')).status).toBe(400)
+    expect((await app.request('/api/search/hub?q=x')).status).toBe(401)
   })
 
   it('streams the bootstrap as NDJSON, gzipped when accepted', async () => {
