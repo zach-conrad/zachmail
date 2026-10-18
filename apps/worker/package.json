@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@zachhub/backup": "workspace:*",
     "@zachhub/db": "workspace:*",
     "@zachhub/engine": "workspace:*",
     "@zachhub/kernel": "workspace:*",

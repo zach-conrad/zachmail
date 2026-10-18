@@ -18,6 +18,7 @@ frame, and the perf budgets (architecture §1a) are CI gates. See [CONTRIBUTING.
 | `hub/engine`      | Job handlers shared by the worker and API                             |
 | `hub/local-store` | Client SQLite replica                                                 |
 | `hub/ai`          | Claude client and prompts                                             |
+| `hub/backup`      | Nightly offsite backup, settings export, restore script               |
 | `hub/tokens`      | Design tokens (`tokens.json` → CSS variables; Swift theme later)      |
 | `hub/config`      | Shared tsconfig and ESLint                                            |
 | `modules/mail/*`  | Mail-only packages: `providers` (Gmail, Graph), `mime`                |
@@ -91,7 +92,44 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm size
    set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` (`mailto:` you) on the
    worker; the public key also goes to Vercel. Then ⌘K → _Notification settings_ → Turn on.
 
-6. **Claude connector** (optional): lets Claude search, read, triage, draft and send your mail.
+6. **Offsite backup** (the only backup while Supabase is on the free plan): every night the worker
+   writes first-party data (accounts without tokens, split rules, snippets, drafts, reminders,
+   notification rules, plus contacts for reading) as gzipped NDJSON to an S3-compatible bucket
+   and deletes copies older than 30 days. Mail itself is not in it; a resync brings it back.
+   - **Cloudflare R2** (default): create a bucket and an R2 API token with Object Read & Write
+     on it. Endpoint `https://<account id>.r2.cloudflarestorage.com`, region `auto`.
+   - **Backblaze B2**: create a private bucket and an application key for it. Endpoint
+     `https://s3.<region>.backblazeb2.com`, region e.g. `us-west-004`.
+
+   `fly secrets set` on the worker:
+
+   | Variable                                                 | Value                                  |
+   | -------------------------------------------------------- | -------------------------------------- |
+   | `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`                 | from above; the job is off while unset |
+   | `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` | the token or application key           |
+   | `BACKUP_S3_REGION`                                       | optional; `auto` (R2) by default       |
+   | `BACKUP_PREFIX`                                          | optional; `zachhub/` by default        |
+   | `BACKUP_RETENTION_DAYS`, `BACKUP_HOUR_UTC`               | optional; `30` and `10` (3 am Pacific) |
+
+   The worker logs `ALERT backup failed` or `ALERT no good backup in 48h` when something is
+   wrong, and `GET /api/backup/status` shows the last run. `GET /api/export` downloads the same
+   file for your own data (the settings Export button).
+
+   **Restore** into a database with migrations applied (`DATABASE_URL` in session mode):
+
+   ```sh
+   pnpm --filter @zachhub/backup backups                 # list the bucket (BACKUP_S3_* set)
+   pnpm --filter @zachhub/backup restore --dry-run       # newest backup, report only
+   pnpm --filter @zachhub/backup restore                 # newest backup
+   pnpm --filter @zachhub/backup restore --file zachhub-export-2026-10-15.ndjson.gz
+   ```
+
+   Add `--user <uuid>` when the new project gave you a new user id. Rows that already exist are
+   kept, so running it twice is safe. Accounts come back as "needs reauth": reconnect each one
+   and mail resyncs. Reminders and dismissed nudges tied to a thread only come back while
+   that thread is still in the database.
+
+7. **Claude connector** (optional): lets Claude search, read, triage, draft and send your mail.
    In Supabase → Auth → URL Configuration, add the redirect URL
    `https://mail.zachconrad.dev/api/mcp/oauth/callback`. Vercel already has what it needs
    (`VITE_SUPABASE_PUBLISHABLE_KEY` and `OAUTH_STATE_SECRET`; set `MCP_TOKEN_SECRET` to sign
