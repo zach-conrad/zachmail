@@ -341,6 +341,27 @@ function pushFolders(plan: SearchPlan, ids: string[], negated: boolean): boolean
   return true
 }
 
+/**
+ * Hub search (ZACHHUB_PLAN.md §5): `in:<module>` picks modules (`in:tasks`, `-in:mail`) rather
+ * than a mail folder, so a module name shadows a mail label of the same name. Several positive
+ * ones mean any of them. Returns the modules in scope (a subset of `known`, in its order) and
+ * the query without those clauses, for planQuery.
+ */
+export function moduleScope(
+  q: ParsedQuery,
+  known: readonly string[],
+): { modules: string[]; query: ParsedQuery } {
+  const include = new Set<string>()
+  const exclude = new Set<string>()
+  const clauses = q.clauses.filter((c) => {
+    if (c.kind !== 'in' || !known.includes(c.value)) return true
+    ;(c.negated ? exclude : include).add(c.value)
+    return false
+  })
+  const modules = known.filter((m) => (!include.size || include.has(m)) && !exclude.has(m))
+  return { modules, query: { ...q, clauses } }
+}
+
 /** A query worth running: something that narrows the results. */
 export const isSearchable = (q: ParsedQuery) => q.clauses.length > 0
 

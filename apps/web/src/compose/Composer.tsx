@@ -1,12 +1,22 @@
-import { DEFAULT_UNDO_MS, type Address, type ContactRow } from '@zachhub/core'
+import {
+  DEFAULT_UNDO_MS,
+  findSnippetTrigger,
+  matchSnippets,
+  type Address,
+  type ContactRow,
+} from '@zachhub/core'
 import { accountColor } from '@zachhub/tokens'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Kbd } from '../app/Kbd'
 import { useData } from '../data/DataProvider'
 import { endInteraction } from '../lib/perf'
+import { SnoozePicker } from '../inbox/SnoozePicker'
+import { dueTime } from '../lib/format'
 import { useCommands } from '../lib/useCommands'
 import { isEmpty, recipientCount, toDraftRequest, toSendRequest, type Draft } from './draft'
+import { applyIntro, applySnippet } from './extras'
 import { RecipientField } from './RecipientField'
+import { SnippetMenu, menuKey, type MenuState } from './SnippetMenu'
 
 const SAVE_DELAY_MS = 1500
 
@@ -23,20 +33,33 @@ const OPEN_COMMAND = {
  * closes and keeps the draft, ⌘Enter sends with an undo window.
  */
 export function Composer({ initial }: { initial: Draft }) {
-  const { client, triage, compose, accounts } = useData()
+  const { client, triage, compose, accounts, ownEmails, snippets } = useData()
   const [d, setD] = useState(initial)
   const [showCc, setShowCc] = useState(initial.cc.length > 0 || initial.bcc.length > 0)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [contacts, setContacts] = useState<readonly ContactRow[]>([])
+  const [menu, setMenu] = useState<MenuState | null>(null)
+  const body = useRef<HTMLTextAreaElement>(null)
+  const caret = useRef<number | null>(null)
+  const matches = useMemo(() => (menu ? matchSnippets(menu.query, snippets) : []), [menu, snippets])
+  const [reminding, setReminding] = useState(false)
   const saved = useRef(false)
   const dirty = useRef(false)
   const latest = useRef(d)
-  const sheet = d.kind === 'new'
+  const sheet = d.kind === 'new' || !!d.sheet
 
   useLayoutEffect(() => {
     latest.current = d
   })
   useLayoutEffect(() => endInteraction(OPEN_COMMAND[initial.kind]), [initial.kind])
+  // Put the caret after inserted text once React has written it.
+  useLayoutEffect(() => {
+    if (caret.current === null || !body.current) return
+    body.current.focus()
+    body.current.setSelectionRange(caret.current, caret.current)
+    caret.current = null
+  })
 
   useEffect(() => {
     let live = true
@@ -71,6 +94,54 @@ export function Composer({ initial }: { initial: Draft }) {
     setD((cur) => ({ ...cur, ...patch }))
   }
 
+  const onBody = (text: string, at: number) => {
+    update({ text })
+    setNotice(null)
+    const t = snippets.length ? findSnippetTrigger(text.slice(0, at)) : null
+    setMenu(t ? { query: t.query, start: t.start, end: at, active: 0, source: 'trigger' } : null)
+  }
+
+  const pickSnippet = (i: number) => {
+    const s = matches[i]
+    if (!menu || !s) return
+    const account = accounts.get(d.accountId)
+    const from = account && { email: account.email, name: account.displayName ?? undefined }
+    const r = applySnippet(d, s, menu.start, menu.end, from)
+    update(r.patch)
+    if (r.patch.cc?.length || r.patch.bcc?.length) setShowCc(true)
+    caret.current = r.caret
+    setMenu(null)
+    if (r.missing.length) setNotice(`Fill in: ${r.missing.join(', ').replace(/_/g, ' ')}`)
+  }
+
+  const onMenuKey = (e: KeyboardEvent) => {
+    if (menu) menuKey(e, menu, matches.length, setMenu, pickSnippet)
+  }
+
+  const openPicker = () => {
+    const at = body.current?.selectionStart ?? d.text.length
+    setMenu({
+      query: '',
+      start: at,
+      end: body.current?.selectionEnd ?? at,
+      active: 0,
+      source: 'picker',
+    })
+  }
+
+  const intro = () => {
+    if (!d.threadId || !d.replyToMessageId) return setNotice('Instant intro works on a reply')
+    const id = d.replyToMessageId
+    void client.api.getThread(d.threadId).then((detail) => {
+      const m = detail?.messages.find((x) => x.id === id)
+      const patch = m && applyIntro(latest.current, m, ownEmails)
+      if (!patch) return setNotice('Nobody to hand this intro off to')
+      update(patch)
+      setShowCc(true)
+      setNotice(null)
+    })
+  }
+
   const close = () => {
     save()
     compose.close(latest.current, true)
@@ -90,7 +161,18 @@ export function Composer({ initial }: { initial: Draft }) {
     triage.sendMail(req, `Sending “${what}”`, () => compose.open(d))
   }
 
-  useCommands({ 'compose.send': send, 'nav.back': close })
+  useCommands(
+    reminding
+      ? {}
+      : {
+          'compose.send': send,
+          'compose.remind': () =>
+            d.remindAt ? update({ remindAt: undefined }) : setReminding(true),
+          'nav.back': close,
+          'compose.snippets': openPicker,
+          'compose.instantIntro': intro,
+        },
+  )
 
   const account = accounts.get(d.accountId)
   const fromChoices = [...accounts.values()]
@@ -155,12 +237,27 @@ export function Composer({ initial }: { initial: Draft }) {
           </label>
         )}
         <textarea
+          ref={body}
           className="compose-body"
           aria-label="Message"
           autoFocus={d.kind === 'reply' || d.kind === 'replyAll'}
           value={d.text}
-          onChange={(e) => update({ text: e.target.value })}
+          onChange={(e) => onBody(e.target.value, e.target.selectionStart)}
+          onKeyDown={menu?.source === 'trigger' ? onMenuKey : undefined}
+          onBlur={() => menu?.source === 'trigger' && setMenu(null)}
         />
+        {menu && (
+          <SnippetMenu
+            menu={menu}
+            matches={matches}
+            onQuery={(query) => setMenu({ ...menu, query, active: 0 })}
+            onKey={(e) => {
+              onMenuKey(e)
+              if (e.key === 'Escape') body.current?.focus()
+            }}
+            onPick={pickSnippet}
+          />
+        )}
         {d.quoted && (
           <details className="compose-quoted">
             <summary>Forwarded message</summary>
@@ -172,9 +269,28 @@ export function Composer({ initial }: { initial: Draft }) {
           <button type="button" className="send" onClick={send}>
             Send <Kbd keys="mod+enter" />
           </button>
+          {d.remindAt ? (
+            <button
+              type="button"
+              className="compose-link compose-remind"
+              title="Remove reminder"
+              onClick={() => update({ remindAt: undefined })}
+            >
+              ⏰ If no reply by {dueTime(d.remindAt)} ×
+            </button>
+          ) : (
+            <button type="button" className="compose-link" onClick={() => setReminding(true)}>
+              Remind me <Kbd keys="mod+shift+r" />
+            </button>
+          )}
           {error && (
             <span className="compose-error" role="alert">
               {error}
+            </span>
+          )}
+          {!error && notice && (
+            <span className="compose-notice" role="status">
+              {notice}
             </span>
           )}
           <span className="spacer" />
@@ -186,6 +302,13 @@ export function Composer({ initial }: { initial: Draft }) {
           </button>
         </footer>
       </section>
+      {reminding && (
+        <SnoozePicker
+          title="Remind me if no reply"
+          onPick={(at) => update({ remindAt: at })}
+          onClose={() => setReminding(false)}
+        />
+      )}
     </div>
   )
 }

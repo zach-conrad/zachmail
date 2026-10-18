@@ -1,16 +1,33 @@
 import type {
   ContactRow,
   DraftRequest,
+  EntityOp,
   OpEnvelope,
   SendRequest,
   SendResponse,
+  SnippetRow,
   SplitRuleRow,
 } from '@zachhub/core'
-import type { ListQuery, SearchListQuery, StoreApi, ThreadListItem } from '@zachhub/local-store'
+import type {
+  EntityWrite,
+  ListQuery,
+  SearchListQuery,
+  StoreApi,
+  ThreadListItem,
+} from '@zachhub/local-store'
 
 /** Store reads the UI may call over the worker boundary (writes stay inside the worker). */
 export type ReadMethod =
-  'accounts' | 'folders' | 'getThread' | 'unread' | 'splitRules' | 'comingBack'
+  | 'accounts'
+  | 'folders'
+  | 'getThread'
+  | 'unread'
+  | 'splitRules'
+  | 'snippets'
+  | 'followUps'
+  | 'entities'
+  | 'entity'
+  | 'comingBack'
 
 /** What a thread list shows: a split, or search results. */
 export type ViewQuery = ListQuery | SearchListQuery
@@ -46,6 +63,11 @@ export interface DataApi extends Pick<StoreApi, ReadMethod> {
   deleteDraft(id: string): Promise<void>
   /** Everyone Zach writes to or hears from, best first (cached after the first call). */
   contacts(): Promise<ContactRow[]>
+  /**
+   * Writes first-party entities (tasks, links): applied to the replica at once, then sent.
+   * Resolves with the stamped ops; a 'changed' event follows.
+   */
+  entityWrite(writes: EntityWrite[]): EntityOp[]
 }
 
 export type Method = keyof DataApi
@@ -61,6 +83,10 @@ export type ToWorker =
   | { type: 'op'; env: OpEnvelope }
   /** Save (rule) or delete (null) a split rule: re-split locally now, send when online. */
   | { type: 'splitRule'; id: string; rule: SplitRuleRow | null }
+  /** Save (snippet) or delete (null) a snippet: local now, sent when online. */
+  | { type: 'snippet'; id: string; snippet: SnippetRow | null }
+  /** Hide (dismiss) or bring back follow-up nudges on these threads. */
+  | { type: 'nudges'; threadIds: string[]; dismiss: boolean }
   | { type: 'call'; id: number; method: Method; args: unknown[] }
 
 export interface WorkerStatus {

@@ -228,3 +228,30 @@ test('switch modules with G H / G M / G T / G D < 50 ms', async () => {
   expect(xs.length).toBe(20)
   expect(pct(xs, 95)).toBeLessThan(BUDGET.moduleSwitch)
 })
+
+test('tasks with 5k tasks: move, complete, undo and quick add each < 16 ms', async () => {
+  await page.goto('/tasks/today?tasks=5000')
+  await page.waitForSelector('.task-row[data-focused]')
+  await clearSamples()
+  for (let i = 0; i < 30; i++) await page.keyboard.press('j')
+  for (let i = 0; i < 40; i++) await page.keyboard.press('e')
+  await expect(page.locator('.toast')).toContainText('Completed')
+  for (let i = 0; i < 5; i++) await page.keyboard.press('z')
+  await page.keyboard.press('c')
+  for (let i = 0; i < 10; i++) {
+    await page.keyboard.type(`perf task ${i} every 1st at 9am #home !`)
+    await page.keyboard.press('Enter')
+  }
+  const move = await samples('tasks.next')
+  const complete = await samples('tasks.complete')
+  const undo = await samples('tasks.undo')
+  const add = await samples('tasks.add')
+  report.tasks = {
+    move: summary(move),
+    complete: summary(complete),
+    undo: summary(undo),
+    add: summary(add),
+  }
+  expect([move.length, complete.length, undo.length, add.length]).toEqual([30, 40, 5, 10])
+  for (const xs of [move, complete, undo, add]) expect(pct(xs, 95)).toBeLessThan(BUDGET.keyAction)
+})

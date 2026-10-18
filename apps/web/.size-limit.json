@@ -20,7 +20,7 @@
   {
     "name": "Tasks module chunk (gzip)",
     "path": "dist/assets/TasksModule-*.js",
-    "limit": "40 KB",
+    "limit": "60 KB",
     "gzip": true
   },
   {

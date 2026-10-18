@@ -1,10 +1,12 @@
 import { useNavigate } from '@tanstack/react-router'
 import { lazy, Suspense, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { Composer } from '../compose/Composer'
+import { FollowUps } from '../followups/FollowUps'
 import { newDraft } from '../compose/draft'
 import { Inbox } from '../inbox/Inbox'
 import { SearchView } from '../search/SearchView'
 import { splitTabs, type FolderRow, type SplitKey } from '@zachhub/core'
+import { REMINDERS } from '@zachhub/local-store'
 import { useData } from '../data/DataProvider'
 import { SplitRulesEditor } from '../splits/SplitRulesEditor'
 import { runCommand, useCommands } from '../lib/useCommands'
@@ -16,8 +18,11 @@ import { usePaletteItems, type PaletteItem } from '../hub/palette'
 
 // Settings panes load on first open so they never weigh on the initial bundle.
 const NotificationSettingsPane = lazy(() => import('../notifications/NotificationSettingsPane'))
+const SnippetsEditor = lazy(() =>
+  import('../compose/SnippetsEditor').then((m) => ({ default: m.SnippetsEditor })),
+)
 
-type Overlay = 'rules' | 'notifications' | null
+type Overlay = 'rules' | 'notifications' | 'followUps' | 'snippets' | null
 
 /** Mail: split tabs, the inbox or search, and mail's own settings panes. */
 export function Shell({
@@ -59,12 +64,14 @@ export function Shell({
       void navigate({ to: '/inbox/$split', params: { split }, search: {}, replace: true })
   }, [searchQuery, split, navigate])
   const cycle = (dir: 1 | -1) => {
+    // From Reminders, tab goes to the first split and shift+tab to the last.
     const i = tabs.findIndex((s) => s.key === split)
-    goSplit(tabs[(i + dir + tabs.length) % tabs.length]!.key)
+    const next = i < 0 ? (dir === 1 ? 0 : tabs.length - 1) : i + dir
+    goSplit(tabs[(next + tabs.length) % tabs.length]!.key)
   }
 
   // A custom split whose rule was deleted (here or on another device) falls back to Important.
-  const known = splitRules === null || tabs.some((t) => t.key === split)
+  const known = split === REMINDERS || splitRules === null || tabs.some((t) => t.key === split)
   useEffect(() => {
     if (!known) goSplit('important')
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -84,12 +91,18 @@ export function Shell({
       goSplit('important')
     },
     'nav.search': () => setSearch((s) => ({ text: '', n: (s?.n ?? 0) + 1 })),
+    'go.reminders': () => {
+      setSearch(null)
+      goSplit(REMINDERS)
+    },
     'compose.new': () => {
       const first = accounts.keys().next().value
       if (first) compose.open(compose.resume(null) ?? newDraft(first))
     },
     'app.splitRules': () => open('rules'),
     'app.notifications': () => open('notifications'),
+    'app.snippets': () => open('snippets'),
+    'go.followUps': () => open('followUps'),
     ...(overlay ? { 'nav.back': () => setOverlay(null) } : {}),
   })
 
@@ -143,6 +156,12 @@ export function Shell({
             accounts={[...accounts.values()]}
             onClose={() => setOverlay(null)}
           />
+        </Suspense>
+      )}
+      {overlay === 'followUps' && <FollowUps onClose={() => setOverlay(null)} />}
+      {overlay === 'snippets' && (
+        <Suspense fallback={null}>
+          <SnippetsEditor onClose={() => setOverlay(null)} />
         </Suspense>
       )}
     </div>

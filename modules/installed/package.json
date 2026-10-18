@@ -1,0 +1,20 @@
+{
+  "name": "@zachhub/modules",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@zachhub/kernel": "workspace:*",
+    "@zachhub/tasks-api": "workspace:*"
+  },
+  "devDependencies": {
+    "@zachhub/config": "workspace:*"
+  }
+}

@@ -1,7 +1,8 @@
+import { editableDrop, editableSchema } from './editable'
 import { SPLIT_RULES_DROP, SPLIT_RULES_SCHEMA } from './splitRules'
 
 /** Bump when the client schema changes; the replica is dropped and bootstrapped again. */
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 export const SCHEMA = /* sql */ `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -28,12 +29,15 @@ CREATE TABLE IF NOT EXISTS threads (
   -- Split inputs cached by the last full classify, so a rule edit re-splits without joins.
   split_from TEXT,
   list_unsub INTEGER NOT NULL DEFAULT 0,
-  -- Epoch ms a snoozed thread comes back (Today's "Coming back today"), else NULL.
   snoozed_until INTEGER,
-  -- The server's {folderIds, unread, starred} while pending ops overlay this row, else NULL.
+  -- {at, condition} JSON, or NULL.
+  reminder TEXT,
+  -- The server's overlayable fields (see Overlayable) while pending ops overlay this row.
   srv TEXT
 );
 CREATE INDEX IF NOT EXISTS threads_split ON threads (split, last_message_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS threads_reminders ON threads (last_message_at DESC, id DESC)
+  WHERE snoozed_until IS NOT NULL OR reminder IS NOT NULL;
 CREATE INDEX IF NOT EXISTS threads_snoozed ON threads (snoozed_until) WHERE snoozed_until IS NOT NULL;
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
@@ -58,8 +62,26 @@ CREATE TABLE IF NOT EXISTS bodies (
   has_remote_images INTEGER NOT NULL,
   fetched_at INTEGER NOT NULL
 );
-${SPLIT_RULES_SCHEMA}`
+-- First-party entities (tasks, links, ...) as the server last sent them, with unsent local
+-- writes applied on top. data is the row as JSON, id included.
+CREATE TABLE IF NOT EXISTS hub_entities (
+  kind TEXT NOT NULL,
+  id TEXT NOT NULL,
+  data TEXT NOT NULL,
+  PRIMARY KEY (kind, id)
+) WITHOUT ROWID;
+-- Stamped entity writes (JSON EntityOp) not yet acked by the server, in the order they were made.
+CREATE TABLE IF NOT EXISTS hub_entity_ops (seq INTEGER PRIMARY KEY AUTOINCREMENT, op TEXT NOT NULL);
+-- This device's HLC (one row), so stamps keep increasing across restarts.
+CREATE TABLE IF NOT EXISTS hub_clock (node TEXT NOT NULL, ms INTEGER NOT NULL, counter INTEGER NOT NULL);
+${SPLIT_RULES_SCHEMA}
+${editableSchema('snippets')}
+${editableSchema('nudge_dismissals')}`
 
+/**
+ * Drops the replica for a schema change. hub_entity_ops and hub_clock survive: they hold
+ * writes the server has never seen and this device's identity, not copies of server state.
+ */
 export const DROP_ALL = /* sql */ `
 DROP TABLE IF EXISTS meta;
 DROP TABLE IF EXISTS accounts;
@@ -68,4 +90,7 @@ DROP TABLE IF EXISTS threads;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS bodies;
 DROP TABLE IF EXISTS pending_ops;
-${SPLIT_RULES_DROP}`
+DROP TABLE IF EXISTS hub_entities;
+${SPLIT_RULES_DROP}
+${editableDrop('snippets')}
+${editableDrop('nudge_dismissals')}`

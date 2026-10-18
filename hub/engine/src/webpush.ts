@@ -1,5 +1,6 @@
 import type { PushPayload } from '@zachhub/core'
 import type { DeviceRow } from '@zachhub/db/server'
+import { createHash } from 'node:crypto'
 import webpush from 'web-push'
 import type { PushSender } from './notify'
 
@@ -22,6 +23,19 @@ export function vapidFromEnv(env: Record<string, string | undefined> = process.e
 }
 
 /**
+ * Replies to the same thread, or a hub notice with the same kind and tag, replace a queued,
+ * undelivered push. Topics are ≤32 url-safe chars, so a hub tag is hashed down to one.
+ */
+function pushTopic(payload: PushPayload): string | null {
+  if (payload.kind === 'hub') {
+    const { kind, tag } = payload.notice
+    if (!tag) return null
+    return createHash('sha256').update(`${kind}\n${tag}`).digest('base64url').slice(0, 32)
+  }
+  return payload.notices.length === 1 ? payload.notices[0]!.threadId.replaceAll('-', '') : null
+}
+
+/**
  * Web Push (RFC 8030/8291) via the `web-push` package. Kept out of the engine index so the
  * API bundle, which never sends, doesn't carry it. High urgency so phones and sleeping
  * laptops deliver at once; a short TTL because a banner for hour-old mail is noise.
@@ -36,9 +50,7 @@ export function webPushSender(vapid: VapidConfig): PushSender {
   return {
     async send(device: DeviceRow, payload: PushPayload) {
       if (!device.keys) return 'gone'
-      // Replies to the same thread replace a queued, undelivered push (topic: ≤32 url-safe chars).
-      const topic =
-        payload.notices.length === 1 ? payload.notices[0]!.threadId.replaceAll('-', '') : null
+      const topic = pushTopic(payload)
       try {
         await webpush.sendNotification(
           { endpoint: device.token, keys: device.keys },

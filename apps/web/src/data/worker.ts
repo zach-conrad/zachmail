@@ -1,13 +1,19 @@
 /// <reference lib="webworker" />
 import {
   DEFAULT_UNDO_MS,
+  EntityDrain,
   OpDrain,
   SyncClient,
+  composerHttp,
+  flushComposerEdits,
   flushSplitRules,
   httpTransport,
   splitRuleHttp,
   startSyncLoop,
+  type ComposerRemote,
   type ContactRow,
+  type EntityOpsRequest,
+  type EntityOpsResponse,
   type MessageBody,
   type OpEnvelope,
   type OpsResponse,
@@ -33,6 +39,7 @@ let sync: { pull(): Promise<void> } | null = null
 let api: DataApi | null = null
 let enqueue: ((env: OpEnvelope) => void) | null = null
 let editRule: ((id: string, rule: SplitRuleRow | null) => void) | null = null
+let local: ((m: Extract<ToWorker, { type: 'snippet' | 'nudges' }>) => void) | null = null
 let drain = () => {}
 const queue: ToWorker[] = []
 const status: WorkerStatus = { storage: 'memory', syncing: false, error: null }
@@ -55,6 +62,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
   } else if (!api || !enqueue) queue.push(m)
   else if (m.type === 'op') enqueue(m.env)
   else if (m.type === 'splitRule') editRule!(m.id, m.rule)
+  else if (m.type === 'snippet' || m.type === 'nudges') local!(m)
   else void call(m)
 }
 
@@ -83,8 +91,14 @@ async function init(config: InitConfig) {
   // Demo mode has no server: ops are accepted on the spot and settle as if done.
   let sendOps: ((ops: OpEnvelope[]) => Promise<OpsResponse>) | null = null
   let searchServer: ((p: SearchParams) => Promise<SearchResponse>) | null = null
+  // Demo mode accepts entity writes on the spot; the replica already shows them.
+  let sendEntities = async (req: EntityOpsRequest): Promise<EntityOpsResponse> => ({
+    accepted: req.ops.map((_, i) => i),
+    rejected: [],
+  })
   let outgoing: Pick<DataApi, 'send' | 'unsend' | 'saveDraft' | 'deleteDraft' | 'contacts'>
   let rulesRemote: SplitRuleRemote | null = null
+  let composerRemote: ComposerRemote | null = null
   if (config.mode === 'demo') {
     const fx = await import('./fixture')
     transport = fx.fixtureTransport(config.threads)
@@ -108,6 +122,7 @@ async function init(config: InitConfig) {
     transport = http
     fetchBody = (id) => http.body(id)
     sendOps = (ops) => http.ops({ ops })
+    sendEntities = (req) => http.entities(req)
     searchServer = (p) => http.search(p)
     let contacts: Promise<ContactRow[]> | null = null
     outgoing = {
@@ -122,6 +137,7 @@ async function init(config: InitConfig) {
         })),
     }
     rulesRemote = splitRuleHttp({ baseUrl: config.apiBase, token: () => token })
+    composerRemote = composerHttp({ baseUrl: config.apiBase, token: () => token })
   }
 
   const inflight = new Set<string>()
@@ -155,6 +171,8 @@ async function init(config: InitConfig) {
     folders: () => store.folders(),
     ...outgoing,
     splitRules: () => store.splitRules(),
+    snippets: () => store.snippets(),
+    followUps: (now, opts, limit) => store.followUps(now, opts, limit),
     getThread: (id) => store.getThread(id),
     comingBack: (from, to, limit) => store.comingBack(from, to, limit),
     async ensureBodies(threadIds) {
@@ -187,6 +205,14 @@ async function init(config: InitConfig) {
       if (fetched.length) post({ type: 'bodies', threadIds: [...done] })
       return fetched.length
     },
+    entities: (kind) => store.entities(kind),
+    entity: (kind, id) => store.entity(kind, id),
+    entityWrite(writes) {
+      const stamped = store.entityWrite(writes)
+      post({ type: 'changed' })
+      void entityOps.run()
+      return stamped
+    },
   }
   enqueue = (env) => {
     store.enqueueOp(env)
@@ -200,6 +226,16 @@ async function init(config: InitConfig) {
     onFailed: (rows) => {
       for (const r of rows) post({ type: 'opFailed', id: r.id, error: r.error })
       post({ type: 'changed' })
+    },
+  })
+  const entityOps = new EntityDrain({
+    pending: (limit) => store.pendingEntityOps(limit),
+    ack: (seqs) => store.ackEntityOps(seqs),
+    send: (req) => sendEntities(req),
+    ready: () => config.mode === 'demo' || !!token,
+    // The row shows the refused write until the server next sends it.
+    onRejected: (rows) => {
+      for (const r of rows) console.warn('entity write refused', r.op, r.error)
     },
   })
   // Rule edits are few and tiny: send them in order, retry on the next drain trigger.
@@ -245,22 +281,53 @@ async function init(config: InitConfig) {
     void resplit()
     void flushRules()
   }
+  // Snippet and nudge edits: same shape as rule edits, in their own ordered queue.
+  let flushingComposer = false
+  const composerOutbox = {
+    pending: () => store.composerEdits(),
+    ack: (e: Parameters<typeof store.ackComposerEdit>[0]) => store.ackComposerEdit(e),
+    reject: (e: Parameters<typeof store.rejectComposerEdit>[0]) => {
+      store.rejectComposerEdit(e)
+      post({ type: 'changed' })
+    },
+  }
+  const flushComposer = async () => {
+    if (flushingComposer || (config.mode === 'live' && !token)) return
+    flushingComposer = true
+    try {
+      if (!composerRemote) for (const e of store.composerEdits()) store.ackComposerEdit(e)
+      else await flushComposerEdits(composerOutbox, composerRemote)
+    } catch (err) {
+      console.warn('snippet/nudge sync failed; will retry', err)
+    } finally {
+      flushingComposer = false
+    }
+  }
+  local = (m) => {
+    if (m.type === 'snippet') store.editSnippet(m.id, m.snippet)
+    else store.dismissNudges(m.threadIds, m.dismiss)
+    post({ type: 'changed' })
+    void flushComposer()
+  }
   drain = () => {
     void ops.run()
+    void entityOps.run()
     void flushRules()
+    void flushComposer()
   }
 
   for (const m of queue.splice(0)) {
     if (m.type === 'call') void call(m)
     else if (m.type === 'op') enqueue(m.env)
     else if (m.type === 'splitRule') editRule(m.id, m.rule)
+    else if (m.type === 'snippet' || m.type === 'nudges') local(m)
   }
 
   const sink: SyncSink = {
     getSeq: () => store.getSeq(),
     reset: () => store.reset(),
-    apply(upserts, deletes, seq, ops = []) {
-      store.apply(upserts, deletes, seq, ops)
+    apply(upserts, deletes, seq, ops = [], entities) {
+      store.apply(upserts, deletes, seq, ops, entities)
       if (store.resplitPending()) void resplit()
       for (const o of ops)
         if (o.state === 'failed')
@@ -287,6 +354,8 @@ async function init(config: InitConfig) {
     },
   }
   startSyncLoop(sync)
+  // Entity writes queued last session go out now, before the first sync finishes.
+  void entityOps.run()
 }
 
 const BODY_SLICE = 10

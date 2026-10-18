@@ -6,7 +6,7 @@ import {
   redirect,
 } from '@tanstack/react-router'
 import { HubShell } from './app/HubShell'
-import { isSplitKey } from './app/splits'
+import { isView } from './app/splits'
 import { LoginScreen } from './auth/LoginScreen'
 import { useAuth } from './auth/session'
 import { DataProvider } from './data/DataProvider'
@@ -57,15 +57,23 @@ const inboxRoute = createRoute({
     ...(typeof s.q === 'string' ? { q: s.q } : {}),
   }),
   beforeLoad: ({ params }) => {
-    if (!isSplitKey(params.split))
+    if (!isView(params.split))
       throw redirect({ to: '/inbox/$split', params: { split: 'important' } })
   },
   component: MailRoute,
 })
 
-const tasksRoute = createRoute({
+const tasksIndexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/tasks',
+  beforeLoad: () => {
+    throw redirect({ to: '/tasks/$view', params: { view: 'today' } })
+  },
+})
+
+const tasksRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/tasks/$view',
   component: TasksRoute,
 })
 
@@ -76,7 +84,14 @@ const docsRoute = createRoute({
 })
 
 export const router = createRouter({
-  routeTree: rootRoute.addChildren([indexRoute, todayRoute, inboxRoute, tasksRoute, docsRoute]),
+  routeTree: rootRoute.addChildren([
+    indexRoute,
+    todayRoute,
+    inboxRoute,
+    tasksIndexRoute,
+    tasksRoute,
+    docsRoute,
+  ]),
   defaultPreload: 'intent',
 })
 

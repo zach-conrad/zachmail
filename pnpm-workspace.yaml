@@ -2,6 +2,7 @@ packages:
   - apps/*
   - hub/*
   - modules/*/*
+  - modules/installed
 
 overrides:
   typescript: ~6.0.3
