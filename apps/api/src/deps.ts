@@ -9,6 +9,8 @@ import {
 import type { FetchLike } from '@zachhub/providers/gmail'
 import type { JWTVerifyGetKey } from 'jose'
 import postgres from 'postgres'
+import { installed } from '@zachhub/modules'
+import type { InstalledModules } from '@zachhub/kernel'
 import { required, type Env } from './env'
 
 export interface Deps {
@@ -23,6 +25,8 @@ export interface Deps {
    * stays out of cold starts for every other route.
    */
   ai: () => Promise<Ai | null>
+  /** Installed hub modules: their entities, routers and jobs (@zachhub/modules). */
+  modules: InstalledModules
   /** Supabase JWKS (overridable in tests). */
   supabaseKeys?: JWTVerifyGetKey
   /** Google OIDC JWKS for Pub/Sub push tokens (overridable in tests). */
@@ -79,6 +83,7 @@ export function buildDeps(env: Env, overrides: Partial<Deps> = {}): Deps {
     storage: () => (storageConfig ? (storage ??= new Storage(storageConfig, fetchImpl)) : null),
     ai: async () =>
       aiConfig ? (ai ??= import('@zachhub/ai').then((m) => m.createAi(aiConfig))) : null,
+    modules: installed,
     ...overrides,
   }
 }

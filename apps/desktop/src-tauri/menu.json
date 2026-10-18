@@ -203,6 +203,11 @@
           "accelerator": "CmdOrCtrl+Enter"
         },
         {
+          "id": "compose.remind",
+          "label": "Remind me if no reply",
+          "accelerator": "CmdOrCtrl+Shift+R"
+        },
+        {
           "id": "compose.snippets",
           "label": "Insert snippet",
           "accelerator": "CmdOrCtrl+Semicolon"

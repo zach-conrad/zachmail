@@ -3,15 +3,24 @@ import {
   compileSplitRules,
   inboundSender,
   opEffect,
+  parseEntityOpsRequest,
+  tick,
   type AccountRow,
   type Address,
   type Deletes,
+  type EntityDeltas,
+  type EntityKind,
+  type EntityOp,
+  type EntityRow,
   type FolderKind,
   type FolderRow,
+  type HlcClock,
   type MessageBody,
   type MessageRow,
   type OpEnvelope,
   type OpStatusRow,
+  type Reminder,
+  type PendingEntityOp,
   type Rows,
   type CompiledSplitRules,
   type SplitKey,
@@ -36,10 +45,16 @@ export interface ThreadListItem {
   starred: boolean
   hasAttachments: boolean
   folderIds: string[]
+  /** Epoch ms a snoozed thread comes back, else null. */
+  snoozedUntil: number | null
+  reminder: Reminder | null
 }
 
+/** The Reminders view (design §2): snoozed threads and threads with a reminder set. */
+export const REMINDERS = 'reminders'
+
 export interface ListQuery {
-  /** A built-in split id or a custom split rule id. */
+  /** A built-in split id, a custom split rule id, or REMINDERS. */
   split: SplitKey
   /** Account scope; null or absent means all accounts. */
   accountId?: string | null
@@ -53,6 +68,11 @@ export interface ThreadDetail {
   bodies: Record<string, MessageBody>
 }
 
+/** A first-party entity write before the store stamps it; see `StoreApi.entityWrite`. */
+export type EntityWrite =
+  | { kind: 'put'; entity: EntityKind; id: string; fields: Record<string, unknown> }
+  | { kind: 'delete'; entity: EntityKind; id: string }
+
 /**
  * Everything the app reads from or writes to the local replica. The web app calls it over
  * postMessage (each method becomes async); iOS can call it directly.
@@ -65,6 +85,7 @@ export interface StoreApi extends SyncSink {
     deletes: Partial<Deletes> | null,
     seq: number | null,
     ops?: readonly OpStatusRow[],
+    entities?: EntityDeltas,
   ): void
   accounts(): AccountRow[]
   folders(): FolderRow[]
@@ -108,6 +129,21 @@ export interface StoreApi extends SyncSink {
    */
   resplitPending(): number
   resplitStep(max?: number): number
+
+  // ---- First-party entities -------------------------------------------------------------
+  /**
+   * Stamps each write with this device's clock, applies it to the replica (a put merges its
+   * fields into the row, creating it if missing; a delete removes it) and queues it for the
+   * server, in one transaction. Returns the stamped ops.
+   */
+  entityWrite(writes: readonly EntityWrite[]): EntityOp[]
+  /** Every row of a kind, unsent local writes included. */
+  entities(kind: EntityKind): EntityRow[]
+  entity(kind: EntityKind, id: string): EntityRow | null
+  /** Queued entity writes, oldest first. */
+  pendingEntityOps(limit: number): PendingEntityOp[]
+  /** The server has these (accepted or refused for good): stop overlaying and sending them. */
+  ackEntityOps(seqs: readonly number[]): void
 }
 
 /** The fields of a thread that ops change; `srv` holds the server's copy while overlaid. */
@@ -115,6 +151,8 @@ interface Overlayable {
   folderIds: string[]
   unread: boolean
   starred: boolean
+  snoozedUntil: number | null
+  reminder: Reminder | null
 }
 
 interface QueuedOp {
@@ -137,6 +175,8 @@ interface ThreadSqlRow {
   starred: number
   has_attachments: number
   folder_ids: string
+  snoozed_until: number | null
+  reminder: string | null
 }
 
 export class SqlStore implements StoreApi {
@@ -149,6 +189,8 @@ export class SqlStore implements StoreApi {
   private compiled: CompiledSplitRules = compileSplitRules([])
   /** Threads a rules change moves, written a chunk at a time by `resplitStep`. */
   private resplitIds: string[] = []
+  private entityOps: PendingEntityOp[] = []
+  private clock: HlcClock
 
   constructor(private db: SqlDriver) {
     db.exec('PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY; PRAGMA cache_size = -64000;')
@@ -168,6 +210,10 @@ export class SqlStore implements StoreApi {
         `SELECT envelope, sent FROM pending_ops ORDER BY seq`,
       )
       .map((r) => queued(JSON.parse(r.envelope) as OpEnvelope, !!r.sent))
+    this.clock = this.loadClock()
+    this.entityOps = this.db
+      .all<{ seq: number; op: string }>(`SELECT seq, op FROM hub_entity_ops ORDER BY seq`)
+      .map((r) => ({ seq: r.seq, op: JSON.parse(r.op) as EntityOp }))
   }
 
   // ---- Sync sink -------------------------------------------------------------------------
@@ -187,6 +233,10 @@ export class SqlStore implements StoreApi {
       this.db.run(`DELETE FROM pending_ops WHERE sent = 1`)
       // The snapshot resends every rule; unsent local edits stay on top.
       this.rules.clearSynced()
+      // Unacked entity writes stay queued and on screen, rows created offline included; the
+      // snapshot's rows get them re-applied as they arrive.
+      this.db.run(`DELETE FROM hub_entities`)
+      for (const [entity, id, ops] of groupOps(this.entityOps)) this.replay(entity, id, ops)
     })
     this.ops = this.ops.filter((o) => !o.sent)
     this.loadLookups()
@@ -197,8 +247,10 @@ export class SqlStore implements StoreApi {
     deletes: Partial<Deletes> | null,
     seq: number | null,
     ops: readonly OpStatusRow[] = [],
+    entities?: EntityDeltas,
   ): void {
     this.tx(() => {
+      if (entities) this.applyEntities(entities)
       const touched = new Set<string>()
       let lookupsChanged = false
       // Rows go in as one JSON array per table and SQLite unpacks them in C: an order of
@@ -223,11 +275,13 @@ export class SqlStore implements StoreApi {
       if (upserts.threads?.length) {
         this.db.run(
           `INSERT OR REPLACE INTO threads (id, account_id, subject, snippet, participants,
-             last_message_at, message_count, unread, starred, has_attachments, folder_ids)
+             last_message_at, message_count, unread, starred, has_attachments, folder_ids,
+             snoozed_until, reminder)
            SELECT value ->> 'id', value ->> 'accountId', value ->> 'subject',
              value ->> 'snippet', json(value -> 'participants'), value ->> 'lastMessageAt',
              value ->> 'messageCount', value ->> 'unread', value ->> 'starred',
-             value ->> 'hasAttachments', json(value -> 'folderIds')
+             value ->> 'hasAttachments', json(value -> 'folderIds'), value ->> 'snoozedUntil',
+             nullif(json(value -> 'reminder'), 'null')
            FROM jsonb_each(?)`,
           [JSON.stringify(upserts.threads)],
         )
@@ -329,7 +383,7 @@ export class SqlStore implements StoreApi {
          'lastMessageAt', last_message_at, 'messageCount', message_count,
          'unread', json('true'), 'starred', json(iif(starred, 'true', 'false')),
          'hasAttachments', json(iif(has_attachments, 'true', 'false')),
-         'folderIds', json(folder_ids))) AS j
+         'folderIds', json(folder_ids), ${LIST_EXTRA})) AS j
        FROM (SELECT * FROM threads WHERE ${where} AND unread = 1 AND last_message_at > ?
              ORDER BY last_message_at DESC, id DESC LIMIT ?)`,
       [...params, since, limit],
@@ -346,7 +400,7 @@ export class SqlStore implements StoreApi {
          'unread', json(iif(unread, 'true', 'false')),
          'starred', json(iif(starred, 'true', 'false')),
          'hasAttachments', json(iif(has_attachments, 'true', 'false')),
-         'folderIds', json(folder_ids))) AS j
+         'folderIds', json(folder_ids), ${LIST_EXTRA})) AS j
        FROM (SELECT * FROM threads WHERE ${where}
              ORDER BY last_message_at DESC, id DESC LIMIT ? OFFSET ?)`,
       [...params, limit, offset],
@@ -358,8 +412,15 @@ export class SqlStore implements StoreApi {
       `SELECT last_message_at, split, account_id FROM threads WHERE id = ?`,
       [threadId],
     )[0]
-    if (!t || t.split !== q.split || (q.accountId && t.account_id !== q.accountId)) return -1
+    if (!t || (q.accountId && t.account_id !== q.accountId)) return -1
     const [where, params] = listWhere(q)
+    if (q.split === REMINDERS) {
+      const inView = this.db.all(`SELECT 1 FROM threads WHERE id = ? AND ${where}`, [
+        threadId,
+        ...params,
+      ])
+      if (!inView.length) return -1
+    } else if (t.split !== q.split) return -1
     return this.db.all<{ n: number }>(
       `SELECT count(*) AS n FROM threads WHERE ${where}
          AND (last_message_at > ? OR (last_message_at = ? AND id > ?))`,
@@ -457,6 +518,58 @@ export class SqlStore implements StoreApi {
     this.tx(() => this.classify(this.settle(ids, keep)))
   }
 
+  // ---- First-party entities -------------------------------------------------------------
+
+  entityWrite(writes: readonly EntityWrite[]): EntityOp[] {
+    // Stamps ascend with seq, so replaying queued ops in order is the per-field HLC merge.
+    const ops = writes.map((w): EntityOp => ({ ...w, hlc: tick(this.clock) }) as EntityOp)
+    // Fail here rather than have the server refuse the whole batch later.
+    parseEntityOpsRequest({ ops })
+    const queuedNow: PendingEntityOp[] = []
+    this.tx(() => {
+      for (const op of ops) {
+        const seq = this.db.all<{ seq: number }>(
+          `INSERT INTO hub_entity_ops (op) VALUES (?) RETURNING seq`,
+          [JSON.stringify(op)],
+        )[0]!.seq
+        this.replay(op.entity, op.id, [op])
+        queuedNow.push({ seq, op })
+      }
+      this.db.run(`UPDATE hub_clock SET ms = ?, counter = ?`, [this.clock.ms, this.clock.counter])
+    })
+    this.entityOps.push(...queuedNow)
+    return ops
+  }
+
+  entities(kind: EntityKind): EntityRow[] {
+    return this.json<EntityRow[]>(
+      `SELECT json_group_array(json(data)) AS j
+       FROM (SELECT data FROM hub_entities WHERE kind = ? ORDER BY id)`,
+      [kind],
+    )
+  }
+
+  entity(kind: EntityKind, id: string): EntityRow | null {
+    const r = this.db.all<{ data: string }>(
+      `SELECT data FROM hub_entities WHERE kind = ? AND id = ?`,
+      [kind, id],
+    )[0]
+    return r ? (JSON.parse(r.data) as EntityRow) : null
+  }
+
+  pendingEntityOps(limit: number): PendingEntityOp[] {
+    return this.entityOps.slice(0, limit)
+  }
+
+  ackEntityOps(seqs: readonly number[]): void {
+    // The row keeps the acked values until a delta brings the server's merge of them.
+    const set = new Set(seqs)
+    this.db.run(`DELETE FROM hub_entity_ops WHERE seq IN (SELECT value FROM json_each(?))`, [
+      JSON.stringify(seqs),
+    ])
+    this.entityOps = this.entityOps.filter((p) => !set.has(p.seq))
+  }
+
   close(): void {
     this.db.close()
   }
@@ -497,21 +610,34 @@ export class SqlStore implements StoreApi {
    * touches them, in order. Rows with nothing queued drop their overlay. Does not reclassify.
    */
   private rebase(threadIds: readonly string[], fold: readonly QueuedOp[] = []) {
-    type Row = [id: string, accountId: string, f: string[], u: number, s: number, srv: Overlayable]
+    type Row = [
+      id: string,
+      accountId: string,
+      f: string[],
+      u: number,
+      s: number,
+      z: number | null,
+      r: Reminder | null,
+      srv: Overlayable | null,
+    ]
     const rows = chunks([...new Set(threadIds)]).flatMap((ids) =>
       this.json<Row[]>(
         `SELECT json_group_array(json_array(id, account_id, json(folder_ids), unread, starred,
-           json(srv))) AS j FROM threads WHERE id IN (${marks(ids.length)})`,
+           snoozed_until, json(reminder), json(srv))) AS j FROM threads
+         WHERE id IN (${marks(ids.length)})`,
         ids,
       ),
     )
-    const out: [string, string, number, number, string | null][] = []
-    for (const [id, accountId, f, u, s, srv] of rows) {
+    const out: [string, string, number, number, number | null, string | null, string | null][] = []
+    for (const [id, accountId, f, u, s, z, r, srv] of rows) {
       const kinds = this.folderOf.get(accountId)
       const effect = (o: QueuedOp) => opEffect(o.env.op, (k) => kinds?.get(k))
-      const step = (t: Overlayable, o: QueuedOp) =>
-        o.threads.has(id) ? applyEffect(t as Overlayable & ThreadRow, effect(o)) : t
-      const server = fold.reduce(step, srv ?? { folderIds: f, unread: !!u, starred: !!s })
+      const step = (t: Overlayable, o: QueuedOp): Overlayable =>
+        o.threads.has(id) ? pick(applyEffect(t as Overlayable & ThreadRow, effect(o))) : t
+      const server = fold.reduce(
+        step,
+        srv ?? { folderIds: f, unread: !!u, starred: !!s, snoozedUntil: z, reminder: r },
+      )
       const mine = this.ops.filter((o) => o.threads.has(id))
       const now = mine.reduce(step, server)
       out.push([
@@ -519,16 +645,67 @@ export class SqlStore implements StoreApi {
         JSON.stringify(now.folderIds),
         +now.unread,
         +now.starred,
+        now.snoozedUntil ?? null,
+        now.reminder ? JSON.stringify(now.reminder) : null,
         mine.length ? JSON.stringify(pick(server)) : null,
       ])
     }
     if (out.length)
       this.db.run(
         `UPDATE threads SET folder_ids = c.value ->> 1, unread = c.value ->> 2,
-           starred = c.value ->> 3, srv = c.value ->> 4
+           starred = c.value ->> 3, snoozed_until = c.value ->> 4, reminder = c.value ->> 5,
+           srv = c.value ->> 6
          FROM jsonb_each(?) AS c WHERE threads.id = c.value ->> 0`,
         [JSON.stringify(out)],
       )
+  }
+
+  /**
+   * Server rows replace local ones wholesale (they carry no stamps, so there is nothing to
+   * fold into the clock), then unacked local writes go back on top of the rows they touch, so
+   * an optimistic edit isn't undone by a row from before it. A server delete is final: queued
+   * puts for that id are not replayed, which would resurrect it.
+   */
+  private applyEntities(entities: EntityDeltas) {
+    for (const [kind, d] of Object.entries(entities)) {
+      if (d.upserts.length)
+        this.db.run(
+          `INSERT OR REPLACE INTO hub_entities (kind, id, data)
+           SELECT ?, value ->> 'id', json(value) FROM jsonb_each(?)`,
+          [kind, JSON.stringify(d.upserts)],
+        )
+      if (d.deletes.length)
+        this.db.run(
+          `DELETE FROM hub_entities WHERE kind = ? AND id IN (SELECT value FROM json_each(?))`,
+          [kind, JSON.stringify(d.deletes)],
+        )
+      if (!d.upserts.length || !this.entityOps.length) continue
+      const gone = new Set(d.deletes)
+      const fresh = new Set(d.upserts.map((r) => r.id).filter((id) => !gone.has(id)))
+      const mine = this.entityOps.filter((p) => p.op.entity === kind && fresh.has(p.op.id))
+      for (const [entity, id, ops] of groupOps(mine)) this.replay(entity, id, ops)
+    }
+  }
+
+  /** Applies entity ops, in order, to the row as it stands. */
+  private replay(entity: EntityKind, id: string, ops: readonly EntityOp[]) {
+    let row = this.entity(entity, id)
+    for (const op of ops) row = op.kind === 'delete' ? null : { ...row, ...op.fields, id }
+    if (row)
+      this.db.run(`INSERT OR REPLACE INTO hub_entities (kind, id, data) VALUES (?, ?, ?)`, [
+        entity,
+        id,
+        JSON.stringify(row),
+      ])
+    else this.db.run(`DELETE FROM hub_entities WHERE kind = ? AND id = ?`, [entity, id])
+  }
+
+  private loadClock(): HlcClock {
+    const r = this.db.all<HlcClock>(`SELECT node, ms, counter FROM hub_clock LIMIT 1`)[0]
+    if (r) return { node: r.node, ms: r.ms, counter: r.counter }
+    const clock: HlcClock = { node: nodeId(), ms: 0, counter: 0 }
+    this.db.run(`INSERT INTO hub_clock (node, ms, counter) VALUES (?, 0, 0)`, [clock.node])
+    return clock
   }
 
   private loadLookups() {
@@ -700,10 +877,18 @@ const RECIPIENTS_SQL = `json((SELECT json_group_array(DISTINCT e) FROM (
   SELECT lower(r.value ->> 'email') FROM messages m, json_each(m.data, '$.cc') r
   WHERE m.thread_id = t.id)))`
 
+/** The JSON fields every list read adds after folderIds. */
+const LIST_EXTRA = `'snoozedUntil', snoozed_until, 'reminder', json(reminder)`
+
 function listWhere(q: ListQuery): [string, SqlValue[]] {
+  // Matches the threads_reminders partial index exactly, so SQLite can use it.
+  const view =
+    q.split === REMINDERS
+      ? ['(snoozed_until IS NOT NULL OR reminder IS NOT NULL)', []]
+      : ['split = ?', [q.split]]
   return q.accountId
-    ? ['account_id = ? AND split = ?', [q.accountId, q.split]]
-    : ['split = ?', [q.split]]
+    ? [`account_id = ? AND ${view[0] as string}`, [q.accountId, ...(view[1] as SqlValue[])]]
+    : [view[0] as string, view[1] as SqlValue[]]
 }
 
 function toListItem(r: ThreadSqlRow): ThreadListItem {
@@ -719,6 +904,8 @@ function toListItem(r: ThreadSqlRow): ThreadListItem {
     starred: !!r.starred,
     hasAttachments: !!r.has_attachments,
     folderIds: JSON.parse(r.folder_ids) as string[],
+    snoozedUntil: r.snoozed_until,
+    reminder: r.reminder ? (JSON.parse(r.reminder) as Reminder) : null,
   }
 }
 
@@ -728,11 +915,38 @@ const queued = (env: OpEnvelope, sent: boolean): QueuedOp => ({
   sent,
 })
 
-const pick = ({ folderIds, unread, starred }: Overlayable): Overlayable => ({
+const pick = ({
   folderIds,
   unread,
   starred,
+  snoozedUntil,
+  reminder,
+}: Pick<
+  ThreadRow,
+  'folderIds' | 'unread' | 'starred' | 'snoozedUntil' | 'reminder'
+>): Overlayable => ({
+  folderIds,
+  unread,
+  starred,
+  snoozedUntil: snoozedUntil ?? null,
+  reminder: reminder ?? null,
 })
+
+/** Queued ops grouped by row, each group in queue order. */
+function groupOps(queue: readonly PendingEntityOp[]): [EntityKind, string, EntityOp[]][] {
+  const byRow = new Map<string, [EntityKind, string, EntityOp[]]>()
+  for (const { op } of queue) {
+    const key = `${op.entity}\0${op.id}`
+    let g = byRow.get(key)
+    if (!g) byRow.set(key, (g = [op.entity, op.id, []]))
+    g[2].push(op)
+  }
+  return [...byRow.values()]
+}
+
+/** A random 8-character base36 device id for HLC stamps. */
+const nodeId = () =>
+  Array.from({ length: 8 }, () => Math.floor(Math.random() * 36).toString(36)).join('')
 
 const marks = (n: number) => Array.from({ length: n }, () => '?').join(', ')
 

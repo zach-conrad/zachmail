@@ -4,6 +4,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Kbd } from '../app/Kbd'
 import { useData } from '../data/DataProvider'
 import { endInteraction } from '../lib/perf'
+import { SnoozePicker } from '../inbox/SnoozePicker'
+import { dueTime } from '../lib/format'
 import { useCommands } from '../lib/useCommands'
 import { isEmpty, recipientCount, toDraftRequest, toSendRequest, type Draft } from './draft'
 import { RecipientField } from './RecipientField'
@@ -28,6 +30,7 @@ export function Composer({ initial }: { initial: Draft }) {
   const [showCc, setShowCc] = useState(initial.cc.length > 0 || initial.bcc.length > 0)
   const [error, setError] = useState<string | null>(null)
   const [contacts, setContacts] = useState<readonly ContactRow[]>([])
+  const [reminding, setReminding] = useState(false)
   const saved = useRef(false)
   const dirty = useRef(false)
   const latest = useRef(d)
@@ -90,7 +93,16 @@ export function Composer({ initial }: { initial: Draft }) {
     triage.sendMail(req, `Sending “${what}”`, () => compose.open(d))
   }
 
-  useCommands({ 'compose.send': send, 'nav.back': close })
+  useCommands(
+    reminding
+      ? {}
+      : {
+          'compose.send': send,
+          'compose.remind': () =>
+            d.remindAt ? update({ remindAt: undefined }) : setReminding(true),
+          'nav.back': close,
+        },
+  )
 
   const account = accounts.get(d.accountId)
   const fromChoices = [...accounts.values()]
@@ -172,6 +184,20 @@ export function Composer({ initial }: { initial: Draft }) {
           <button type="button" className="send" onClick={send}>
             Send <Kbd keys="mod+enter" />
           </button>
+          {d.remindAt ? (
+            <button
+              type="button"
+              className="compose-link compose-remind"
+              title="Remove reminder"
+              onClick={() => update({ remindAt: undefined })}
+            >
+              ⏰ If no reply by {dueTime(d.remindAt)} ×
+            </button>
+          ) : (
+            <button type="button" className="compose-link" onClick={() => setReminding(true)}>
+              Remind me <Kbd keys="mod+shift+r" />
+            </button>
+          )}
           {error && (
             <span className="compose-error" role="alert">
               {error}
@@ -186,6 +212,13 @@ export function Composer({ initial }: { initial: Draft }) {
           </button>
         </footer>
       </section>
+      {reminding && (
+        <SnoozePicker
+          title="Remind me if no reply"
+          onPick={(at) => update({ remindAt: at })}
+          onClose={() => setReminding(false)}
+        />
+      )}
     </div>
   )
 }

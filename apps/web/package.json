@@ -29,6 +29,7 @@
     "@zachhub/config": "workspace:*",
     "@zachhub/core": "workspace:*",
     "@zachhub/local-store": "workspace:*",
+    "@zachhub/tasks-web": "workspace:*",
     "@zachhub/tokens": "workspace:*",
     "eslint-plugin-react-hooks": "^7.1.1",
     "size-limit": "^14.2.0",

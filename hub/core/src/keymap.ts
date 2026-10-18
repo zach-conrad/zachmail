@@ -59,6 +59,12 @@ export const keymap = [
   { id: 'compose.replyAll', label: 'Reply all', group: 'compose', keys: ['a'] },
   { id: 'compose.forward', label: 'Forward', group: 'compose', keys: ['f'] },
   { id: 'compose.send', label: 'Send', group: 'compose', keys: ['mod+enter'] },
+  {
+    id: 'compose.remind',
+    label: 'Remind me if no reply',
+    group: 'compose',
+    keys: ['mod+shift+r'],
+  },
   { id: 'compose.snippets', label: 'Insert snippet', group: 'compose', keys: ['mod+;'] },
   { id: 'compose.instantIntro', label: 'Instant intro', group: 'compose', keys: ['mod+shift+i'] },
   { id: 'nudge.dismiss', label: 'Dismiss follow-up', group: 'triage', keys: [] },
