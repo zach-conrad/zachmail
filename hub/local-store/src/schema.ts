@@ -1,7 +1,8 @@
+import { editableDrop, editableSchema } from './editable'
 import { SPLIT_RULES_DROP, SPLIT_RULES_SCHEMA } from './splitRules'
 
 /** Bump when the client schema changes; the replica is dropped and bootstrapped again. */
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 export const SCHEMA = /* sql */ `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -28,10 +29,15 @@ CREATE TABLE IF NOT EXISTS threads (
   -- Split inputs cached by the last full classify, so a rule edit re-splits without joins.
   split_from TEXT,
   list_unsub INTEGER NOT NULL DEFAULT 0,
-  -- The server's {folderIds, unread, starred} while pending ops overlay this row, else NULL.
+  snoozed_until INTEGER,
+  -- {at, condition} JSON, or NULL.
+  reminder TEXT,
+  -- The server's overlayable fields (see Overlayable) while pending ops overlay this row.
   srv TEXT
 );
 CREATE INDEX IF NOT EXISTS threads_split ON threads (split, last_message_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS threads_reminders ON threads (last_message_at DESC, id DESC)
+  WHERE snoozed_until IS NOT NULL OR reminder IS NOT NULL;
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
   thread_id TEXT NOT NULL,
@@ -67,7 +73,9 @@ CREATE TABLE IF NOT EXISTS hub_entities (
 CREATE TABLE IF NOT EXISTS hub_entity_ops (seq INTEGER PRIMARY KEY AUTOINCREMENT, op TEXT NOT NULL);
 -- This device's HLC (one row), so stamps keep increasing across restarts.
 CREATE TABLE IF NOT EXISTS hub_clock (node TEXT NOT NULL, ms INTEGER NOT NULL, counter INTEGER NOT NULL);
-${SPLIT_RULES_SCHEMA}`
+${SPLIT_RULES_SCHEMA}
+${editableSchema('snippets')}
+${editableSchema('nudge_dismissals')}`
 
 /**
  * Drops the replica for a schema change. hub_entity_ops and hub_clock survive: they hold
@@ -82,4 +90,6 @@ DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS bodies;
 DROP TABLE IF EXISTS pending_ops;
 DROP TABLE IF EXISTS hub_entities;
-${SPLIT_RULES_DROP}`
+${SPLIT_RULES_DROP}
+${editableDrop('snippets')}
+${editableDrop('nudge_dismissals')}`

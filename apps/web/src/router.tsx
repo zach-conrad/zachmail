@@ -7,7 +7,7 @@ import {
 } from '@tanstack/react-router'
 import { lazy, Suspense, useMemo } from 'react'
 import { Shell } from './app/Shell'
-import { isSplitKey } from './app/splits'
+import { isView } from './app/splits'
 import { LoginScreen } from './auth/LoginScreen'
 import { useAuth } from './auth/session'
 import { DataProvider, useData } from './data/DataProvider'
@@ -45,13 +45,13 @@ const inboxRoute = createRoute({
   validateSearch: (s: Record<string, unknown>): { thread?: string } =>
     typeof s.thread === 'string' ? { thread: s.thread } : {},
   beforeLoad: ({ params }) => {
-    if (!isSplitKey(params.split))
+    if (!isView(params.split))
       throw redirect({ to: '/inbox/$split', params: { split: 'important' } })
   },
   component: function InboxRoute() {
     const { split } = inboxRoute.useParams()
     const { thread } = inboxRoute.useSearch()
-    return <Shell split={isSplitKey(split) ? split : 'important'} openThread={thread ?? null} />
+    return <Shell split={isView(split) ? split : 'important'} openThread={thread ?? null} />
   },
 })
 

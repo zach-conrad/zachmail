@@ -1,6 +1,10 @@
 import {
   applyEffect,
+  DEFAULT_NUDGE_AFTER_MS,
+  DEFAULT_NUDGE_WINDOW_MS,
   compileSplitRules,
+  followUpNudge,
+  type ComposerEdit,
   inboundSender,
   opEffect,
   parseEntityOpsRequest,
@@ -14,14 +18,19 @@ import {
   type EntityRow,
   type FolderKind,
   type FolderRow,
+  type FollowUpNudge,
   type HlcClock,
   type MessageBody,
   type MessageRow,
+  type NudgeDismissalRow,
+  type NudgeOptions,
   type OpEnvelope,
   type OpStatusRow,
+  type Reminder,
   type PendingEntityOp,
   type Rows,
   type CompiledSplitRules,
+  type SnippetRow,
   type SplitKey,
   type SplitRuleRow,
   type SyncSink,
@@ -29,6 +38,7 @@ import {
 } from '@zachhub/core'
 import type { SqlDriver, SqlValue } from './driver'
 import { DROP_ALL, SCHEMA, SCHEMA_VERSION } from './schema'
+import { EditableTable } from './editable'
 import { SplitRuleTable, type PendingSplitRule } from './splitRules'
 
 /** One row of the inbox list: only what ThreadRow renders. */
@@ -44,13 +54,24 @@ export interface ThreadListItem {
   starred: boolean
   hasAttachments: boolean
   folderIds: string[]
+  /** Epoch ms a snoozed thread comes back, else null. */
+  snoozedUntil: number | null
+  reminder: Reminder | null
 }
 
+/** The Reminders view (design §2): snoozed threads and threads with a reminder set. */
+export const REMINDERS = 'reminders'
+
 export interface ListQuery {
-  /** A built-in split id or a custom split rule id. */
+  /** A built-in split id, a custom split rule id, or REMINDERS. */
   split: SplitKey
   /** Account scope; null or absent means all accounts. */
   accountId?: string | null
+}
+
+/** A follow-up nudge with the row the list renders. */
+export interface FollowUpItem extends FollowUpNudge {
+  thread: ThreadListItem
 }
 
 export interface ThreadDetail {
@@ -123,6 +144,19 @@ export interface StoreApi extends SyncSink {
   resplitPending(): number
   resplitStep(max?: number): number
 
+  // ---- Snippets and follow-up nudges ------------------------------------------------------
+  /** Snippets with unsent local edits on top, by name. */
+  snippets(): SnippetRow[]
+  /** Saves (snippet) or deletes (null) a snippet locally. */
+  editSnippet(id: string, snippet: SnippetRow | null): void
+  /** Hides (dismiss) or brings back the nudges on these threads, locally first. */
+  dismissNudges(threadIds: readonly string[], dismiss: boolean): void
+  /** Due follow-up nudges at `now`, most recently due first, at most `limit`. */
+  followUps(now: number, opts?: NudgeOptions, limit?: number): FollowUpItem[]
+  /** Local snippet and dismissal edits the server has not accepted yet, oldest first. */
+  composerEdits(): ComposerEdit[]
+  ackComposerEdit(sent: ComposerEdit): void
+  rejectComposerEdit(sent: ComposerEdit): void
   // ---- First-party entities -------------------------------------------------------------
   /**
    * Stamps each write with this device's clock, applies it to the replica (a put merges its
@@ -144,6 +178,8 @@ interface Overlayable {
   folderIds: string[]
   unread: boolean
   starred: boolean
+  snoozedUntil: number | null
+  reminder: Reminder | null
 }
 
 interface QueuedOp {
@@ -166,6 +202,8 @@ interface ThreadSqlRow {
   starred: number
   has_attachments: number
   folder_ids: string
+  snoozed_until: number | null
+  reminder: string | null
 }
 
 export class SqlStore implements StoreApi {
@@ -175,6 +213,8 @@ export class SqlStore implements StoreApi {
   private folderOf = new Map<string, Map<FolderKind, string>>()
   private ops: QueuedOp[] = []
   private rules: SplitRuleTable
+  private snippetRows: EditableTable<SnippetRow>
+  private dismissals: EditableTable<NudgeDismissalRow>
   private compiled: CompiledSplitRules = compileSplitRules([])
   /** Threads a rules change moves, written a chunk at a time by `resplitStep`. */
   private resplitIds: string[] = []
@@ -193,6 +233,8 @@ export class SqlStore implements StoreApi {
       String(SCHEMA_VERSION),
     ])
     this.rules = new SplitRuleTable(db)
+    this.snippetRows = new EditableTable(db, 'snippets')
+    this.dismissals = new EditableTable(db, 'nudge_dismissals')
     this.loadLookups()
     this.ops = this.db
       .all<{ envelope: string; sent: number }>(
@@ -222,6 +264,8 @@ export class SqlStore implements StoreApi {
       this.db.run(`DELETE FROM pending_ops WHERE sent = 1`)
       // The snapshot resends every rule; unsent local edits stay on top.
       this.rules.clearSynced()
+      this.snippetRows.clearSynced()
+      this.dismissals.clearSynced()
       // Unacked entity writes stay queued and on screen, rows created offline included; the
       // snapshot's rows get them re-applied as they arrive.
       this.db.run(`DELETE FROM hub_entities`)
@@ -264,11 +308,13 @@ export class SqlStore implements StoreApi {
       if (upserts.threads?.length) {
         this.db.run(
           `INSERT OR REPLACE INTO threads (id, account_id, subject, snippet, participants,
-             last_message_at, message_count, unread, starred, has_attachments, folder_ids)
+             last_message_at, message_count, unread, starred, has_attachments, folder_ids,
+             snoozed_until, reminder)
            SELECT value ->> 'id', value ->> 'accountId', value ->> 'subject',
              value ->> 'snippet', json(value -> 'participants'), value ->> 'lastMessageAt',
              value ->> 'messageCount', value ->> 'unread', value ->> 'starred',
-             value ->> 'hasAttachments', json(value -> 'folderIds')
+             value ->> 'hasAttachments', json(value -> 'folderIds'), value ->> 'snoozedUntil',
+             nullif(json(value -> 'reminder'), 'null')
            FROM jsonb_each(?)`,
           [JSON.stringify(upserts.threads)],
         )
@@ -317,6 +363,8 @@ export class SqlStore implements StoreApi {
         this.compiled = compileSplitRules(this.rules.effective())
         rulesChanged = JSON.stringify(this.compiled.rules) !== before
       }
+      this.snippetRows.applySynced(upserts.snippets, deletes?.snippet ?? [])
+      this.dismissals.applySynced(upserts.nudgeDismissals, deletes?.nudgeDismissal ?? [])
       if (lookupsChanged) this.loadLookups()
       // Fresh server rows replaced any overlay; put pending ops back on top of them.
       if (this.ops.length && upserts.threads?.length) {
@@ -370,7 +418,7 @@ export class SqlStore implements StoreApi {
          'lastMessageAt', last_message_at, 'messageCount', message_count,
          'unread', json('true'), 'starred', json(iif(starred, 'true', 'false')),
          'hasAttachments', json(iif(has_attachments, 'true', 'false')),
-         'folderIds', json(folder_ids))) AS j
+         'folderIds', json(folder_ids), ${LIST_EXTRA})) AS j
        FROM (SELECT * FROM threads WHERE ${where} AND unread = 1 AND last_message_at > ?
              ORDER BY last_message_at DESC, id DESC LIMIT ?)`,
       [...params, since, limit],
@@ -387,7 +435,7 @@ export class SqlStore implements StoreApi {
          'unread', json(iif(unread, 'true', 'false')),
          'starred', json(iif(starred, 'true', 'false')),
          'hasAttachments', json(iif(has_attachments, 'true', 'false')),
-         'folderIds', json(folder_ids))) AS j
+         'folderIds', json(folder_ids), ${LIST_EXTRA})) AS j
        FROM (SELECT * FROM threads WHERE ${where}
              ORDER BY last_message_at DESC, id DESC LIMIT ? OFFSET ?)`,
       [...params, limit, offset],
@@ -399,8 +447,15 @@ export class SqlStore implements StoreApi {
       `SELECT last_message_at, split, account_id FROM threads WHERE id = ?`,
       [threadId],
     )[0]
-    if (!t || t.split !== q.split || (q.accountId && t.account_id !== q.accountId)) return -1
+    if (!t || (q.accountId && t.account_id !== q.accountId)) return -1
     const [where, params] = listWhere(q)
+    if (q.split === REMINDERS) {
+      const inView = this.db.all(`SELECT 1 FROM threads WHERE id = ? AND ${where}`, [
+        threadId,
+        ...params,
+      ])
+      if (!inView.length) return -1
+    } else if (t.split !== q.split) return -1
     return this.db.all<{ n: number }>(
       `SELECT count(*) AS n FROM threads WHERE ${where}
          AND (last_message_at > ? OR (last_message_at = ? AND id > ?))`,
@@ -590,21 +645,34 @@ export class SqlStore implements StoreApi {
    * touches them, in order. Rows with nothing queued drop their overlay. Does not reclassify.
    */
   private rebase(threadIds: readonly string[], fold: readonly QueuedOp[] = []) {
-    type Row = [id: string, accountId: string, f: string[], u: number, s: number, srv: Overlayable]
+    type Row = [
+      id: string,
+      accountId: string,
+      f: string[],
+      u: number,
+      s: number,
+      z: number | null,
+      r: Reminder | null,
+      srv: Overlayable | null,
+    ]
     const rows = chunks([...new Set(threadIds)]).flatMap((ids) =>
       this.json<Row[]>(
         `SELECT json_group_array(json_array(id, account_id, json(folder_ids), unread, starred,
-           json(srv))) AS j FROM threads WHERE id IN (${marks(ids.length)})`,
+           snoozed_until, json(reminder), json(srv))) AS j FROM threads
+         WHERE id IN (${marks(ids.length)})`,
         ids,
       ),
     )
-    const out: [string, string, number, number, string | null][] = []
-    for (const [id, accountId, f, u, s, srv] of rows) {
+    const out: [string, string, number, number, number | null, string | null, string | null][] = []
+    for (const [id, accountId, f, u, s, z, r, srv] of rows) {
       const kinds = this.folderOf.get(accountId)
       const effect = (o: QueuedOp) => opEffect(o.env.op, (k) => kinds?.get(k))
-      const step = (t: Overlayable, o: QueuedOp) =>
-        o.threads.has(id) ? applyEffect(t as Overlayable & ThreadRow, effect(o)) : t
-      const server = fold.reduce(step, srv ?? { folderIds: f, unread: !!u, starred: !!s })
+      const step = (t: Overlayable, o: QueuedOp): Overlayable =>
+        o.threads.has(id) ? pick(applyEffect(t as Overlayable & ThreadRow, effect(o))) : t
+      const server = fold.reduce(
+        step,
+        srv ?? { folderIds: f, unread: !!u, starred: !!s, snoozedUntil: z, reminder: r },
+      )
       const mine = this.ops.filter((o) => o.threads.has(id))
       const now = mine.reduce(step, server)
       out.push([
@@ -612,13 +680,16 @@ export class SqlStore implements StoreApi {
         JSON.stringify(now.folderIds),
         +now.unread,
         +now.starred,
+        now.snoozedUntil ?? null,
+        now.reminder ? JSON.stringify(now.reminder) : null,
         mine.length ? JSON.stringify(pick(server)) : null,
       ])
     }
     if (out.length)
       this.db.run(
         `UPDATE threads SET folder_ids = c.value ->> 1, unread = c.value ->> 2,
-           starred = c.value ->> 3, srv = c.value ->> 4
+           starred = c.value ->> 3, snoozed_until = c.value ->> 4, reminder = c.value ->> 5,
+           srv = c.value ->> 6
          FROM jsonb_each(?) AS c WHERE threads.id = c.value ->> 0`,
         [JSON.stringify(out)],
       )
@@ -731,6 +802,75 @@ export class SqlStore implements StoreApi {
     this.queueResplit()
   }
 
+  // ---- Snippets and follow-up nudges ------------------------------------------------------
+
+  snippets(): SnippetRow[] {
+    return this.snippetRows.effective().sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  editSnippet(id: string, snippet: SnippetRow | null): void {
+    this.tx(() => this.snippetRows.edit(id, snippet))
+  }
+
+  dismissNudges(threadIds: readonly string[], dismiss: boolean): void {
+    this.tx(() => {
+      for (const ids of chunks(threadIds))
+        for (const t of this.db.all<{ id: string; at: number }>(
+          `SELECT id, last_message_at AS at FROM threads WHERE id IN (${marks(ids.length)})`,
+          ids,
+        ))
+          this.dismissals.edit(t.id, dismiss ? { id: t.id, lastMessageAt: t.at } : null)
+    })
+  }
+
+  followUps(now: number, opts: NudgeOptions = {}, limit = 100): FollowUpItem[] {
+    const own = [...this.ownEmails]
+    if (!own.length) return []
+    const after = opts.afterMs ?? DEFAULT_AFTER
+    const window = opts.windowMs ?? DEFAULT_WINDOW
+    // Candidates: threads whose latest message is Zach's, in the nudge window. The age and
+    // sender filters run in SQLite so only a handful of rows cross into JS.
+    const rows = this.db.all<ThreadSqlRow & { mdata: string }>(
+      `SELECT t.*, m.data AS mdata FROM threads t
+       JOIN messages m ON m.id = (SELECT l.id FROM messages l WHERE l.thread_id = t.id
+         ORDER BY l.date DESC, l.id DESC LIMIT 1)
+       WHERE t.last_message_at BETWEEN ? AND ? AND m.from_email IN (${marks(own.length)})`,
+      [now - window, now - after, ...own],
+    )
+    if (!rows.length) return []
+    const skipFolderIds = new Set(
+      [...this.folderKind].filter(([, k]) => k === 'trash' || k === 'spam').map(([id]) => id),
+    )
+    const dismissals = new Map(this.dismissals.effective().map((d) => [d.id, d.lastMessageAt]))
+    const ctx = { ownEmails: this.ownEmails, skipFolderIds, dismissals, now }
+    const out: FollowUpItem[] = []
+    for (const r of rows) {
+      const thread = toListItem(r)
+      const n = followUpNudge(thread, [JSON.parse(r.mdata) as MessageRow], ctx, opts)
+      if (n) out.push({ ...n, thread })
+    }
+    return out.sort((a, b) => b.dueAt - a.dueAt).slice(0, limit)
+  }
+
+  composerEdits(): ComposerEdit[] {
+    return [
+      ...this.snippetRows.pending().map((p) => ({ kind: 'snippet' as const, ...p })),
+      ...this.dismissals.pending().map((p) => ({ kind: 'nudge' as const, ...p })),
+    ]
+  }
+
+  ackComposerEdit(sent: ComposerEdit): void {
+    this.tx(() =>
+      sent.kind === 'snippet' ? this.snippetRows.ack(sent) : this.dismissals.ack(sent),
+    )
+  }
+
+  rejectComposerEdit(sent: ComposerEdit): void {
+    this.tx(() =>
+      sent.kind === 'snippet' ? this.snippetRows.reject(sent.id) : this.dismissals.reject(sent.id),
+    )
+  }
+
   /** Runs a query whose single row/column is JSON text, so results cross wasm in one string. */
   private json<T>(sql: string, params: readonly SqlValue[] = []): T {
     const r = this.db.all<{ j: string | null }>(sql, params)[0]
@@ -832,6 +972,8 @@ export class SqlStore implements StoreApi {
 type SplitChange = [id: string, split: SplitKey | null, from: string | null, listUnsub: number]
 
 const RESPLIT_CHUNK = 200
+const DEFAULT_AFTER = DEFAULT_NUDGE_AFTER_MS
+const DEFAULT_WINDOW = DEFAULT_NUDGE_WINDOW_MS
 
 // Every to/cc address in a thread, lowercased, as a JSON array.
 const RECIPIENTS_SQL = `json((SELECT json_group_array(DISTINCT e) FROM (
@@ -841,10 +983,18 @@ const RECIPIENTS_SQL = `json((SELECT json_group_array(DISTINCT e) FROM (
   SELECT lower(r.value ->> 'email') FROM messages m, json_each(m.data, '$.cc') r
   WHERE m.thread_id = t.id)))`
 
+/** The JSON fields every list read adds after folderIds. */
+const LIST_EXTRA = `'snoozedUntil', snoozed_until, 'reminder', json(reminder)`
+
 function listWhere(q: ListQuery): [string, SqlValue[]] {
+  // Matches the threads_reminders partial index exactly, so SQLite can use it.
+  const view =
+    q.split === REMINDERS
+      ? ['(snoozed_until IS NOT NULL OR reminder IS NOT NULL)', []]
+      : ['split = ?', [q.split]]
   return q.accountId
-    ? ['account_id = ? AND split = ?', [q.accountId, q.split]]
-    : ['split = ?', [q.split]]
+    ? [`account_id = ? AND ${view[0] as string}`, [q.accountId, ...(view[1] as SqlValue[])]]
+    : [view[0] as string, view[1] as SqlValue[]]
 }
 
 function toListItem(r: ThreadSqlRow): ThreadListItem {
@@ -860,6 +1010,8 @@ function toListItem(r: ThreadSqlRow): ThreadListItem {
     starred: !!r.starred,
     hasAttachments: !!r.has_attachments,
     folderIds: JSON.parse(r.folder_ids) as string[],
+    snoozedUntil: r.snoozed_until,
+    reminder: r.reminder ? (JSON.parse(r.reminder) as Reminder) : null,
   }
 }
 
@@ -869,10 +1021,21 @@ const queued = (env: OpEnvelope, sent: boolean): QueuedOp => ({
   sent,
 })
 
-const pick = ({ folderIds, unread, starred }: Overlayable): Overlayable => ({
+const pick = ({
   folderIds,
   unread,
   starred,
+  snoozedUntil,
+  reminder,
+}: Pick<
+  ThreadRow,
+  'folderIds' | 'unread' | 'starred' | 'snoozedUntil' | 'reminder'
+>): Overlayable => ({
+  folderIds,
+  unread,
+  starred,
+  snoozedUntil: snoozedUntil ?? null,
+  reminder: reminder ?? null,
 })
 
 /** Queued ops grouped by row, each group in queue order. */
