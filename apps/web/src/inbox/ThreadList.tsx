@@ -13,7 +13,7 @@ import {
 } from 'react'
 import { useData } from '../data/DataProvider'
 import type { ListModel } from '../data/listModel'
-import { senderLabel, shortTime } from '../lib/format'
+import { dueTime, senderLabel, shortTime } from '../lib/format'
 
 export const ROW = tokens.row.compact
 const OVERSCAN = 8
@@ -114,6 +114,7 @@ const Row = memo(function Row({
   const account = accounts.get(item.accountId)
   const sender = senderLabel(item.participants, ownEmails)
   const when = shortTime(item.lastMessageAt)
+  const due = item.snoozedUntil ?? item.reminder?.at ?? null
   return (
     <div
       id={`row-${item.id}`}
@@ -124,6 +125,7 @@ const Row = memo(function Row({
         sender,
         item.subject,
         when,
+        due !== null ? `${item.snoozedUntil ? 'Snoozed until' : 'Reminder'} ${dueTime(due)}` : '',
         account ? `${account.shortName ?? account.email} account` : '',
       ]
         .filter(Boolean)
@@ -155,6 +157,11 @@ const Row = memo(function Row({
         {item.hasAttachments && '📎'}
         {item.starred && '★'}
       </span>
+      {due !== null && (
+        <span className="row-due" title={item.snoozedUntil ? 'Snoozed' : 'Reminder'}>
+          ⏰ {dueTime(due)}
+        </span>
+      )}
       <time className="row-time" dateTime={new Date(item.lastMessageAt).toISOString()}>
         {when}
       </time>

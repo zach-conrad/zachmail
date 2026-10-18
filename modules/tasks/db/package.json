@@ -1,0 +1,23 @@
+{
+  "name": "@zachhub/tasks-db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@zachhub/db": "workspace:*",
+    "drizzle-orm": "^0.45.4"
+  },
+  "devDependencies": {
+    "@zachhub/config": "workspace:*",
+    "@zachhub/core": "workspace:*",
+    "@zachhub/tasks-core": "workspace:*"
+  }
+}

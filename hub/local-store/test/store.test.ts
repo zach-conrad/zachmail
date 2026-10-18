@@ -1,5 +1,15 @@
-import type { FolderRow, MessageRow, OpEnvelope, SplitRuleRow, ThreadRow } from '@zachhub/core'
-import { beforeEach, describe, expect, it } from 'vitest'
+import {
+  isHlc,
+  parseHlc,
+  type EntityDeltas,
+  type EntityRow,
+  type FolderRow,
+  type MessageRow,
+  type OpEnvelope,
+  type SplitRuleRow,
+  type ThreadRow,
+} from '@zachhub/core'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { openSqliteWasm } from '../src/sqlite-wasm'
 import { SqlStore } from '../src/store'
 
@@ -196,6 +206,29 @@ describe('SqlStore pending ops', () => {
     expect(store.getThread('t2')!.thread.lastMessageAt).toBe(3)
   })
 
+  it('moves snoozed threads to Reminders and back, and stores server reminders', () => {
+    seed()
+    const reminders = () => store.listThreads({ split: 'reminders' }, 0, 10)
+    expect(reminders()).toEqual([])
+    store.enqueueOp(env('o1', { kind: 'snooze', threadIds: ['t2'], until: 9000 }))
+    expect(ids()).toEqual(['t1'])
+    expect(reminders()).toMatchObject([{ id: 't2', snoozedUntil: 9000, reminder: null }])
+    expect(store.countThreads({ split: 'reminders' })).toBe(1)
+    expect(store.indexOfThread({ split: 'reminders' }, 't2')).toBe(0)
+    expect(store.indexOfThread({ split: 'reminders' }, 't1')).toBe(-1)
+    // Done ends the snooze.
+    store.enqueueOp(env('o2', { kind: 'archive', threadIds: ['t2'] }))
+    expect(reminders()).toEqual([])
+    store.settleOps(['o1', 'o2'])
+    expect(ids()).toEqual(['t2', 't1'])
+
+    const reminder = { at: 5000, condition: 'if_no_reply' as const }
+    store.apply({ threads: [{ ...thread('t1', 1, ['inbox', 'imp']), reminder }] }, null, 3)
+    expect(reminders()).toMatchObject([{ id: 't1', snoozedUntil: null, reminder }])
+    expect(store.listThreads({ split: 'important' }, 1, 1)[0]!.reminder).toEqual(reminder)
+    expect(store.getThread('t1')!.thread.reminder).toEqual(reminder)
+  })
+
   it('restores server state when an op fails, and drops it when done', () => {
     seed()
     store.enqueueOp(env('o1', { kind: 'archive', threadIds: ['t1'] }))
@@ -342,4 +375,116 @@ describe('split rules', () => {
     // Runs in the data worker, off the UI thread; keep it well under a second.
     expect(best).toBeLessThan(1000)
   }, 30_000)
+})
+
+describe('first-party entities', () => {
+  const T = 'tasks.task'
+  const id1 = '00000000-0000-4000-8000-000000000001'
+  const id2 = '00000000-0000-4000-8000-000000000002'
+  const deltas = (upserts: EntityRow[], deletes: string[] = []): EntityDeltas => ({
+    [T]: { upserts, deletes },
+  })
+
+  it('applies server rows and deletes', () => {
+    store.apply(
+      {},
+      null,
+      1,
+      [],
+      deltas([
+        { id: id1, title: 'a' },
+        { id: id2, title: 'b' },
+      ]),
+    )
+    expect(store.entities(T)).toEqual([
+      { id: id1, title: 'a' },
+      { id: id2, title: 'b' },
+    ])
+    store.apply({}, null, 2, [], deltas([{ id: id1, title: 'a2' }], [id2]))
+    expect(store.entities(T)).toEqual([{ id: id1, title: 'a2' }])
+    expect(store.entity(T, id2)).toBeNull()
+    expect(store.entities('hub.link')).toEqual([])
+  })
+
+  it('applies writes at once and keeps unacked fields over older server rows', () => {
+    store.apply({}, null, 1, [], deltas([{ id: id1, title: 'a', done: false }]))
+    const [op] = store.entityWrite([{ kind: 'put', entity: T, id: id1, fields: { done: true } }])
+    expect(op).toMatchObject({ kind: 'put', entity: T, id: id1, fields: { done: true } })
+    expect(isHlc(op!.hlc)).toBe(true)
+    // A new row from this device, created before the server has heard of it.
+    store.entityWrite([{ kind: 'put', entity: T, id: id2, fields: { title: 'new' } }])
+    expect(store.entities(T)).toEqual([
+      { id: id1, title: 'a', done: true },
+      { id: id2, title: 'new' },
+    ])
+    // A delta from before the write: another device's title change lands, our done stays.
+    store.apply({}, null, 2, [], deltas([{ id: id1, title: 'b', done: false }]))
+    expect(store.entity(T, id1)).toEqual({ id: id1, title: 'b', done: true })
+    expect(store.pendingEntityOps(10).map((p) => p.op.id)).toEqual([id1, id2])
+    expect(store.pendingEntityOps(1)).toHaveLength(1)
+    // Once acked, server rows are taken as they are.
+    store.ackEntityOps(store.pendingEntityOps(10).map((p) => p.seq))
+    expect(store.pendingEntityOps(10)).toEqual([])
+    store.apply({}, null, 3, [], deltas([{ id: id1, title: 'b', done: false }]))
+    expect(store.entity(T, id1)).toEqual({ id: id1, title: 'b', done: false })
+  })
+
+  it('keeps a pending delete over a server row, and a server delete is final', () => {
+    store.apply(
+      {},
+      null,
+      1,
+      [],
+      deltas([
+        { id: id1, title: 'a' },
+        { id: id2, title: 'b' },
+      ]),
+    )
+    store.entityWrite([
+      { kind: 'delete', entity: T, id: id1 },
+      { kind: 'put', entity: T, id: id2, fields: { title: 'b2' } },
+    ])
+    expect(store.entities(T)).toEqual([{ id: id2, title: 'b2' }])
+    store.apply({}, null, 2, [], deltas([{ id: id1, title: 'a' }]))
+    expect(store.entity(T, id1)).toBeNull()
+    store.apply({}, null, 3, [], deltas([], [id2]))
+    expect(store.entities(T)).toEqual([])
+  })
+
+  it('refuses malformed writes without queueing them', () => {
+    expect(() =>
+      store.entityWrite([{ kind: 'put', entity: T, id: 'nope', fields: { title: 'x' } }]),
+    ).toThrow()
+    expect(store.pendingEntityOps(10)).toEqual([])
+    expect(store.entities(T)).toEqual([])
+  })
+
+  it('reset drops synced rows but keeps unacked writes on screen', () => {
+    store.apply({}, null, 1, [], deltas([{ id: id1, title: 'a' }]))
+    store.entityWrite([{ kind: 'put', entity: T, id: id2, fields: { title: 'offline' } }])
+    store.reset()
+    expect(store.entities(T)).toEqual([{ id: id2, title: 'offline' }])
+    expect(store.pendingEntityOps(10)).toHaveLength(1)
+    store.apply({}, null, null, [], deltas([{ id: id1, title: 'a' }]))
+    expect(store.entities(T).map((r) => r.id)).toEqual([id1, id2])
+  })
+
+  it('persists queued writes and the clock across restarts', async () => {
+    const { driver } = await openSqliteWasm()
+    const a = new SqlStore(driver)
+    const [first] = a.entityWrite([{ kind: 'put', entity: T, id: id1, fields: { title: 'a' } }])
+    // A restart must never reissue a stamp at or before one already handed out, even when the
+    // wall clock now reads earlier than it did then.
+    const future = Date.now() + 60_000
+    const now = vi.spyOn(Date, 'now').mockReturnValue(future)
+    a.entityWrite([{ kind: 'put', entity: T, id: id1, fields: { title: 'b' } }])
+    now.mockRestore()
+    const b = new SqlStore(driver)
+    expect(b.pendingEntityOps(10)).toHaveLength(2)
+    expect(b.entity(T, id1)).toEqual({ id: id1, title: 'b' })
+    const [next] = b.entityWrite([{ kind: 'delete', entity: T, id: id1 }])
+    expect(parseHlc(next!.hlc).node).toBe(parseHlc(first!.hlc).node)
+    expect(parseHlc(next!.hlc).ms).toBe(future)
+    expect(next!.hlc > b.pendingEntityOps(10)[1]!.op.hlc).toBe(true)
+  })
 })

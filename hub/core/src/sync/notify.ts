@@ -117,16 +117,58 @@ export interface PushNotice {
 }
 
 /**
- * The encrypted Web Push body. `notices` holds at most MAX_PUSH_NOTICES; `more` counts the
- * rest so a burst becomes one summary instead of a wall of banners. `badge` is the Important
- * split's unread count (design §3.9), or null when unknown.
+ * A notification from any hub module (ZACHHUB_PLAN.md §3): a task alert, a mention. `kind` is
+ * namespaced like job kinds ('tasks.alert'); `deepLink` is an app path the click opens; `tag`
+ * de-duplicates, so a second notice with the same kind and tag (a task id) replaces the first
+ * instead of stacking, and iOS can drop the server copy of an alert it already fired locally.
  */
-export interface PushPayload {
-  v: 1
-  kind: 'mail' | 'test'
-  notices: PushNotice[]
-  more: number
-  badge: number | null
+export interface HubNotice {
+  kind: string
+  title: string
+  body: string
+  deepLink: string
+  tag?: string
 }
+
+export const HUB_NOTICE_LIMITS = { kind: 64, title: 120, body: 400, deepLink: 2048, tag: 128 }
+
+const NOTICE_KIND = /^[a-z][a-z0-9]*\.[a-z0-9][a-z0-9.-]*$/
+
+/** Same-origin app paths only: "/tasks/x", never "//evil.com" or "https://…". */
+export const isAppPath = (p: string) =>
+  p.length <= HUB_NOTICE_LIMITS.deepLink && /^\/(?![/\\])[^\s\\]*$/.test(p)
+
+export class InvalidHubNoticeError extends Error {
+  override name = 'InvalidHubNoticeError'
+}
+
+/** Validates a notice from a module or a queued job. Long titles and bodies are the sender's problem. */
+export function parseHubNotice(raw: unknown): HubNotice {
+  const n = (raw ?? {}) as Record<string, unknown>
+  const str = (k: string) => (typeof n[k] === 'string' ? (n[k] as string) : null)
+  const kind = str('kind')
+  if (!kind || kind.length > HUB_NOTICE_LIMITS.kind || !NOTICE_KIND.test(kind))
+    throw new InvalidHubNoticeError(`kind must be namespaced like 'tasks.alert'`)
+  const title = str('title')?.trim()
+  if (!title) throw new InvalidHubNoticeError('title is required')
+  const body = str('body')
+  if (body === null) throw new InvalidHubNoticeError('body must be a string')
+  const deepLink = str('deepLink')
+  if (!deepLink || !isAppPath(deepLink))
+    throw new InvalidHubNoticeError('deepLink must be an app path like /tasks/123')
+  const tag = n.tag === undefined ? undefined : str('tag')
+  if (tag === null || (tag !== undefined && (!tag || tag.length > HUB_NOTICE_LIMITS.tag)))
+    throw new InvalidHubNoticeError(`tag must be 1-${HUB_NOTICE_LIMITS.tag} characters`)
+  return { kind, title, body, deepLink, ...(tag === undefined ? {} : { tag }) }
+}
+
+/**
+ * The encrypted Web Push body. Mail: `notices` holds at most MAX_PUSH_NOTICES; `more` counts
+ * the rest so a burst becomes one summary instead of a wall of banners. Hub: one module notice.
+ * `badge` is the Important split's unread count (design §3.9), or null when unknown.
+ */
+export type PushPayload =
+  | { v: 1; kind: 'mail' | 'test'; notices: PushNotice[]; more: number; badge: number | null }
+  | { v: 1; kind: 'hub'; notice: HubNotice; badge: number | null }
 
 export const MAX_PUSH_NOTICES = 3

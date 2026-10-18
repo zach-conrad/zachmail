@@ -1,9 +1,10 @@
-import type { Deletes, OpStatusRow, Rows, SyncDelta } from '@zachhub/core'
+import type { Deletes, EntityRow, OpStatusRow, Rows, SyncDelta } from '@zachhub/core'
 import { emptyDeletes, emptyRows } from '@zachhub/core'
 import type { SyncBatch } from '@zachhub/providers'
 import { attachSentReminders, unsnoozeOnReply } from './snooze'
 import { SELECT_SPLIT_RULE, recomputeSplits } from './splits'
 import { SELECT_NUDGE_DISMISSAL, SELECT_SNIPPET } from './composer'
+import { loadEntities, readEntityDeltas, type EntityRegistry } from './entities'
 import type { Db, Queryable } from './sql'
 
 type Entity = keyof Deletes
@@ -11,7 +12,8 @@ type Entity = keyof Deletes
 export async function recordChanges(
   tx: Queryable,
   userId: string,
-  entity: Entity | 'op',
+  /** A mail entity, 'op', or a namespaced first-party kind ('tasks.task'). */
+  entity: Entity | 'op' | (string & {}),
   ids: string[],
   op: 'upsert' | 'delete',
 ) {
@@ -308,6 +310,7 @@ export async function readDelta(
   userId: string,
   since: number,
   limit = 5000,
+  entities?: EntityRegistry,
 ): Promise<SyncDelta> {
   return db.transaction(async (tx) => {
     const window = await tx.query<{ seq: number }>(
@@ -317,7 +320,7 @@ export async function readDelta(
     const more = window.length > limit
     const upTo = more ? window[limit - 1]!.seq : (window.at(-1)?.seq ?? since)
     const latest = await tx.query<{
-      entity: Entity | 'op'
+      entity: Entity | 'op' | (string & {})
       entity_id: string
       op: 'upsert' | 'delete'
     }>(
@@ -337,9 +340,14 @@ export async function readDelta(
     }
     const deletes = emptyDeletes()
     const opIds: string[] = []
+    const firstParty: typeof latest = []
     for (const c of latest) {
       if (c.entity === 'op') opIds.push(c.entity_id)
-      else (c.op === 'delete' ? deletes[c.entity] : want[c.entity]).push(c.entity_id)
+      else if (c.entity.includes('.')) firstParty.push(c)
+      else {
+        const e = c.entity as Entity
+        ;(c.op === 'delete' ? deletes[e] : want[e]).push(c.entity_id)
+      }
     }
 
     const upserts = emptyRows()
@@ -368,8 +376,9 @@ export async function readDelta(
     await load('nudgeDismissals', SELECT_NUDGE_DISMISSAL, 'n', want.nudgeDismissal)
 
     const ops = opIds.length ? await readOpStatuses(tx, userId, opIds) : []
-
-    return { seq: upTo, more, upserts, deletes, ops }
+    const delta: SyncDelta = { seq: upTo, more, upserts, deletes, ops }
+    if (entities) delta.entities = await readEntityDeltas(tx, userId, entities, firstParty)
+    return delta
   })
 }
 
@@ -412,6 +421,7 @@ export async function readBootstrap(
   days: number,
   onRows: (rows: Partial<Rows>) => void,
   chunk = 1000,
+  entities?: { registry: EntityRegistry; onRows: (kind: string, rows: EntityRow[]) => void },
 ): Promise<number> {
   return db.transaction(async (tx) => {
     await tx.query(`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`)
@@ -444,6 +454,12 @@ export async function readBootstrap(
       if (threads.length < chunk) break
       const last = threads.at(-1)!
       cursor = { at: last.lastMessageAt, id: last.id }
+    }
+    // First-party data is small and all of it is wanted offline: no window.
+    for (const t of entities?.registry.tables ?? []) {
+      const rows = await loadEntities(tx, userId, t, null)
+      for (let i = 0; i < rows.length; i += chunk)
+        entities!.onRows(t.kind, rows.slice(i, i + chunk))
     }
     return seq
   })

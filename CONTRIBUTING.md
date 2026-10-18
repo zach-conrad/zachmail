@@ -5,6 +5,8 @@
 - Speed budgets (architecture §1a) are hard requirements. Never put a network call on the click
   path; render from local state. Keep the initial web bundle under 200 KB gzip (`pnpm size`).
 - Every key binding lives in `hub/core/src/keymap.ts`; never hardcode keys in components.
+  Module screens keep their own scoped keymap in their core package (`modules/tasks/core/src/keymap.ts`)
+  until the hub kernel's module command registry lands.
 - Colors, type and spacing come from `hub/tokens/tokens.json` via CSS variables; no literal colors in CSS.
 - Server schema changes: edit `hub/db/src/server/schema.ts` and run `pnpm --filter @zachhub/db generate`;
   hand-written SQL goes in a `--custom` migration, and `hub/db/test` must still pass.
