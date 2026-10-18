@@ -361,6 +361,22 @@ describe('sync endpoints', () => {
     expect(await jobCount('notify.test')).toBe(1)
   })
 
+  it('exports everything as a restorable download and reports backup status', async () => {
+    const res = await authed('/api/export')
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-disposition')).toMatch(
+      /zachhub-export-\d{4}-\d{2}-\d{2}\.ndjson\.gz/,
+    )
+    const { parseBackup } = await import('@zachhub/backup')
+    const backup = parseBackup(new Uint8Array(await res.arrayBuffer()))
+    expect(backup.header.userId).toBe(USER)
+    expect(backup.rows.get('notification_settings')).toMatchObject([{ vips: ['mom@x.com'] }])
+    expect(await (await authed('/api/backup/status')).json()).toEqual({
+      latest: null,
+      lastOk: null,
+    })
+  })
+
   it('queues a send behind the undo window and undoes it', async () => {
     const accountId = (await db.query<{ id: string }>(`SELECT id FROM accounts LIMIT 1`))[0]!.id
     const id = '00000000-0000-4000-8000-0000000000f2'

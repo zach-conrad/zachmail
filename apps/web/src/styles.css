@@ -1000,3 +1000,100 @@ html[data-shell='macos'] body {
     transition-duration: 1ms !important;
   }
 }
+
+/* Snippets (design §3.4): the `;` menu under the composer body and ⌘; picker. */
+.snippet-menu {
+  margin: 0 var(--space-4) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-float);
+}
+.snippet-menu ul {
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+}
+.snippet-menu li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: default;
+}
+.snippet-menu li[aria-selected='true'] {
+  background: var(--row-focus);
+}
+.snippet-search {
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: var(--text);
+  font: 400 14px var(--font-ui);
+  outline: none;
+}
+.snippet-empty {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+}
+.snippet-body {
+  min-height: 140px;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: 400 14px/20px var(--font-ui);
+  resize: vertical;
+}
+.compose-notice {
+  color: var(--text-muted);
+}
+
+/* Follow-ups (g f) */
+.followups {
+  width: min(720px, calc(100% - 32px));
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-float);
+  animation: palette-in var(--dur-slow) var(--ease);
+}
+.followups-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4) var(--space-2);
+}
+.followups-head .section-label {
+  margin: 0;
+}
+.followup-row {
+  display: grid;
+  grid-template-columns: minmax(0, 180px) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+.followup-row[aria-selected='true'] {
+  background: var(--row-focus);
+  color: var(--text);
+}
+.followup-who,
+.followup-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.followup-who {
+  color: var(--text);
+  font-weight: 500;
+}

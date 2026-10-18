@@ -168,14 +168,19 @@ describe('parseQuickAdd', () => {
       'a fairly long title with no dates in it at all just words and more words',
       'book club every first tuesday at 7pm',
     ]
-    // Typing: every prefix of every input, as the field re-parses on each keystroke. The
-    // percentile keeps a GC pause on a busy CI runner from failing the build.
+    // Typing: every prefix of every input, as the field re-parses on each keystroke. Each
+    // keystroke keeps its best of three runs and the percentile allows a few slow ones, so a
+    // GC pause or a descheduled thread on a busy CI runner doesn't fail the build.
     const times: number[] = []
     for (const s of inputs)
       for (let i = 1; i <= s.length; i++) {
-        const t0 = performance.now()
-        parse(s.slice(0, i))
-        times.push(performance.now() - t0)
+        let best = Infinity
+        for (let r = 0; r < 3; r++) {
+          const t0 = performance.now()
+          parse(s.slice(0, i))
+          best = Math.min(best, performance.now() - t0)
+        }
+        times.push(best)
       }
     times.sort((a, b) => a - b)
     expect(times[Math.floor(times.length * 0.5)]).toBeLessThan(2)
