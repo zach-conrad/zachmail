@@ -5,6 +5,7 @@
 import type { ThreadAi } from './ai'
 import type { NudgeDismissalRow } from '../compose/nudges'
 import type { SnippetRow } from '../compose/snippets'
+import type { EntityDeltas, EntityRow } from '../hub/entities'
 import type { OpStatusRow } from './ops'
 import type { SplitRuleRow } from './split'
 
@@ -115,13 +116,19 @@ export interface SyncDelta {
   deletes: Deletes
   /** Status changes of ops this user POSTed to /api/ops (see ops.ts). */
   ops: OpStatusRow[]
+  /**
+   * First-party module entities ('tasks.task', 'hub.link'), keyed by kind. Absent from older
+   * servers; clients treat a missing map as empty.
+   */
+  entities?: EntityDeltas
 }
 
 /**
  * GET /api/bootstrap streams NDJSON: zero or more `{ rows }` chunks, then one `{ seq }` line.
  * Clients then continue with /api/sync?since=seq.
  */
-export type BootstrapLine = { rows: Partial<Rows> } | { seq: number }
+export type BootstrapLine =
+  { rows: Partial<Rows> } | { entities: Record<string, EntityRow[]> } | { seq: number }
 
 /** GET /api/messages/:id/body */
 export interface MessageBody {

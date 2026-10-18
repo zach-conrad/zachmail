@@ -110,7 +110,28 @@
     {
       "idx": 15,
       "version": "7",
-      "when": 1792074845197,
+      "when": 1792074754390,
+      "tag": "0015_hub_kernel",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792145952884,
+      "tag": "0016_hub_search",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792147575819,
+      "tag": "0017_tasks",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792321014487,
       "tag": "0018_backup_runs",
       "breakpoints": true
     }

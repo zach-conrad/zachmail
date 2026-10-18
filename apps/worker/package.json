@@ -15,6 +15,8 @@
     "@zachhub/backup": "workspace:*",
     "@zachhub/db": "workspace:*",
     "@zachhub/engine": "workspace:*",
+    "@zachhub/kernel": "workspace:*",
+    "@zachhub/modules": "workspace:*",
     "postgres": "^3.4.9"
   },
   "devDependencies": {
