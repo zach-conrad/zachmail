@@ -50,6 +50,9 @@ importers:
       '@zachhub/ai':
         specifier: workspace:*
         version: link:../../hub/ai
+      '@zachhub/backup':
+        specifier: workspace:*
+        version: link:../../hub/backup
       '@zachhub/core':
         specifier: workspace:*
         version: link:../../hub/core
@@ -151,6 +154,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@zachhub/backup':
+        specifier: workspace:*
+        version: link:../../hub/backup
       '@zachhub/db':
         specifier: workspace:*
         version: link:../../hub/db
@@ -189,6 +195,22 @@ importers:
       '@zachhub/config':
         specifier: workspace:*
         version: link:../config
+
+  hub/backup:
+    dependencies:
+      '@zachhub/db':
+        specifier: workspace:*
+        version: link:../db
+      postgres:
+        specifier: ^3.4.9
+        version: 3.4.9
+    devDependencies:
+      '@zachhub/config':
+        specifier: workspace:*
+        version: link:../config
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
 
   hub/config:
     devDependencies:

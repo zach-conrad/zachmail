@@ -7,6 +7,7 @@ import { aiRoutes } from './routes/ai'
 import { mcpOAuth, oauthRoutes, wellKnownRoutes } from './mcp/oauth'
 import { mcpRoutes } from './mcp/server'
 import { accountRoutes, oauthCallbackRoute } from './routes/accounts'
+import { backupRoutes } from './routes/backup'
 import { composerRoutes } from './routes/composer'
 import { entityRoutes } from './routes/entities'
 import { imageRoutes } from './routes/images'
@@ -51,6 +52,7 @@ export function createApp(env: Env, overrides: Partial<Deps> = {}) {
   authed.route('/', aiRoutes(deps))
   authed.route('/', composerRoutes(deps))
   authed.route('/', notificationRoutes(env, deps))
+  authed.route('/', backupRoutes(deps))
   authed.route('/', entityRoutes(deps))
   // Each module's own router at /api/<module> (ZACHHUB_PLAN.md §2.2).
   for (const m of deps.modules.modules) {

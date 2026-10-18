@@ -1,5 +1,6 @@
 import { createServer } from 'node:http'
 import { hostname } from 'node:os'
+import { S3Client, backupConfigFromEnv, readBackupStatus, runNightlyBackup } from '@zachhub/backup'
 import { fromPostgresJs } from '@zachhub/db/server'
 import {
   Storage,
@@ -46,7 +47,26 @@ const reap = setInterval(() => {
 // Slower housekeeping: safety-net syncs, stale-sync alerts, orphaned attachment uploads.
 const storageConfig = engineConfigFromEnv().storage
 const storage = storageConfig ? new Storage(storageConfig) : null
+// Nightly offsite backup (hub/backup); off while BACKUP_S3_* is unset.
+const backupConfig = backupConfigFromEnv()
+const backupS3 = backupConfig ? new S3Client(backupConfig.s3) : null
+if (!backupConfig) log('offsite backup is off (BACKUP_S3_* not set)')
+const backup = async () => {
+  if (!backupConfig || !backupS3) return
+  try {
+    const run = await runNightlyBackup(db, backupConfig, backupS3)
+    if (run)
+      log('backup uploaded', { key: run.key, bytes: run.bytes, rows: run.rows, pruned: run.pruned })
+  } catch (err) {
+    log('ALERT backup failed', { error: String(err) })
+  }
+  const { lastOk } = await readBackupStatus(db)
+  // Failures alert above; this catches a job that silently stopped running.
+  if (lastOk && Date.now() - Date.parse(lastOk.finishedAt ?? lastOk.startedAt) > 48 * 3_600_000)
+    log('ALERT no good backup in 48h', { lastOk: lastOk.day })
+}
 const housekeep = async () => {
+  await backup()
   for (const a of await sweepSyncs(db))
     log('ALERT stale sync', { accountId: a.id, status: a.status, lastSyncedAt: a.lastSyncedAt })
   if (storage) {
