@@ -31,6 +31,22 @@ export function shortTime(ts: number, now = Date.now()): string {
 }
 
 export const longTime = (ts: number) => long.format(ts)
+
+const dayStart = (ts: number) => new Date(ts).setHours(0, 0, 0, 0)
+
+/** When a snooze or reminder is due: "Today 3:00 PM", "Tomorrow 8:00 AM", "Sat 9:00 AM". */
+export function dueTime(ts: number, now = Date.now()): string {
+  const days = Math.round((dayStart(ts) - dayStart(now)) / (24 * HOUR))
+  const at = time.format(ts)
+  if (days === 0) return `Today ${at}`
+  if (days === 1) return `Tomorrow ${at}`
+  if (days > 1 && days < 7) return `${weekday.format(ts)} ${at}`
+  const date =
+    new Date(ts).getFullYear() === new Date(now).getFullYear()
+      ? monthDay.format(ts)
+      : fullDate.format(ts)
+  return `${date}, ${at}`
+}
 export const clockTime = (ts: number) => time.format(ts)
 
 export const displayName = (a: Address) => a.name?.trim() || a.email

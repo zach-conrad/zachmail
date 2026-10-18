@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { senderLabel, shortTime } from './format'
+import { dueTime, senderLabel, shortTime } from './format'
 
 describe('shortTime', () => {
   const now = new Date(2026, 9, 13, 12, 0).getTime()
@@ -9,6 +9,16 @@ describe('shortTime', () => {
     expect(shortTime(now - 2 * 3_600_000, now)).toBe('2h')
     expect(shortTime(now - 3 * 86_400_000, now)).toMatch(/\w{3}/)
     expect(shortTime(new Date(2024, 0, 2).getTime(), now)).toMatch(/2024/)
+  })
+})
+
+describe('dueTime', () => {
+  const now = new Date(2026, 9, 14, 10, 0).getTime()
+  it('names today, tomorrow and this week, then dates', () => {
+    expect(dueTime(new Date(2026, 9, 14, 15, 0).getTime(), now)).toMatch(/^Today 3:00/)
+    expect(dueTime(new Date(2026, 9, 15, 8, 0).getTime(), now)).toMatch(/^Tomorrow 8:00/)
+    expect(dueTime(new Date(2026, 9, 17, 9, 0).getTime(), now)).toMatch(/^\w{3} 9:00/)
+    expect(dueTime(new Date(2027, 0, 14, 8, 0).getTime(), now)).toMatch(/2027, 8:00/)
   })
 })
 

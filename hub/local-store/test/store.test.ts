@@ -206,6 +206,29 @@ describe('SqlStore pending ops', () => {
     expect(store.getThread('t2')!.thread.lastMessageAt).toBe(3)
   })
 
+  it('moves snoozed threads to Reminders and back, and stores server reminders', () => {
+    seed()
+    const reminders = () => store.listThreads({ split: 'reminders' }, 0, 10)
+    expect(reminders()).toEqual([])
+    store.enqueueOp(env('o1', { kind: 'snooze', threadIds: ['t2'], until: 9000 }))
+    expect(ids()).toEqual(['t1'])
+    expect(reminders()).toMatchObject([{ id: 't2', snoozedUntil: 9000, reminder: null }])
+    expect(store.countThreads({ split: 'reminders' })).toBe(1)
+    expect(store.indexOfThread({ split: 'reminders' }, 't2')).toBe(0)
+    expect(store.indexOfThread({ split: 'reminders' }, 't1')).toBe(-1)
+    // Done ends the snooze.
+    store.enqueueOp(env('o2', { kind: 'archive', threadIds: ['t2'] }))
+    expect(reminders()).toEqual([])
+    store.settleOps(['o1', 'o2'])
+    expect(ids()).toEqual(['t2', 't1'])
+
+    const reminder = { at: 5000, condition: 'if_no_reply' as const }
+    store.apply({ threads: [{ ...thread('t1', 1, ['inbox', 'imp']), reminder }] }, null, 3)
+    expect(reminders()).toMatchObject([{ id: 't1', snoozedUntil: null, reminder }])
+    expect(store.listThreads({ split: 'important' }, 1, 1)[0]!.reminder).toEqual(reminder)
+    expect(store.getThread('t1')!.thread.reminder).toEqual(reminder)
+  })
+
   it('restores server state when an op fails, and drops it when done', () => {
     seed()
     store.enqueueOp(env('o1', { kind: 'archive', threadIds: ['t1'] }))
