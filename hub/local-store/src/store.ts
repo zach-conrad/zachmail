@@ -59,6 +59,10 @@ export interface ThreadListItem {
   reminder: Reminder | null
 }
 
+export interface SnoozedListItem extends ThreadListItem {
+  snoozedUntil: number
+}
+
 /** The Reminders view (design §2): snoozed threads and threads with a reminder set. */
 export const REMINDERS = 'reminders'
 
@@ -109,6 +113,8 @@ export interface StoreApi extends SyncSink {
   listThreads(q: ListQuery, offset: number, limit: number): ThreadListItem[]
   /** Position of a thread in a list, or -1 when it is not in it. */
   indexOfThread(q: ListQuery, threadId: string): number
+  /** Snoozed threads coming back in [from, to), soonest first (Today's "Coming back"). */
+  comingBack(from: number, to: number, limit: number): SnoozedListItem[]
   getThread(threadId: string): ThreadDetail | null
   /** Of the messages a thread view expands on open (latest + unread), those without a body. */
   bodiesMissing(threadIds: readonly string[]): { messageId: string; threadId: string }[]
@@ -461,6 +467,21 @@ export class SqlStore implements StoreApi {
          AND (last_message_at > ? OR (last_message_at = ? AND id > ?))`,
       [...params, t.last_message_at, t.last_message_at, threadId],
     )[0]!.n
+  }
+
+  comingBack(from: number, to: number, limit: number): SnoozedListItem[] {
+    return this.json<SnoozedListItem[]>(
+      `SELECT json_group_array(json_object('id', id, 'accountId', account_id,
+         'subject', subject, 'snippet', snippet, 'participants', json(participants),
+         'lastMessageAt', last_message_at, 'messageCount', message_count,
+         'unread', json(iif(unread, 'true', 'false')),
+         'starred', json(iif(starred, 'true', 'false')),
+         'hasAttachments', json(iif(has_attachments, 'true', 'false')),
+         'folderIds', json(folder_ids), ${LIST_EXTRA})) AS j
+       FROM (SELECT * FROM threads WHERE snoozed_until >= ? AND snoozed_until < ?
+             ORDER BY snoozed_until, id LIMIT ?)`,
+      [from, to, limit],
+    )
   }
 
   getThread(threadId: string): ThreadDetail | null {

@@ -174,6 +174,7 @@ async function init(config: InitConfig) {
     snippets: () => store.snippets(),
     followUps: (now, opts, limit) => store.followUps(now, opts, limit),
     getThread: (id) => store.getThread(id),
+    comingBack: (from, to, limit) => store.comingBack(from, to, limit),
     async ensureBodies(threadIds) {
       const missing = store.bodiesMissing(threadIds).filter((m) => !inflight.has(m.messageId))
       if (!missing.length) return 0

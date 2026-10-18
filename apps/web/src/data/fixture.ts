@@ -147,8 +147,10 @@ export function* fixtureChunks(n: number, now = Date.now()) {
           ? `[zachmail] ${sentence(r, 4).slice(0, -1)}`
           : pick(r, TOPICS) + (r() < 0.5 ? '' : ` ${Math.floor(r() * 900 + 100)}`)
       const unread = i < 40 ? r() < 0.6 : r() < 0.08
-      const folderIds = [`${account.id}:inbox`]
-      if (kind === 'human-important') folderIds.push(`${account.id}:important`)
+      // A few threads are snoozed out of the inbox and come back later today.
+      const snoozed = i > 0 && i % SNOOZE_EVERY === 0 && i <= SNOOZE_EVERY * 4
+      const folderIds = snoozed ? [] : [`${account.id}:inbox`]
+      if (kind === 'human-important' && !snoozed) folderIds.push(`${account.id}:important`)
       for (let k = 0; k < count; k++) {
         const mine = k % 2 === 1
         const date = last - (count - 1 - k) * Math.floor(r() * 6 * 3_600_000 + 600_000)
@@ -183,10 +185,19 @@ export function* fixtureChunks(n: number, now = Date.now()) {
         starred: r() < 0.03,
         hasAttachments: r() < 0.1,
         folderIds,
+        snoozedUntil: snoozed ? comingBackAt(now, i / SNOOZE_EVERY) : null,
       })
     }
     yield { threads, messages }
   }
+}
+
+const SNOOZE_EVERY = 97
+
+/** Spread over the rest of today, so Today's "Coming back" card has rows at any hour. */
+function comingBackAt(now: number, k: number): number {
+  const end = new Date(now).setHours(24, 0, 0, 0)
+  return now + Math.floor(((end - now) * k) / 5)
 }
 
 /** A transport that serves the fixture as if it came from /api/bootstrap and /api/sync. */

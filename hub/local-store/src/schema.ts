@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS threads (
 CREATE INDEX IF NOT EXISTS threads_split ON threads (split, last_message_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS threads_reminders ON threads (last_message_at DESC, id DESC)
   WHERE snoozed_until IS NOT NULL OR reminder IS NOT NULL;
+CREATE INDEX IF NOT EXISTS threads_snoozed ON threads (snoozed_until) WHERE snoozed_until IS NOT NULL;
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
   thread_id TEXT NOT NULL,

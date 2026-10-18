@@ -1,19 +1,24 @@
-import { keymap, type CommandId } from '@zachhub/core'
-import { useMemo, useState, type KeyboardEvent } from 'react'
+import { keymap, type CommandGroup, type CommandId } from '@zachhub/core'
+import { Fragment, useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import { flushSync } from 'react-dom'
+import {
+  GROUP_LABEL,
+  GROUP_ORDER,
+  paletteExtras,
+  scopeQuery,
+  type PaletteGroup,
+  type PaletteItem,
+  type PaletteSource,
+} from '../hub/palette'
 import { fuzzyScore } from '../lib/fuzzy'
 import { runCommand } from '../lib/useCommands'
 import { Kbd } from './Kbd'
 
-export interface PaletteItem {
-  id: string
-  label: string
-  keys?: string
-  run: () => void
-}
+export type { PaletteItem }
 
 const RECENTS_KEY = 'zm.recentCommands'
 const MAX_RECENTS = 5
+const OPERATORS = ['in:tasks', 'type:pdf', 'due:today']
 
 function readRecents(): string[] {
   try {
@@ -32,61 +37,113 @@ function remember(id: string) {
   }
 }
 
+type Found = { key: string; groups: Partial<Record<PaletteGroup, PaletteItem[]>> }
+
 /**
- * ⌘K (design §3.3): fuzzy search over every command something on screen can run right now,
- * plus `extra` items from the caller, each showing its shortcut so the palette teaches keys.
+ * Universal ⌘K (ZachHub design H6): one palette over every module. As you type, each
+ * module's source adds its matches from the local replica, grouped Tasks · Docs · Mail, then
+ * the commands something on screen can run right now, each showing its shortcut.
  */
 export function CommandPalette({
   available,
-  extra,
-  onSearch,
+  sources,
+  only,
   onClose,
 }: {
   /** Commands the views under the palette handle. */
   available: readonly CommandId[]
-  extra: PaletteItem[]
-  /** Free text falls through to a mail search (design §3.3). */
-  onSearch?: (query: string) => void
+  sources: readonly PaletteSource[]
+  /** Show only this group of commands, with no search (the rail's Settings button). */
+  only?: CommandGroup
   onClose: () => void
 }) {
-  const [items] = useState<PaletteItem[]>(() => [
+  const [commands] = useState<PaletteItem[]>(() => [
     ...keymap
-      .filter((b) => b.id !== 'app.palette' && b.id !== 'nav.back' && available.includes(b.id))
+      .filter(
+        (b) =>
+          b.id !== 'app.palette' &&
+          b.id !== 'nav.back' &&
+          available.includes(b.id) &&
+          (!only || b.group === only),
+      )
       .map((b) => ({
         id: b.id,
         label: b.label,
         keys: b.keys[0],
         run: () => runCommand(b.id),
       })),
-    ...extra,
+    ...(only ? [] : paletteExtras()),
   ])
   const [query, setQuery] = useState('')
-  const [active, setActive] = useState(0)
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const scoped = useMemo(() => scopeQuery(query), [query])
+  const key = `${scoped.group ?? ''}|${scoped.text}`
+  const [found, setFound] = useState<Found>({ key: '', groups: {} })
 
-  const results = useMemo(() => {
-    if (!query.trim()) {
+  // Each source answers on its own; a stale answer (an older keystroke's) is dropped.
+  useEffect(() => {
+    if (only || !scoped.text) return
+    let live = true
+    for (const s of sources) {
+      if (scoped.group && scoped.group !== s.module) continue
+      void s.search(scoped.text).then(
+        (items) => {
+          if (!live) return
+          setFound((f) => ({
+            key,
+            groups: { ...(f.key === key ? f.groups : {}), [s.module]: items },
+          }))
+        },
+        () => {},
+      )
+    }
+    return () => {
+      live = false
+    }
+  }, [sources, scoped, key, only])
+
+  const sections = useMemo(() => {
+    const out: { group: PaletteGroup; items: PaletteItem[] }[] = []
+    const text = scoped.text
+    if (!text) {
       const recents = readRecents()
       const rank = (id: string) => {
         const i = recents.indexOf(id)
         return i < 0 ? MAX_RECENTS : i
       }
-      return [...items].sort((a, b) => rank(a.id) - rank(b.id))
+      if (!scoped.group || scoped.group === 'commands')
+        out.push({
+          group: 'commands',
+          items: [...commands].sort((a, b) => rank(a.id) - rank(b.id)),
+        })
+      return out
     }
-    const matched = items
-      .map((item) => ({ item, score: fuzzyScore(query, item.label) }))
-      .filter((r) => r.score >= 0)
-      .sort((a, b) => b.score - a.score)
-      .map((r) => r.item)
-    if (!onSearch) return matched
-    const searchItem: PaletteItem = {
-      id: 'search',
-      label: `Search mail for “${query.trim()}”`,
-      keys: '/',
-      run: () => onSearch(query.trim()),
+    const groups = found.key === key ? found.groups : {}
+    for (const g of GROUP_ORDER) {
+      if (scoped.group && scoped.group !== g) continue
+      let items: PaletteItem[]
+      if (g === 'commands') {
+        items = commands
+          .map((item) => ({ item, score: fuzzyScore(text, item.label) }))
+          .filter((r) => r.score >= 0)
+          .sort((a, b) => b.score - a.score)
+          .map((r) => r.item)
+        // Free text always has somewhere to go: the sources' fallbacks come last.
+        for (const s of sources)
+          if (s.fallback && (!scoped.group || scoped.group === s.module))
+            items.push(s.fallback(text))
+      } else items = groups[g] ?? []
+      if (items.length) out.push({ group: g, items })
     }
-    // No command matches: Enter searches. Otherwise searching is the last choice.
-    return matched.length ? [...matched, searchItem] : [searchItem]
-  }, [items, query, onSearch])
+    return out
+  }, [commands, sources, found, key, scoped])
+
+  const flat = useMemo(() => sections.flatMap((s) => s.items), [sections])
+  const activeIndex = Math.max(
+    0,
+    flat.findIndex((i) => i.id === activeId),
+  )
+  const active = flat[activeIndex]
 
   const run = (item: PaletteItem | undefined) => {
     if (!item) return
@@ -99,13 +156,13 @@ export function CommandPalette({
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     const move = (d: number) => {
       e.preventDefault()
-      setActive((i) => (results.length ? (i + d + results.length) % results.length : 0))
+      if (flat.length) setActiveId(flat[(activeIndex + d + flat.length) % flat.length]!.id)
     }
     if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) move(1)
     else if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p')) move(-1)
     else if (e.key === 'Enter') {
       e.preventDefault()
-      run(results[active])
+      run(active)
     }
   }
 
@@ -120,35 +177,54 @@ export function CommandPalette({
         <input
           autoFocus
           className="palette-input"
-          placeholder="Type a command…"
+          placeholder={only ? 'Settings' : 'Search everything or run a command…'}
           role="combobox"
           aria-expanded="true"
           aria-controls="palette-results"
-          aria-activedescendant={results[active] ? `cmd-${results[active].id}` : undefined}
+          aria-activedescendant={active ? `cmd-${active.id}` : undefined}
           value={query}
           onChange={(e) => {
             setQuery(e.target.value)
-            setActive(0)
+            setActiveId(null)
           }}
           onKeyDown={onKeyDown}
         />
         <ul id="palette-results" className="palette-results" role="listbox">
-          {results.length === 0 && <li className="palette-empty">No matching commands</li>}
-          {results.map((item, i) => (
-            <li
-              key={item.id}
-              id={`cmd-${item.id}`}
-              role="option"
-              aria-selected={i === active}
-              className="palette-item"
-              onMouseMove={() => setActive(i)}
-              onClick={() => run(item)}
-            >
-              <span>{item.label}</span>
-              {item.keys && <Kbd keys={item.keys} />}
-            </li>
+          {flat.length === 0 && <li className="palette-empty">No matches</li>}
+          {sections.map((s) => (
+            <Fragment key={s.group}>
+              {(sections.length > 1 || s.group !== 'commands') && (
+                <li className="palette-group" role="presentation">
+                  {GROUP_LABEL[s.group]}
+                </li>
+              )}
+              {s.items.map((item) => (
+                <li
+                  key={item.id}
+                  id={`cmd-${item.id}`}
+                  role="option"
+                  aria-selected={item === active}
+                  className="palette-item"
+                  onMouseMove={() => setActiveId(item.id)}
+                  onClick={() => run(item)}
+                >
+                  <span className="palette-label">
+                    {item.label}
+                    {item.detail && <span className="palette-detail">{item.detail}</span>}
+                  </span>
+                  {item.keys && <Kbd keys={item.keys} />}
+                </li>
+              ))}
+            </Fragment>
           ))}
         </ul>
+        {!only && (
+          <div className="palette-footer" aria-hidden>
+            {OPERATORS.map((op) => (
+              <code key={op}>{op}</code>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

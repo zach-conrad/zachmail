@@ -7,7 +7,10 @@
  */
 
 export type Platform = 'web' | 'macos' | 'ios'
-export type CommandGroup = 'navigation' | 'triage' | 'compose' | 'selection' | 'app'
+export type CommandGroup = 'hub' | 'navigation' | 'triage' | 'compose' | 'selection' | 'app'
+
+/** Hub modules (ZACHHUB_PLAN.md §2.2). Each one is a lazy route chunk in the apps. */
+export type ModuleId = 'today' | 'mail' | 'tasks' | 'docs'
 
 export interface KeyBinding {
   id: string
@@ -15,9 +18,20 @@ export interface KeyBinding {
   group: CommandGroup
   keys: string[]
   platforms?: Platform[]
+  /**
+   * Set when the binding only means something inside one module, so another module may bind
+   * the same key ("c" composes in Mail and adds a task in Tasks). Unset bindings are global
+   * and no module binding may reuse their keys.
+   */
+  module?: ModuleId
 }
 
 export const keymap = [
+  // Hub: switch modules (ZachHub design H2)
+  { id: 'go.today', label: 'Go to Today', group: 'hub', keys: ['g h'] },
+  { id: 'go.mail', label: 'Go to Mail', group: 'hub', keys: ['g m'] },
+  { id: 'go.tasks', label: 'Go to Tasks', group: 'hub', keys: ['g t'] },
+  { id: 'go.docs', label: 'Go to Docs', group: 'hub', keys: ['g d'] },
   // Navigation
   { id: 'nav.next', label: 'Next thread', group: 'navigation', keys: ['j'] },
   { id: 'nav.prev', label: 'Previous thread', group: 'navigation', keys: ['k'] },
@@ -33,11 +47,11 @@ export const keymap = [
   { id: 'go.inbox', label: 'Go to Inbox', group: 'navigation', keys: ['g i'] },
   { id: 'go.done', label: 'Go to Done', group: 'navigation', keys: ['g e'] },
   { id: 'go.sent', label: 'Go to Sent', group: 'navigation', keys: ['g s'] },
-  { id: 'go.drafts', label: 'Go to Drafts', group: 'navigation', keys: ['g d'] },
-  { id: 'go.reminders', label: 'Go to Reminders', group: 'navigation', keys: ['g h'] },
+  { id: 'go.drafts', label: 'Go to Drafts', group: 'navigation', keys: [] },
+  { id: 'go.reminders', label: 'Go to Reminders', group: 'navigation', keys: [] },
   { id: 'go.followUps', label: 'Go to Follow-ups', group: 'navigation', keys: ['g f'] },
   { id: 'go.starred', label: 'Go to Starred', group: 'navigation', keys: ['g *'] },
-  { id: 'go.trash', label: 'Go to Trash', group: 'navigation', keys: ['g t'] },
+  { id: 'go.trash', label: 'Go to Trash', group: 'navigation', keys: [] },
   { id: 'go.spam', label: 'Go to Spam', group: 'navigation', keys: ['g !'] },
   { id: 'scope.all', label: 'All accounts', group: 'navigation', keys: ['mod+0'] },
   // Triage
@@ -54,7 +68,9 @@ export const keymap = [
   { id: 'thread.spam', label: 'Mark as spam', group: 'triage', keys: ['!'] },
   { id: 'thread.block', label: 'Block sender', group: 'triage', keys: [] },
   // Compose
-  { id: 'compose.new', label: 'Compose', group: 'compose', keys: ['c'] },
+  { id: 'compose.new', label: 'Compose', group: 'compose', keys: ['c'], module: 'mail' },
+  // `C` on Today and in Tasks; handled once the tasks module contributes quick add.
+  { id: 'tasks.new', label: 'New task', group: 'compose', keys: ['c'], module: 'tasks' },
   { id: 'compose.reply', label: 'Reply', group: 'compose', keys: ['r'] },
   { id: 'compose.replyAll', label: 'Reply all', group: 'compose', keys: ['a'] },
   { id: 'compose.forward', label: 'Forward', group: 'compose', keys: ['f'] },
@@ -138,7 +154,8 @@ export function chordFromEvent(e: KeyEventLike, isApple: boolean): string {
 
 /**
  * Stateful matcher for single chords and multi-step sequences. Built once from the keymap
- * into a trie, so each keypress is an O(1) lookup (the < 16 ms budget starts here).
+ * into a trie, so each keypress is an O(1) lookup (the < 16 ms budget starts here). A key
+ * can complete several module-scoped bindings; the caller runs the first one on screen.
  */
 export class KeySequenceMatcher<Id extends string = CommandId> {
   private root = new Map<string, Node<Id>>()
@@ -155,30 +172,35 @@ export class KeySequenceMatcher<Id extends string = CommandId> {
         const steps = k.split(' ')
         steps.forEach((step, i) => {
           let node = level.get(step)
-          if (!node) level.set(step, (node = { children: new Map() }))
-          if (i === steps.length - 1) node.id = b.id
+          if (!node) level.set(step, (node = { ids: [], children: new Map() }))
+          if (i === steps.length - 1) node.ids.push(b.id)
           level = node.children
         })
       }
     }
   }
 
-  /** Feed one chord. Returns the command id when a binding completes, else null. */
+  /** Feed one chord. Returns the first command id a completed binding names, else null. */
   press(chord: string): Id | null {
+    return this.pressAll(chord)[0] ?? null
+  }
+
+  /** Feed one chord. Returns every command id the completed binding names (often one). */
+  pressAll(chord: string): readonly Id[] {
     const level = this.pending ?? this.root
     const node = level.get(chord)
     this.clear()
     if (!node) {
       // A broken sequence restarts from this key, so "g x j" still moves down.
-      if (level !== this.root) return this.press(chord)
-      return null
+      if (level !== this.root) return this.pressAll(chord)
+      return NONE
     }
     if (node.children.size > 0) {
       this.pending = node.children
       this.timer = setTimeout(() => this.clear(), this.sequenceTimeoutMs)
-      return null
+      return NONE
     }
-    return node.id ?? null
+    return node.ids
   }
 
   get isPending(): boolean {
@@ -192,9 +214,33 @@ export class KeySequenceMatcher<Id extends string = CommandId> {
   }
 }
 
+const NONE: readonly never[] = []
+
 interface Node<Id> {
-  id?: Id
+  ids: Id[]
   children: Map<string, Node<Id>>
+}
+
+/**
+ * Bindings that would fire together: a key bound twice in one module, or a global key that
+ * a module binding reuses. Sequences that are a prefix of another binding count too ("g"
+ * alone would swallow "g i"). Empty when the keymap is sound; checked in CI.
+ */
+export function keyConflicts(bindings: readonly KeyBinding[]): string[] {
+  const out: string[] = []
+  const all = bindings.flatMap((b) => b.keys.map((k) => ({ k, b })))
+  for (let i = 0; i < all.length; i++)
+    for (let j = i + 1; j < all.length; j++) {
+      const x = all[i]!
+      const y = all[j]!
+      const same = x.k === y.k
+      const prefix = x.k.startsWith(y.k + ' ') || y.k.startsWith(x.k + ' ')
+      if (!same && !prefix) continue
+      const scoped = x.b.module && y.b.module && x.b.module !== y.b.module
+      if (same && scoped) continue
+      out.push(`${x.b.id} (${x.k}) / ${y.b.id} (${y.k})`)
+    }
+  return out
 }
 
 /** Display form of a key string for kbd hints: "mod+k" → "⌘K" on Apple, "Ctrl+K" elsewhere. */

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { KeySequenceMatcher, chordFromEvent, formatKeys, keymap } from './keymap'
+import { KeySequenceMatcher, chordFromEvent, formatKeys, keyConflicts, keymap } from './keymap'
 
 const ev = (key: string, m: Partial<Record<'meta' | 'ctrl' | 'alt' | 'shift', boolean>> = {}) => ({
   key,
@@ -10,11 +10,38 @@ const ev = (key: string, m: Partial<Record<'meta' | 'ctrl' | 'alt' | 'shift', bo
 })
 
 describe('keymap registry', () => {
-  it('has unique ids and no key bound twice', () => {
+  it('has unique ids and no conflicting keys', () => {
     const ids = keymap.map((b) => b.id)
     expect(new Set(ids).size).toBe(ids.length)
-    const keys = keymap.flatMap((b) => [...b.keys])
-    expect(new Set(keys).size).toBe(keys.length)
+    expect(keyConflicts(keymap)).toEqual([])
+  })
+
+  it('reports keys that would fire together', () => {
+    const b = (id: string, keys: string[], module?: 'mail' | 'tasks') => ({
+      id,
+      label: id,
+      group: 'app' as const,
+      keys,
+      ...(module ? { module } : {}),
+    })
+    expect(keyConflicts([b('a', ['c'], 'mail'), b('b', ['c'], 'tasks')])).toEqual([])
+    expect(keyConflicts([b('a', ['c']), b('b', ['c'], 'tasks')])).toHaveLength(1)
+    expect(keyConflicts([b('a', ['c'], 'mail'), b('b', ['c'], 'mail')])).toHaveLength(1)
+    expect(keyConflicts([b('a', ['g']), b('b', ['g i'])])).toHaveLength(1)
+  })
+
+  it('binds the hub module keys globally (design H2)', () => {
+    const m = new KeySequenceMatcher(keymap)
+    for (const [k, id] of [
+      ['h', 'go.today'],
+      ['m', 'go.mail'],
+      ['t', 'go.tasks'],
+      ['d', 'go.docs'],
+    ] as const) {
+      m.press('g')
+      expect(m.press(k)).toBe(id)
+    }
+    expect(m.pressAll('c')).toEqual(['compose.new', 'tasks.new'])
   })
 })
 
