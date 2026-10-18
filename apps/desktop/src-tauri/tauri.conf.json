@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ZachMail",
+  "version": "../package.json",
+  "identifier": "dev.zachconrad.mail",
+  "build": {
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../../web/dist",
+    "beforeDevCommand": "pnpm --filter @zachhub/web dev",
+    "beforeBuildCommand": "pnpm -w exec turbo run build --filter=@zachhub/web --filter=@zachhub/desktop"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "category": "public.app-category.productivity",
+    "copyright": "© Zach Conrad",
+    "createUpdaterArtifacts": true,
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns"],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "hardenedRuntime": true
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": { "schemes": ["zachmail", "mailto"] }
+    },
+    "updater": {
+      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY",
+      "endpoints": ["https://github.com/zach-conrad/zachmail/releases/latest/download/latest.json"]
+    }
+  }
+}
