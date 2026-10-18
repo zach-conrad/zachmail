@@ -1,0 +1,23 @@
+{
+  "name": "@zachhub/tasks-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@zachhub/config": "workspace:*"
+  },
+  "dependencies": {
+    "@zachhub/core": "workspace:*",
+    "chrono-node": "^2.10.3",
+    "fractional-indexing": "^4.0.0",
+    "rrule": "^2.8.1"
+  }
+}

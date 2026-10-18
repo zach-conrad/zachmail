@@ -1,5 +1,5 @@
-import type { CommandId, MailOp, SimpleOpKind, SplitKey } from '@zachmail/core'
-import { REMINDERS, type ThreadDetail, type ThreadListItem } from '@zachmail/local-store'
+import type { CommandId, MailOp, SimpleOpKind, SplitKey } from '@zachhub/core'
+import { REMINDERS, type ThreadDetail, type ThreadListItem } from '@zachhub/local-store'
 import { replyDraft } from '../compose/draft'
 import {
   useCallback,

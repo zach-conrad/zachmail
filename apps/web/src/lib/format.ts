@@ -1,4 +1,4 @@
-import type { Address } from '@zachmail/core'
+import type { Address } from '@zachhub/core'
 
 const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'short' })

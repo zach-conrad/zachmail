@@ -1,5 +1,5 @@
-import { isBuiltInSplit, isUuid } from '@zachmail/core'
-import { REMINDERS } from '@zachmail/local-store'
+import { isBuiltInSplit, isUuid } from '@zachhub/core'
+import { REMINDERS } from '@zachhub/local-store'
 
 /** Route guard: a built-in split, or something shaped like a custom split's rule id. */
 export const isSplitKey = (s: string): boolean => isBuiltInSplit(s) || isUuid(s)

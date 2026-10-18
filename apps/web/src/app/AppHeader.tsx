@@ -1,6 +1,6 @@
-import type { SplitKey, SplitTab } from '@zachmail/core'
+import type { SplitKey, SplitTab } from '@zachhub/core'
 import { Link } from '@tanstack/react-router'
-import { REMINDERS } from '@zachmail/local-store'
+import { REMINDERS } from '@zachhub/local-store'
 import { Kbd } from './Kbd'
 
 export function AppHeader({

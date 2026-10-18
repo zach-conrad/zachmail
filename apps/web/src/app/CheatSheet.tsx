@@ -1,4 +1,4 @@
-import { keymap, type CommandGroup, type CommandId } from '@zachmail/core'
+import { keymap, type CommandGroup, type CommandId } from '@zachhub/core'
 import { Kbd } from './Kbd'
 
 const GROUPS: { id: CommandGroup; label: string }[] = [

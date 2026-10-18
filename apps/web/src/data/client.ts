@@ -1,5 +1,5 @@
 import { markOnce } from '../lib/perf'
-import type { OpEnvelope, SplitRuleRow } from '@zachmail/core'
+import type { OpEnvelope, SplitRuleRow } from '@zachhub/core'
 import type { DataApi, FromWorker, InitConfig, Method, ToWorker, WorkerStatus } from './protocol'
 
 type Remote<T> = {

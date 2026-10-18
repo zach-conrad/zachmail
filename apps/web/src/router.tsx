@@ -5,11 +5,17 @@ import {
   createRouter,
   redirect,
 } from '@tanstack/react-router'
+import { lazy, Suspense, useMemo } from 'react'
 import { Shell } from './app/Shell'
 import { isView } from './app/splits'
 import { LoginScreen } from './auth/LoginScreen'
 import { useAuth } from './auth/session'
-import { DataProvider } from './data/DataProvider'
+import { DataProvider, useData } from './data/DataProvider'
+import { tasksBackend } from './data/tasksBackend'
+import { demoMode } from './lib/supabase'
+
+// The tasks module is its own chunk: mail's initial bundle never pays for it (plan §7).
+const TasksScreen = lazy(() => import('@zachhub/tasks-web'))
 
 function Root() {
   const auth = useAuth()
@@ -49,8 +55,38 @@ const inboxRoute = createRoute({
   },
 })
 
+const tasksIndexRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/tasks',
+  beforeLoad: () => {
+    throw redirect({ to: '/tasks/$view', params: { view: 'today' } })
+  },
+})
+
+const tasksRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/tasks/$view',
+  component: function TasksRoute() {
+    const { view } = tasksRoute.useParams()
+    const navigate = tasksRoute.useNavigate()
+    const { client } = useData()
+    const backend = useMemo(() => tasksBackend(client), [client])
+    return (
+      <Suspense fallback={null}>
+        <TasksScreen
+          view={view}
+          demo={demoMode && Number(new URLSearchParams(location.search).get('tasks') ?? 60)}
+          backend={backend}
+          onNavigate={(to) => void navigate({ to: '/tasks/$view', params: { view: to } })}
+          onGoMail={() => void navigate({ to: '/inbox/$split', params: { split: 'important' } })}
+        />
+      </Suspense>
+    )
+  },
+})
+
 export const router = createRouter({
-  routeTree: rootRoute.addChildren([indexRoute, inboxRoute]),
+  routeTree: rootRoute.addChildren([indexRoute, inboxRoute, tasksIndexRoute, tasksRoute]),
   defaultPreload: 'intent',
 })
 

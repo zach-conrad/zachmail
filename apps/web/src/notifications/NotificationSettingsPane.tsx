@@ -4,7 +4,7 @@ import {
   type AccountRow,
   type NotificationSettings,
   type SplitTab,
-} from '@zachmail/core'
+} from '@zachhub/core'
 import { useEffect, useState } from 'react'
 import { useAuth } from '../auth/session'
 import { useCommands } from '../lib/useCommands'

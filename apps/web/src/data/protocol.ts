@@ -1,15 +1,23 @@
 import type {
   ContactRow,
   DraftRequest,
+  EntityOp,
   OpEnvelope,
   SendRequest,
   SendResponse,
   SplitRuleRow,
-} from '@zachmail/core'
-import type { ListQuery, SearchListQuery, StoreApi, ThreadListItem } from '@zachmail/local-store'
+} from '@zachhub/core'
+import type {
+  EntityWrite,
+  ListQuery,
+  SearchListQuery,
+  StoreApi,
+  ThreadListItem,
+} from '@zachhub/local-store'
 
 /** Store reads the UI may call over the worker boundary (writes stay inside the worker). */
-export type ReadMethod = 'accounts' | 'folders' | 'getThread' | 'unread' | 'splitRules'
+export type ReadMethod =
+  'accounts' | 'folders' | 'getThread' | 'unread' | 'splitRules' | 'entities' | 'entity'
 
 /** What a thread list shows: a split, or search results. */
 export type ViewQuery = ListQuery | SearchListQuery
@@ -45,6 +53,11 @@ export interface DataApi extends Pick<StoreApi, ReadMethod> {
   deleteDraft(id: string): Promise<void>
   /** Everyone Zach writes to or hears from, best first (cached after the first call). */
   contacts(): Promise<ContactRow[]>
+  /**
+   * Writes first-party entities (tasks, links): applied to the replica at once, then sent.
+   * Resolves with the stamped ops; a 'changed' event follows.
+   */
+  entityWrite(writes: EntityWrite[]): EntityOp[]
 }
 
 export type Method = keyof DataApi

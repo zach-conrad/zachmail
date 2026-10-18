@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 import {
   DEFAULT_UNDO_MS,
+  EntityDrain,
   OpDrain,
   SyncClient,
   flushSplitRules,
@@ -8,6 +9,8 @@ import {
   splitRuleHttp,
   startSyncLoop,
   type ContactRow,
+  type EntityOpsRequest,
+  type EntityOpsResponse,
   type MessageBody,
   type OpEnvelope,
   type OpsResponse,
@@ -17,9 +20,9 @@ import {
   type SplitRuleRow,
   type SyncSink,
   type SyncTransport,
-} from '@zachmail/core'
-import { SearchIndex, SqlStore, isSearchQuery } from '@zachmail/local-store'
-import { openSqliteWasm } from '@zachmail/local-store/sqlite-wasm'
+} from '@zachhub/core'
+import { SearchIndex, SqlStore, isSearchQuery } from '@zachhub/local-store'
+import { openSqliteWasm } from '@zachhub/local-store/sqlite-wasm'
 import type { DataApi, FromWorker, InitConfig, ToWorker, WorkerStatus } from './protocol'
 
 // SQLite, sync merges and body fetches all live here so the UI thread only renders.
@@ -83,6 +86,11 @@ async function init(config: InitConfig) {
   // Demo mode has no server: ops are accepted on the spot and settle as if done.
   let sendOps: ((ops: OpEnvelope[]) => Promise<OpsResponse>) | null = null
   let searchServer: ((p: SearchParams) => Promise<SearchResponse>) | null = null
+  // Demo mode accepts entity writes on the spot; the replica already shows them.
+  let sendEntities = async (req: EntityOpsRequest): Promise<EntityOpsResponse> => ({
+    accepted: req.ops.map((_, i) => i),
+    rejected: [],
+  })
   let outgoing: Pick<DataApi, 'send' | 'unsend' | 'saveDraft' | 'deleteDraft' | 'contacts'>
   let rulesRemote: SplitRuleRemote | null = null
   if (config.mode === 'demo') {
@@ -108,6 +116,7 @@ async function init(config: InitConfig) {
     transport = http
     fetchBody = (id) => http.body(id)
     sendOps = (ops) => http.ops({ ops })
+    sendEntities = (req) => http.entities(req)
     searchServer = (p) => http.search(p)
     let contacts: Promise<ContactRow[]> | null = null
     outgoing = {
@@ -186,6 +195,14 @@ async function init(config: InitConfig) {
       if (fetched.length) post({ type: 'bodies', threadIds: [...done] })
       return fetched.length
     },
+    entities: (kind) => store.entities(kind),
+    entity: (kind, id) => store.entity(kind, id),
+    entityWrite(writes) {
+      const stamped = store.entityWrite(writes)
+      post({ type: 'changed' })
+      void entityOps.run()
+      return stamped
+    },
   }
   enqueue = (env) => {
     store.enqueueOp(env)
@@ -199,6 +216,16 @@ async function init(config: InitConfig) {
     onFailed: (rows) => {
       for (const r of rows) post({ type: 'opFailed', id: r.id, error: r.error })
       post({ type: 'changed' })
+    },
+  })
+  const entityOps = new EntityDrain({
+    pending: (limit) => store.pendingEntityOps(limit),
+    ack: (seqs) => store.ackEntityOps(seqs),
+    send: (req) => sendEntities(req),
+    ready: () => config.mode === 'demo' || !!token,
+    // The row shows the refused write until the server next sends it.
+    onRejected: (rows) => {
+      for (const r of rows) console.warn('entity write refused', r.op, r.error)
     },
   })
   // Rule edits are few and tiny: send them in order, retry on the next drain trigger.
@@ -246,6 +273,7 @@ async function init(config: InitConfig) {
   }
   drain = () => {
     void ops.run()
+    void entityOps.run()
     void flushRules()
   }
 
@@ -258,8 +286,8 @@ async function init(config: InitConfig) {
   const sink: SyncSink = {
     getSeq: () => store.getSeq(),
     reset: () => store.reset(),
-    apply(upserts, deletes, seq, ops = []) {
-      store.apply(upserts, deletes, seq, ops)
+    apply(upserts, deletes, seq, ops = [], entities) {
+      store.apply(upserts, deletes, seq, ops, entities)
       if (store.resplitPending()) void resplit()
       for (const o of ops)
         if (o.state === 'failed')
@@ -286,6 +314,8 @@ async function init(config: InitConfig) {
     },
   }
   startSyncLoop(sync)
+  // Entity writes queued last session go out now, before the first sync finishes.
+  void entityOps.run()
 }
 
 const BODY_SLICE = 10

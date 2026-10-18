@@ -1,0 +1,21 @@
+{
+  "name": "@zachhub/mime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "sanitize-html": "^2.18.0"
+  },
+  "devDependencies": {
+    "@types/sanitize-html": "^2.16.2",
+    "@zachhub/config": "workspace:*"
+  }
+}

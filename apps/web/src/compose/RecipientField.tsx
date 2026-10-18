@@ -1,4 +1,4 @@
-import type { Address, ContactRow } from '@zachmail/core'
+import type { Address, ContactRow } from '@zachhub/core'
 import { useState, type ClipboardEvent, type KeyboardEvent } from 'react'
 import { displayName } from '../lib/format'
 import { parseAddresses } from './draft'

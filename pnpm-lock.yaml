@@ -17,9 +17,9 @@ importers:
       '@types/node':
         specifier: ^22.20.5
         version: 22.20.5
-      '@zachmail/config':
+      '@zachhub/config':
         specifier: workspace:*
-        version: link:packages/config
+        version: link:hub/config
       eslint:
         specifier: ^10.12.0
         version: 10.12.0
@@ -47,24 +47,30 @@ importers:
       '@hono/node-server':
         specifier: ^2.1.5
         version: 2.1.5(hono@4.13.13)
-      '@zachmail/ai':
+      '@zachhub/ai':
         specifier: workspace:*
-        version: link:../../packages/ai
-      '@zachmail/core':
+        version: link:../../hub/ai
+      '@zachhub/core':
         specifier: workspace:*
-        version: link:../../packages/core
-      '@zachmail/db':
+        version: link:../../hub/core
+      '@zachhub/db':
         specifier: workspace:*
-        version: link:../../packages/db
-      '@zachmail/engine':
+        version: link:../../hub/db
+      '@zachhub/engine':
         specifier: workspace:*
-        version: link:../../packages/engine
-      '@zachmail/mime':
+        version: link:../../hub/engine
+      '@zachhub/kernel':
         specifier: workspace:*
-        version: link:../../packages/mime
-      '@zachmail/providers':
+        version: link:../../hub/kernel
+      '@zachhub/mime':
         specifier: workspace:*
-        version: link:../../packages/providers
+        version: link:../../modules/mail/mime
+      '@zachhub/modules':
+        specifier: workspace:*
+        version: link:../../modules/installed
+      '@zachhub/providers':
+        specifier: workspace:*
+        version: link:../../modules/mail/providers
       hono:
         specifier: ^4.13.13
         version: 4.13.13
@@ -78,9 +84,9 @@ importers:
       '@electric-sql/pglite':
         specifier: ^0.5.9
         version: 0.5.9
-      '@zachmail/config':
+      '@zachhub/config':
         specifier: workspace:*
-        version: link:../../packages/config
+        version: link:../../hub/config
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -118,18 +124,21 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.1.2
         version: 6.1.2(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(tsx@4.23.15))
-      '@zachmail/config':
+      '@zachhub/config':
         specifier: workspace:*
-        version: link:../../packages/config
-      '@zachmail/core':
+        version: link:../../hub/config
+      '@zachhub/core':
         specifier: workspace:*
-        version: link:../../packages/core
-      '@zachmail/local-store':
+        version: link:../../hub/core
+      '@zachhub/local-store':
         specifier: workspace:*
-        version: link:../../packages/local-store
-      '@zachmail/tokens':
+        version: link:../../hub/local-store
+      '@zachhub/tasks-web':
         specifier: workspace:*
-        version: link:../../packages/tokens
+        version: link:../../modules/tasks/web
+      '@zachhub/tokens':
+        specifier: workspace:*
+        version: link:../../hub/tokens
       eslint-plugin-react-hooks:
         specifier: ^7.1.1
         version: 7.1.1(eslint@10.12.0)
@@ -142,19 +151,25 @@ importers:
 
   apps/worker:
     dependencies:
-      '@zachmail/db':
+      '@zachhub/db':
         specifier: workspace:*
-        version: link:../../packages/db
-      '@zachmail/engine':
+        version: link:../../hub/db
+      '@zachhub/engine':
         specifier: workspace:*
-        version: link:../../packages/engine
+        version: link:../../hub/engine
+      '@zachhub/kernel':
+        specifier: workspace:*
+        version: link:../../hub/kernel
+      '@zachhub/modules':
+        specifier: workspace:*
+        version: link:../../modules/installed
       postgres:
         specifier: ^3.4.9
         version: 3.4.9
     devDependencies:
-      '@zachmail/config':
+      '@zachhub/config':
         specifier: workspace:*
-        version: link:../../packages/config
+        version: link:../../hub/config
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -162,20 +177,20 @@ importers:
         specifier: ^4.23.15
         version: 4.23.15
 
-  packages/ai:
+  hub/ai:
     dependencies:
       '@anthropic-ai/sdk':
         specifier: ^0.133.0
         version: 0.133.0(zod@4.6.7)
-      '@zachmail/core':
+      '@zachhub/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
-      '@zachmail/config':
+      '@zachhub/config':
         specifier: workspace:*
         version: link:../config
 
-  packages/config:
+  hub/config:
     devDependencies:
       '@eslint/js':
         specifier: ^10.0.1
@@ -190,20 +205,20 @@ importers:
         specifier: ^8.71.2
         version: 8.71.2(eslint@10.12.0)(typescript@6.0.3)
 
-  packages/core:
+  hub/core:
     devDependencies:
-      '@zachmail/config':
+      '@zachhub/config':
         specifier: workspace:*
         version: link:../config
 
-  packages/db:
+  hub/db:
     dependencies:
-      '@zachmail/core':
+      '@zachhub/core':
         specifier: workspace:*
         version: link:../core
-      '@zachmail/providers':
+      '@zachhub/providers':
         specifier: workspace:*
-        version: link:../providers
+        version: link:../../modules/mail/providers
       drizzle-orm:
         specifier: ^0.45.4
         version: 0.45.4(@electric-sql/pglite@0.5.9)(postgres@3.4.9)
@@ -211,7 +226,7 @@ importers:
       '@electric-sql/pglite':
         specifier: ^0.5.9
         version: 0.5.9
-      '@zachmail/config':
+      '@zachhub/config':
         specifier: workspace:*
         version: link:../config
       drizzle-kit:
@@ -221,23 +236,23 @@ importers:
         specifier: ^3.4.9
         version: 3.4.9
 
-  packages/engine:
+  hub/engine:
     dependencies:
-      '@zachmail/ai':
+      '@zachhub/ai':
         specifier: workspace:*
         version: link:../ai
-      '@zachmail/core':
+      '@zachhub/core':
         specifier: workspace:*
         version: link:../core
-      '@zachmail/db':
+      '@zachhub/db':
         specifier: workspace:*
         version: link:../db
-      '@zachmail/mime':
+      '@zachhub/mime':
         specifier: workspace:*
-        version: link:../mime
-      '@zachmail/providers':
+        version: link:../../modules/mail/mime
+      '@zachhub/providers':
         specifier: workspace:*
-        version: link:../providers
+        version: link:../../modules/mail/providers
       web-push:
         specifier: ^3.6.7
         version: 3.6.7
@@ -245,24 +260,59 @@ importers:
       '@types/web-push':
         specifier: ^3.6.4
         version: 3.6.4
-      '@zachmail/config':
+      '@zachhub/config':
         specifier: workspace:*
         version: link:../config
 
-  packages/local-store:
+  hub/kernel:
+    dependencies:
+      '@zachhub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@zachhub/db':
+        specifier: workspace:*
+        version: link:../db
+      hono:
+        specifier: ^4.13.13
+        version: 4.13.13
+    devDependencies:
+      '@zachhub/config':
+        specifier: workspace:*
+        version: link:../config
+
+  hub/local-store:
     dependencies:
       '@sqlite.org/sqlite-wasm':
         specifier: 3.53.4-build2
         version: 3.53.4-build2
-      '@zachmail/core':
+      '@zachhub/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
-      '@zachmail/config':
+      '@zachhub/config':
         specifier: workspace:*
         version: link:../config
 
-  packages/mime:
+  hub/tokens:
+    devDependencies:
+      '@zachhub/config':
+        specifier: workspace:*
+        version: link:../config
+
+  modules/installed:
+    dependencies:
+      '@zachhub/kernel':
+        specifier: workspace:*
+        version: link:../../hub/kernel
+      '@zachhub/tasks-api':
+        specifier: workspace:*
+        version: link:../tasks/api
+    devDependencies:
+      '@zachhub/config':
+        specifier: workspace:*
+        version: link:../../hub/config
+
+  modules/mail/mime:
     dependencies:
       sanitize-html:
         specifier: ^2.18.0
@@ -271,25 +321,104 @@ importers:
       '@types/sanitize-html':
         specifier: ^2.16.2
         version: 2.16.2
-      '@zachmail/config':
+      '@zachhub/config':
         specifier: workspace:*
-        version: link:../config
+        version: link:../../../hub/config
 
-  packages/providers:
+  modules/mail/providers:
     dependencies:
-      '@zachmail/mime':
+      '@zachhub/mime':
         specifier: workspace:*
         version: link:../mime
     devDependencies:
-      '@zachmail/config':
+      '@zachhub/config':
         specifier: workspace:*
-        version: link:../config
+        version: link:../../../hub/config
 
-  packages/tokens:
-    devDependencies:
-      '@zachmail/config':
+  modules/tasks/api:
+    dependencies:
+      '@zachhub/kernel':
         specifier: workspace:*
-        version: link:../config
+        version: link:../../../hub/kernel
+      '@zachhub/tasks-db':
+        specifier: workspace:*
+        version: link:../db
+    devDependencies:
+      '@zachhub/config':
+        specifier: workspace:*
+        version: link:../../../hub/config
+
+  modules/tasks/core:
+    dependencies:
+      '@zachhub/core':
+        specifier: workspace:*
+        version: link:../../../hub/core
+      chrono-node:
+        specifier: ^2.10.3
+        version: 2.10.3
+      fractional-indexing:
+        specifier: ^4.0.0
+        version: 4.0.0
+      rrule:
+        specifier: ^2.8.1
+        version: 2.8.1
+    devDependencies:
+      '@zachhub/config':
+        specifier: workspace:*
+        version: link:../../../hub/config
+
+  modules/tasks/db:
+    dependencies:
+      '@zachhub/db':
+        specifier: workspace:*
+        version: link:../../../hub/db
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@electric-sql/pglite@0.5.9)(postgres@3.4.9)
+    devDependencies:
+      '@zachhub/config':
+        specifier: workspace:*
+        version: link:../../../hub/config
+      '@zachhub/core':
+        specifier: workspace:*
+        version: link:../../../hub/core
+      '@zachhub/tasks-core':
+        specifier: workspace:*
+        version: link:../core
+
+  modules/tasks/web:
+    dependencies:
+      '@zachhub/core':
+        specifier: workspace:*
+        version: link:../../../hub/core
+      '@zachhub/tasks-core':
+        specifier: workspace:*
+        version: link:../core
+      '@zachhub/tokens':
+        specifier: workspace:*
+        version: link:../../../hub/tokens
+    devDependencies:
+      '@types/react':
+        specifier: ^19.3.0
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19.3.0
+        version: 19.3.0(@types/react@19.3.0)
+      '@zachhub/config':
+        specifier: workspace:*
+        version: link:../../../hub/config
+      eslint-plugin-react-hooks:
+        specifier: ^7.1.1
+        version: 7.1.1(eslint@10.12.0)
+      react:
+        specifier: ^19.3.0
+        version: 19.3.0
+      react-dom:
+        specifier: ^19.3.0
+        version: 19.3.0(react@19.3.0)
+      vite:
+        specifier: ^8.3.4
+        version: 8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(tsx@4.23.15)
 
 packages:
 
@@ -1369,6 +1498,10 @@ packages:
     resolution: {integrity: sha512-XWAtwJ6OHO+tj0EKCs0Y2UamnyOxseZWltU4x2U2wh8g4AigdjwvtUjvLP2tqkA/avxHEtzxNaqGq/YGNwckKg==}
     engines: {node: '>=18'}
 
+  chrono-node@2.10.3:
+    resolution: {integrity: sha512-MOfrzXgSMZTH4SZ5gyRKQCVwiCrCKY+uYkSJiWoRLXS88DA6WGJm8UjgS+VVEuUQeew/UUXaxrO+SeDn/WCisg==}
+    engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
+
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
 
@@ -1655,6 +1788,10 @@ packages:
 
   flatted@3.4.4:
     resolution: {integrity: sha512-5+ybhBZANEJxaH3X5evAFatUxLfEHSr7n6kYJ+1Qd0mUqr4eu9gIf6GDbWHf8RJijHrjjO8G+la14SlL2SeS1Q==}
+
+  fractional-indexing@4.0.0:
+    resolution: {integrity: sha512-Nr2P1Yyaj2sy1Qdt/wI3GcByxrUdbSKg5+cGvw8f18hT2SkQt6V72iOjBpk7IO3UkzBsdlGRs2a4z6dLrJprgw==}
+    engines: {node: ^14.13.1 || >=16.0.0}
 
   fsevents@2.3.3:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
@@ -2015,6 +2152,9 @@ packages:
     resolution: {integrity: sha512-/5apOkwWxtACcQtZ5WlrAsKS4JwXVThQPJZ3RqIruRY9UG9M8e0VlXN068xum/JRKA4aIUoJ13ghe/kGCvidiQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
+
+  rrule@2.8.1:
+    resolution: {integrity: sha512-hM3dHSBMeaJ0Ktp7W38BJZ7O1zOgaFEsn41PDk+yHoEtfLV+PoJt9E9xAlZiWgf/iqEqionN0ebHFZIDAp+iGw==}
 
   safe-buffer@5.2.1:
     resolution: {integrity: sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ==}
@@ -3145,6 +3285,8 @@ snapshots:
 
   chai@6.3.0: {}
 
+  chrono-node@2.10.3: {}
+
   convert-source-map@2.0.0: {}
 
   cookie-es@3.1.1: {}
@@ -3422,6 +3564,8 @@ snapshots:
       hookified: 1.15.1
 
   flatted@3.4.4: {}
+
+  fractional-indexing@4.0.0: {}
 
   fsevents@2.3.3:
     optional: true
@@ -3748,6 +3892,10 @@ snapshots:
       '@rolldown/binding-openharmony-arm64': 1.2.13
       '@rolldown/binding-win32-arm64-msvc': 1.2.13
       '@rolldown/binding-win32-x64-msvc': 1.2.13
+
+  rrule@2.8.1:
+    dependencies:
+      tslib: 2.8.1
 
   safe-buffer@5.2.1: {}
 

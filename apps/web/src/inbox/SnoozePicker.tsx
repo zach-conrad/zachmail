@@ -1,4 +1,4 @@
-import { parseSnoozeTime, snoozeOptions } from '@zachmail/core'
+import { parseSnoozeTime, snoozeOptions } from '@zachhub/core'
 import { useMemo, useState, type KeyboardEvent } from 'react'
 import { flushSync } from 'react-dom'
 import { dueTime } from '../lib/format'

@@ -1,5 +1,5 @@
 {
-  "name": "@zachmail/api",
+  "name": "@zachhub/api",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -15,19 +15,21 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
-    "@zachmail/ai": "workspace:*",
-    "@zachmail/core": "workspace:*",
-    "@zachmail/db": "workspace:*",
-    "@zachmail/engine": "workspace:*",
-    "@zachmail/mime": "workspace:*",
-    "@zachmail/providers": "workspace:*",
+    "@zachhub/ai": "workspace:*",
+    "@zachhub/core": "workspace:*",
+    "@zachhub/db": "workspace:*",
+    "@zachhub/engine": "workspace:*",
+    "@zachhub/kernel": "workspace:*",
+    "@zachhub/mime": "workspace:*",
+    "@zachhub/modules": "workspace:*",
+    "@zachhub/providers": "workspace:*",
     "hono": "^4.13.13",
     "jose": "^6.2.12",
     "postgres": "^3.4.9"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.9",
-    "@zachmail/config": "workspace:*",
+    "@zachhub/config": "workspace:*",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.15"
   }

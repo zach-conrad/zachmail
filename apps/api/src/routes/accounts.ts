@@ -1,12 +1,12 @@
-import { enqueueInitialSync, enqueueSync } from '@zachmail/engine'
-import { saveCredentials, type Db } from '@zachmail/db/server'
-import { GmailProvider, buildAuthUrl, exchangeCode } from '@zachmail/providers/gmail'
+import { enqueueInitialSync, enqueueSync } from '@zachhub/engine'
+import { saveCredentials, type Db } from '@zachhub/db/server'
+import { GmailProvider, buildAuthUrl, exchangeCode } from '@zachhub/providers/gmail'
 import {
   GraphProvider,
   buildAdminConsentUrl,
   buildMicrosoftAuthUrl,
   exchangeMicrosoftCode,
-} from '@zachmail/providers/graph'
+} from '@zachhub/providers/graph'
 import { Hono, type Context } from 'hono'
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import { HTTPException } from 'hono/http-exception'

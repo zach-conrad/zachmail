@@ -1,4 +1,4 @@
-import { formatKeys } from '@zachmail/core'
+import { formatKeys } from '@zachhub/core'
 import { isApple } from '../lib/platform'
 
 export function Kbd({ keys }: { keys: string }) {

@@ -1,6 +1,6 @@
 // The macOS shell (apps/desktop) injects `window.zachmailDesktop` before any page script; on
 // the web it is undefined and every use below is a no-op. This is the subset the web app
-// calls; the full contract is ZachMailDesktop in packages/core/src/desktop.ts (macOS PR).
+// calls; the full contract is ZachMailDesktop in hub/core/src/desktop.ts (macOS PR).
 
 export interface DesktopBridge {
   setUnreadCount(count: number): void

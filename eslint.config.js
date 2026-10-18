@@ -1,1 +1,1 @@
-export { default } from '@zachmail/config/eslint'
+export { default } from '@zachhub/config/eslint'

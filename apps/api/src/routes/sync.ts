@@ -1,6 +1,6 @@
-import type { BootstrapLine } from '@zachmail/core'
-import { readBootstrap, readContacts, readDelta } from '@zachmail/db/server'
-import { getMessageBody } from '@zachmail/engine'
+import type { BootstrapLine } from '@zachhub/core'
+import { readBootstrap, readContacts, readDelta } from '@zachhub/db/server'
+import { getMessageBody } from '@zachhub/engine'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import type { AuthVariables } from '../auth'
@@ -21,7 +21,17 @@ export function syncRoutes(deps: Deps) {
         const write = (line: BootstrapLine) =>
           controller.enqueue(enc.encode(JSON.stringify(line) + '\n'))
         try {
-          const seq = await readBootstrap(deps.db(), userId, days, (rows) => write({ rows }))
+          const seq = await readBootstrap(
+            deps.db(),
+            userId,
+            days,
+            (rows) => write({ rows }),
+            1000,
+            {
+              registry: deps.modules.entities,
+              onRows: (kind, rows) => write({ entities: { [kind]: rows } }),
+            },
+          )
           write({ seq })
           controller.close()
         } catch (err) {
@@ -42,7 +52,7 @@ export function syncRoutes(deps: Deps) {
   app.get('/sync', async (c) => {
     const since = Number(c.req.query('since') ?? 0)
     if (!Number.isFinite(since) || since < 0) throw new HTTPException(400, { message: 'Bad since' })
-    const delta = await readDelta(deps.db(), c.get('user').id, since)
+    const delta = await readDelta(deps.db(), c.get('user').id, since, 5000, deps.modules.entities)
     c.header('cache-control', 'no-store')
     return c.json(delta)
   })

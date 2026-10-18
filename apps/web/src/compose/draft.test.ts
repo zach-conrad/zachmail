@@ -1,5 +1,5 @@
-import type { MessageRow } from '@zachmail/core'
-import type { ThreadDetail } from '@zachmail/local-store'
+import type { MessageRow } from '@zachhub/core'
+import type { ThreadDetail } from '@zachhub/local-store'
 import { describe, expect, it } from 'vitest'
 import { parseAddresses, replyDraft, textToHtml, toSendRequest } from './draft'
 

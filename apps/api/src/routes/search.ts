@@ -1,4 +1,5 @@
-import { BadCursorError, searchMail } from '@zachmail/engine'
+import { searchHub } from '@zachhub/db/server'
+import { BadCursorError, searchMail } from '@zachhub/engine'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import type { AuthVariables } from '../auth'
@@ -35,6 +36,26 @@ export function searchRoutes(deps: Deps) {
       if (err instanceof BadCursorError) throw new HTTPException(400, { message: err.message })
       throw err
     }
+  })
+
+  /** Every module's index plus the mail mirror, best first (see HubSearchResponse in core). */
+  app.get('/search/hub', async (c) => {
+    const q = c.req.query('q') ?? ''
+    const limit = num(c.req.query('limit'))
+    const tz = num(c.req.query('tz'))
+    if (q.length > 1000) throw new HTTPException(400, { message: 'Query too long' })
+    for (const v of [limit, tz])
+      if (v !== undefined && !Number.isFinite(v))
+        throw new HTTPException(400, { message: 'Bad number' })
+    if (tz !== undefined && Math.abs(tz) > 14 * 60)
+      throw new HTTPException(400, { message: 'Bad tz' })
+    const r = await searchHub(deps.db(), c.get('user').id, q, {
+      registry: deps.modules.entities,
+      limit,
+      tzOffset: tz,
+    })
+    c.header('cache-control', 'no-store')
+    return c.json(r)
   })
 
   return app

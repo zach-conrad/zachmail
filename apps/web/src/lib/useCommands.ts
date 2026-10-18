@@ -1,4 +1,4 @@
-import { KeySequenceMatcher, chordFromEvent, keymap, type CommandId } from '@zachmail/core'
+import { KeySequenceMatcher, chordFromEvent, keymap, type CommandId } from '@zachhub/core'
 import { useLayoutEffect, useRef } from 'react'
 import { beginInteraction } from './perf'
 import { isApple, isTypingTarget } from './platform'
