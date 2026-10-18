@@ -6,9 +6,27 @@
     "gzip": true
   },
   {
-    "name": "tasks module chunk (gzip)",
-    "path": "dist/assets/tasks-*.js",
+    "name": "Today module chunk (gzip)",
+    "path": "dist/assets/TodayModule-*.js",
+    "limit": "10 KB",
+    "gzip": true
+  },
+  {
+    "name": "Mail module chunk (gzip)",
+    "path": "dist/assets/MailModule-*.js",
+    "limit": "40 KB",
+    "gzip": true
+  },
+  {
+    "name": "Tasks module chunk (gzip)",
+    "path": "dist/assets/TasksModule-*.js",
     "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "Docs module chunk (gzip)",
+    "path": "dist/assets/DocsModule-*.js",
+    "limit": "40 KB",
     "gzip": true
   }
 ]

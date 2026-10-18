@@ -45,8 +45,9 @@ function onKey(e: KeyboardEvent) {
   const chord = chordFromEvent(e, isApple)
   const hasMod = chord.includes('mod+')
   if (isTypingTarget(e.target) && !hasMod && e.key !== 'Escape') return
-  const id = matcher.press(chord)
-  if ((id && runCommand(id, e.timeStamp)) || matcher.isPending) e.preventDefault()
+  // A key bound in several modules runs in whichever one is on screen.
+  const ran = matcher.pressAll(chord).some((id) => runCommand(id, e.timeStamp))
+  if (ran || matcher.isPending) e.preventDefault()
 }
 
 // The macOS menu bar dispatches commands by id; handling them here skips the key replay.
@@ -62,14 +63,16 @@ export function useCommands(handlers: CommandHandlers) {
   })
   useLayoutEffect(() => {
     if (!scopes.length) {
-      window.addEventListener('keydown', onKey)
+      // Capture phase: hub keys (G H/M/T/D, ⌘K, ?) run before a module's own key handler,
+      // which skips events already handled here.
+      window.addEventListener('keydown', onKey, true)
       window.addEventListener('zachmail:command', onShellCommand as EventListener)
     }
     scopes.push(scope)
     return () => {
       scopes.splice(scopes.indexOf(scope), 1)
       if (!scopes.length) {
-        window.removeEventListener('keydown', onKey)
+        window.removeEventListener('keydown', onKey, true)
         window.removeEventListener('zachmail:command', onShellCommand as EventListener)
         matcher.clear()
       }

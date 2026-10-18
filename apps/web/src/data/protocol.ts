@@ -27,6 +27,7 @@ export type ReadMethod =
   | 'followUps'
   | 'entities'
   | 'entity'
+  | 'comingBack'
 
 /** What a thread list shows: a split, or search results. */
 export type ViewQuery = ListQuery | SearchListQuery
