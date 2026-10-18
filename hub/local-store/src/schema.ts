@@ -1,7 +1,7 @@
 import { SPLIT_RULES_DROP, SPLIT_RULES_SCHEMA } from './splitRules'
 
 /** Bump when the client schema changes; the replica is dropped and bootstrapped again. */
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 export const SCHEMA = /* sql */ `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
