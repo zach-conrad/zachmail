@@ -10,6 +10,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEve
 import { Kbd } from '../app/Kbd'
 import { useData } from '../data/DataProvider'
 import { endInteraction } from '../lib/perf'
+import { SnoozePicker } from '../inbox/SnoozePicker'
+import { dueTime } from '../lib/format'
 import { useCommands } from '../lib/useCommands'
 import { isEmpty, recipientCount, toDraftRequest, toSendRequest, type Draft } from './draft'
 import { applyIntro, applySnippet } from './extras'
@@ -41,6 +43,7 @@ export function Composer({ initial }: { initial: Draft }) {
   const body = useRef<HTMLTextAreaElement>(null)
   const caret = useRef<number | null>(null)
   const matches = useMemo(() => (menu ? matchSnippets(menu.query, snippets) : []), [menu, snippets])
+  const [reminding, setReminding] = useState(false)
   const saved = useRef(false)
   const dirty = useRef(false)
   const latest = useRef(d)
@@ -158,12 +161,18 @@ export function Composer({ initial }: { initial: Draft }) {
     triage.sendMail(req, `Sending “${what}”`, () => compose.open(d))
   }
 
-  useCommands({
-    'compose.send': send,
-    'nav.back': close,
-    'compose.snippets': openPicker,
-    'compose.instantIntro': intro,
-  })
+  useCommands(
+    reminding
+      ? {}
+      : {
+          'compose.send': send,
+          'compose.remind': () =>
+            d.remindAt ? update({ remindAt: undefined }) : setReminding(true),
+          'nav.back': close,
+          'compose.snippets': openPicker,
+          'compose.instantIntro': intro,
+        },
+  )
 
   const account = accounts.get(d.accountId)
   const fromChoices = [...accounts.values()]
@@ -260,6 +269,20 @@ export function Composer({ initial }: { initial: Draft }) {
           <button type="button" className="send" onClick={send}>
             Send <Kbd keys="mod+enter" />
           </button>
+          {d.remindAt ? (
+            <button
+              type="button"
+              className="compose-link compose-remind"
+              title="Remove reminder"
+              onClick={() => update({ remindAt: undefined })}
+            >
+              ⏰ If no reply by {dueTime(d.remindAt)} ×
+            </button>
+          ) : (
+            <button type="button" className="compose-link" onClick={() => setReminding(true)}>
+              Remind me <Kbd keys="mod+shift+r" />
+            </button>
+          )}
           {error && (
             <span className="compose-error" role="alert">
               {error}
@@ -279,6 +302,13 @@ export function Composer({ initial }: { initial: Draft }) {
           </button>
         </footer>
       </section>
+      {reminding && (
+        <SnoozePicker
+          title="Remind me if no reply"
+          onPick={(at) => update({ remindAt: at })}
+          onClose={() => setReminding(false)}
+        />
+      )}
     </div>
   )
 }

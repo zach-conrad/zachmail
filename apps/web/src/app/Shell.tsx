@@ -15,6 +15,7 @@ import { Inbox } from '../inbox/Inbox'
 import { SearchView } from '../search/SearchView'
 import { endInteraction } from '../lib/perf'
 import { keymap, splitTabs, type CommandId, type FolderRow, type SplitKey } from '@zachhub/core'
+import { REMINDERS } from '@zachhub/local-store'
 import { useData } from '../data/DataProvider'
 import { SplitRulesEditor } from '../splits/SplitRulesEditor'
 import { canRun, useCommands } from '../lib/useCommands'
@@ -60,12 +61,14 @@ export function Shell({ split, openThread }: { split: SplitKey; openThread: stri
     void navigate({ to: '/inbox/$split', params: { split: toSplit }, search: { thread: threadId } })
   })
   const cycle = (dir: 1 | -1) => {
+    // From Reminders, tab goes to the first split and shift+tab to the last.
     const i = tabs.findIndex((s) => s.key === split)
-    goSplit(tabs[(i + dir + tabs.length) % tabs.length]!.key)
+    const next = i < 0 ? (dir === 1 ? 0 : tabs.length - 1) : i + dir
+    goSplit(tabs[(next + tabs.length) % tabs.length]!.key)
   }
 
   // A custom split whose rule was deleted (here or on another device) falls back to Important.
-  const known = splitRules === null || tabs.some((t) => t.key === split)
+  const known = split === REMINDERS || splitRules === null || tabs.some((t) => t.key === split)
   useEffect(() => {
     if (!known) goSplit('important')
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -85,6 +88,10 @@ export function Shell({ split, openThread }: { split: SplitKey; openThread: stri
       goSplit('important')
     },
     'nav.search': () => setSearch(''),
+    'go.reminders': () => {
+      setSearch(null)
+      goSplit(REMINDERS)
+    },
     'app.palette': () => open('palette'),
     'app.shortcuts': () => open('shortcuts'),
     'compose.new': () => {

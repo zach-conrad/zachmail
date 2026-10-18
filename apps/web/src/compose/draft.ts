@@ -21,6 +21,8 @@ export interface Draft {
   quoted?: string
   /** A reply shown as the centered sheet (e.g. a follow-up started outside its thread). */
   sheet?: boolean
+  /** "Remind me if no reply" at this time (epoch ms). */
+  remindAt?: number
 }
 
 const uuid = () => crypto.randomUUID()
@@ -138,6 +140,7 @@ export function toSendRequest(d: Draft, undoMs: number, draftSaved: boolean): Se
     id: uuid(),
     undoMs,
     ...(draftSaved ? { draftId: d.id } : {}),
+    ...(d.remindAt ? { remindAt: d.remindAt } : {}),
   }
 }
 
